@@ -1,0 +1,2421 @@
+Directory Structure:
+
+└── ./
+    ├── cmd
+    │   ├── create.go
+    │   ├── list.go
+    │   ├── remove.go
+    │   ├── root.go
+    │   └── util.go
+    ├── pkg
+    │   └── cowgit
+    │       ├── adaptive_pool.go
+    │       ├── cow_test.go
+    │       ├── cow.go
+    │       ├── dependency_test.go
+    │       ├── integration_test.go
+    │       ├── manager.go
+    │       ├── pathrewrite_test.go
+    │       ├── pathrewrite.go
+    │       ├── worktree_test.go
+    │       └── worktree.go
+    ├── go.mod
+    ├── main.go
+    └── README.md
+
+
+
+---
+File: /cmd/create.go
+---
+
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"coworktree/pkg/cowgit"
+	"github.com/spf13/cobra"
+)
+
+var (
+	createFrom   string
+	createPrefix string
+	createPath   string
+	noRewrite    bool
+)
+
+// createCmd represents the create command
+var createCmd = &cobra.Command{
+	Use:   "create <branch-name>",
+	Short: "Create a new CoW worktree",
+	Long: `Create a new copy-on-write worktree with the specified branch name.
+
+This command will:
+1. Create a CoW clone of the current repository (if supported)
+2. Create a new git branch in the worktree
+3. Register the worktree with git
+
+If CoW is not supported, it will fall back to traditional git worktree.`,
+	Args: cobra.ExactArgs(1),
+	RunE: createWorktree,
+}
+
+func createWorktree(cmd *cobra.Command, args []string) error {
+	if err := checkGitRepo(); err != nil {
+		return err
+	}
+
+	branchName := args[0]
+
+	// Get current working directory as repo path
+	repoPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create manager
+	manager, err := cowgit.NewManager(repoPath)
+	if err != nil {
+		return err
+	}
+
+	// Set up create options
+	opts := cowgit.CreateOptions{
+		BranchName:   branchName,
+		WorktreePath: createPath,
+		FromCommit:   createFrom,
+		NoCoW:        noCow,
+		NoRewrite:    noRewrite,
+		Prefix:       createPrefix,
+	}
+
+	if verbose {
+		worktreePath := opts.WorktreePath
+		effectiveBranchName := branchName
+		if createPrefix != "" {
+			effectiveBranchName = createPrefix + branchName
+		}
+		if worktreePath == "" {
+			worktreePath = filepath.Join(repoPath, ".cow-worktrees", effectiveBranchName)
+		}
+		fmt.Printf("Creating worktree: %s\n", worktreePath)
+		fmt.Printf("Branch: %s\n", effectiveBranchName)
+		fmt.Printf("CoW enabled: %t\n", !noCow)
+	}
+
+	if dryRun {
+		worktreePath := opts.WorktreePath
+		effectiveBranchName := branchName
+		if createPrefix != "" {
+			effectiveBranchName = createPrefix + branchName
+		}
+		if worktreePath == "" {
+			worktreePath = filepath.Join(repoPath, ".cow-worktrees", effectiveBranchName)
+		}
+		fmt.Printf("Would create worktree at: %s\n", worktreePath)
+		fmt.Printf("Would create branch: %s\n", effectiveBranchName)
+		return nil
+	}
+
+	// Create the worktree
+	worktree, err := manager.Create(opts)
+	if err != nil {
+		return err
+	}
+
+	// Determine if CoW was used
+	isCoW := !noCow
+	if supported, err := manager.IsCoWSupported(); err != nil || !supported {
+		isCoW = false
+	}
+
+	if isCoW {
+		fmt.Printf("Created CoW worktree at: %s\n", worktree.WorktreePath)
+	} else {
+		fmt.Printf("Created regular worktree at: %s\n", worktree.WorktreePath)
+	}
+
+	return nil
+}
+
+
+func init() {
+	rootCmd.AddCommand(createCmd)
+
+	createCmd.Flags().StringVar(&createFrom, "from", "HEAD", "create from specific commit/branch")
+	createCmd.Flags().StringVar(&createPrefix, "prefix", "", "branch name prefix")
+	createCmd.Flags().StringVar(&createPath, "path", "", "custom worktree path")
+	createCmd.Flags().BoolVar(&noRewrite, "no-rewrite", false, "skip absolute path rewriting in gitignored files")
+}
+
+
+---
+File: /cmd/list.go
+---
+
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"text/tabwriter"
+
+	"coworktree/pkg/cowgit"
+	"github.com/spf13/cobra"
+)
+
+var (
+	listFormat   string
+	showStats    bool
+)
+
+// listCmd represents the list command
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all CoW worktrees",
+	Long: `List all copy-on-write worktrees in the current repository.
+
+Shows information about each worktree including:
+- Worktree path
+- Branch name
+- HEAD commit
+- Optionally disk usage statistics (with --show-stats)`,
+	RunE: listWorktrees,
+}
+
+func listWorktrees(cmd *cobra.Command, args []string) error {
+	if err := checkGitRepo(); err != nil {
+		return err
+	}
+
+	// Get current working directory as repo path
+	repoPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create manager
+	manager, err := cowgit.NewManager(repoPath)
+	if err != nil {
+		return err
+	}
+
+	// Get list of CoW worktrees
+	cowWorktrees, err := manager.ListCoW()
+	if err != nil {
+		return fmt.Errorf("failed to list worktrees: %w", err)
+	}
+
+	switch listFormat {
+	case "json":
+		return outputJSON(cowWorktrees)
+	case "compact":
+		return outputCompact(cowWorktrees)
+	default:
+		return outputTable(cowWorktrees, repoPath)
+	}
+}
+
+func outputTable(worktrees []cowgit.WorktreeInfo, repoPath string) error {
+	if len(worktrees) == 0 {
+		fmt.Println("No CoW worktrees found")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	defer w.Flush()
+
+	// Header
+	if showStats {
+		fmt.Fprintln(w, "BRANCH\tPATH\tHEAD\tSIZE")
+	} else {
+		fmt.Fprintln(w, "BRANCH\tPATH\tHEAD")
+	}
+
+	// Data rows
+	for _, wt := range worktrees {
+		relativePath, _ := filepath.Rel(repoPath, wt.Path)
+		shortHEAD := wt.HEAD
+		if len(shortHEAD) > 8 {
+			shortHEAD = shortHEAD[:8]
+		}
+
+		if showStats {
+			size := getDirSize(wt.Path)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", wt.Branch, relativePath, shortHEAD, formatSize(size))
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", wt.Branch, relativePath, shortHEAD)
+		}
+	}
+
+	return nil
+}
+
+func outputJSON(worktrees []cowgit.WorktreeInfo) error {
+	type jsonWorktree struct {
+		Branch string `json:"branch"`
+		Path   string `json:"path"`
+		HEAD   string `json:"head"`
+		Size   int64  `json:"size,omitempty"`
+	}
+
+	var jsonWorktrees []jsonWorktree
+	for _, wt := range worktrees {
+		jw := jsonWorktree{
+			Branch: wt.Branch,
+			Path:   wt.Path,
+			HEAD:   wt.HEAD,
+		}
+		if showStats {
+			jw.Size = getDirSize(wt.Path)
+		}
+		jsonWorktrees = append(jsonWorktrees, jw)
+	}
+
+	output := map[string]interface{}{
+		"worktrees": jsonWorktrees,
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(output)
+}
+
+func outputCompact(worktrees []cowgit.WorktreeInfo) error {
+	if len(worktrees) == 0 {
+		fmt.Println("No CoW worktrees found")
+		return nil
+	}
+
+	for _, wt := range worktrees {
+		shortHEAD := wt.HEAD
+		if len(shortHEAD) > 8 {
+			shortHEAD = shortHEAD[:8]
+		}
+		fmt.Printf("%s (%s)\n", wt.Branch, shortHEAD)
+	}
+
+	return nil
+}
+
+func getDirSize(path string) int64 {
+	var size int64
+	filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func init() {
+	rootCmd.AddCommand(listCmd)
+
+	listCmd.Flags().StringVar(&listFormat, "format", "table", "output format: table, json, compact")
+	listCmd.Flags().BoolVar(&showStats, "show-stats", false, "include disk usage statistics")
+}
+
+
+---
+File: /cmd/remove.go
+---
+
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"coworktree/pkg/cowgit"
+	"github.com/spf13/cobra"
+)
+
+var (
+	keepBranch bool
+	force      bool
+)
+
+// removeCmd represents the remove command
+var removeCmd = &cobra.Command{
+	Use:   "remove <branch-name>",
+	Short: "Remove a CoW worktree",
+	Long: `Remove a copy-on-write worktree and optionally its associated branch.
+
+This command will:
+1. Remove the worktree directory
+2. Clean up git worktree references
+3. Optionally remove the associated branch (unless --keep-branch is specified)`,
+	Args: cobra.ExactArgs(1),
+	RunE: removeWorktree,
+}
+
+func removeWorktree(cmd *cobra.Command, args []string) error {
+	if err := checkGitRepo(); err != nil {
+		return err
+	}
+
+	branchName := args[0]
+
+	// Get current working directory as repo path
+	repoPath, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Create manager
+	manager, err := cowgit.NewManager(repoPath)
+	if err != nil {
+		return err
+	}
+
+	// Try to find the worktree to get its path for display
+	worktrees, err := manager.List()
+	if err != nil {
+		return fmt.Errorf("failed to list worktrees: %w", err)
+	}
+
+	var worktreePath string
+	for _, wt := range worktrees {
+		if wt.Branch == branchName {
+			worktreePath = wt.Path
+			break
+		}
+	}
+
+	if worktreePath == "" {
+		// Try default path
+		worktreePath = filepath.Join(repoPath, ".cow-worktrees", branchName)
+	}
+
+	if verbose {
+		fmt.Printf("Removing worktree: %s\n", worktreePath)
+		fmt.Printf("Branch: %s\n", branchName)
+		fmt.Printf("Keep branch: %t\n", keepBranch)
+	}
+
+	if dryRun {
+		fmt.Printf("Would remove worktree at: %s\n", worktreePath)
+		if !keepBranch {
+			fmt.Printf("Would remove branch: %s\n", branchName)
+		}
+		return nil
+	}
+
+	// Check if worktree exists
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		if !force {
+			return fmt.Errorf("worktree does not exist: %s", worktreePath)
+		}
+		fmt.Printf("Worktree does not exist, continuing with branch cleanup\n")
+	}
+
+	// Remove the worktree using manager
+	if err := manager.Remove(branchName, keepBranch); err != nil {
+		if !force {
+			return fmt.Errorf("failed to remove worktree: %w", err)
+		}
+		fmt.Printf("Warning: Failed to remove worktree: %v\n", err)
+		return nil
+	}
+
+	if keepBranch {
+		fmt.Printf("Removed worktree (kept branch): %s\n", worktreePath)
+	} else {
+		fmt.Printf("Removed worktree and branch: %s\n", worktreePath)
+	}
+
+	return nil
+}
+
+func init() {
+	rootCmd.AddCommand(removeCmd)
+
+	removeCmd.Flags().BoolVar(&keepBranch, "keep-branch", false, "don't delete the git branch")
+	removeCmd.Flags().BoolVar(&force, "force", false, "remove even if worktree has uncommitted changes")
+}
+
+
+---
+File: /cmd/root.go
+---
+
+package cmd
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+var (
+	verbose bool
+	dryRun  bool
+	noCow   bool
+)
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "coworktree",
+	Short: "A Copy-on-Write Git Worktree Manager",
+	Long: `coworktree combines copy-on-write filesystem features with git worktrees 
+to create instant, fully-featured development environments.
+
+Features:
+- Instant environment setup using CoW (APFS on macOS, overlayfs on Linux)
+- Complete isolation with shared dependencies
+- Proper git worktree integration
+- Cross-platform support`,
+	Version: "0.1.0",
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+func Execute() error {
+	return rootCmd.Execute()
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose logging")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done without executing")
+	rootCmd.PersistentFlags().BoolVar(&noCow, "no-cow", false, "force traditional git worktree (skip CoW)")
+}
+
+// checkGitRepo verifies we're in a git repository
+func checkGitRepo() error {
+	if _, err := os.Stat(".git"); err != nil {
+		return fmt.Errorf("not in a git repository (or any parent directories)")
+	}
+	return nil
+}
+
+
+---
+File: /cmd/util.go
+---
+
+package cmd
+
+import (
+	"os/exec"
+)
+
+// runGitCommand executes a git command in the specified directory
+func runGitCommand(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Run()
+}
+
+
+---
+File: /pkg/cowgit/adaptive_pool.go
+---
+
+package cowgit
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// WorkerPool manages file processing workers
+type WorkerPool struct {
+	fileChan      chan string
+	errChan       chan error
+	workerCount   int32
+	activeWorkers map[int]chan struct{}
+	nextWorkerID  int32
+	
+	// Rewriting context
+	srcDirBytes []byte
+	dstDirBytes []byte
+	gitignore   *GitIgnore
+	dstDir      string
+	
+	mu        sync.RWMutex
+	wg        sync.WaitGroup
+	
+	// Metrics
+	processedFiles int64
+	startTime      time.Time
+}
+
+// PoolController manages worker pool scaling
+type PoolController struct {
+	pool       *WorkerPool
+	done       chan struct{}
+	lastAdjust time.Time
+}
+
+// NewWorkerPool creates a new worker pool
+func NewWorkerPool(srcDir, dstDir string, gitignore *GitIgnore) *WorkerPool {
+	return &WorkerPool{
+		fileChan:      make(chan string, 1000),
+		errChan:       make(chan error, 1),
+		activeWorkers: make(map[int]chan struct{}),
+		srcDirBytes:   []byte(srcDir),
+		dstDirBytes:   []byte(dstDir),
+		gitignore:     gitignore,
+		dstDir:        dstDir,
+		startTime:     time.Now(),
+	}
+}
+
+// NewPoolController creates a controller for the worker pool
+func NewPoolController(pool *WorkerPool) *PoolController {
+	return &PoolController{
+		pool: pool,
+		done: make(chan struct{}),
+	}
+}
+
+// Start initializes the worker pool with CPU count workers
+func (p *WorkerPool) Start() {
+	initialWorkers := runtime.NumCPU()
+	for i := 0; i < initialWorkers; i++ {
+		p.AddWorker()
+	}
+}
+
+// Stop shuts down the worker pool
+func (p *WorkerPool) Stop() {
+	close(p.fileChan)
+	p.wg.Wait()
+	close(p.errChan)
+}
+
+// Submit adds a file to be processed
+func (p *WorkerPool) Submit(filepath string) {
+	p.fileChan <- filepath
+}
+
+// Error returns the error channel
+func (p *WorkerPool) Error() <-chan error {
+	return p.errChan
+}
+
+// AddWorker adds a new worker to the pool
+func (p *WorkerPool) AddWorker() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
+	workerID := int(atomic.AddInt32(&p.nextWorkerID, 1))
+	stopChan := make(chan struct{})
+	p.activeWorkers[workerID] = stopChan
+	atomic.AddInt32(&p.workerCount, 1)
+	
+	p.wg.Add(1)
+	go p.worker(workerID, stopChan)
+}
+
+// RemoveWorker removes a worker from the pool
+func (p *WorkerPool) RemoveWorker() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	
+	minWorkers := max(runtime.NumCPU()/2, 1)
+	if len(p.activeWorkers) <= minWorkers {
+		return false
+	}
+	
+	// Stop one worker
+	for id, stopChan := range p.activeWorkers {
+		close(stopChan)
+		delete(p.activeWorkers, id)
+		atomic.AddInt32(&p.workerCount, -1)
+		return true
+	}
+	
+	return false
+}
+
+// GetStats returns current pool statistics
+func (p *WorkerPool) GetStats() (workers int32, processed int64, queueDepth int) {
+	return atomic.LoadInt32(&p.workerCount),
+		   atomic.LoadInt64(&p.processedFiles),
+		   len(p.fileChan)
+}
+
+// worker processes files from the queue
+func (p *WorkerPool) worker(id int, stop <-chan struct{}) {
+	defer p.wg.Done()
+	
+	for {
+		select {
+		case path, ok := <-p.fileChan:
+			if !ok {
+				return // Channel closed
+			}
+			
+			if err := p.processFile(path); err != nil {
+				select {
+				case p.errChan <- err:
+				default:
+				}
+				return
+			}
+			
+			atomic.AddInt64(&p.processedFiles, 1)
+			
+		case <-stop:
+			return // Worker stopped
+		}
+	}
+}
+
+// processFile handles the actual file processing
+func (p *WorkerPool) processFile(path string) error {
+	relPath, err := filepath.Rel(p.dstDir, path)
+	if err != nil {
+		return nil // Skip on error
+	}
+
+	// Filter: gitignored files only
+	if !p.gitignore.Match(relPath) {
+		return nil
+	}
+
+	// Read file and check if it's text
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil // Skip on error
+	}
+
+	// Skip binary files
+	if !isValidText(content) {
+		return nil
+	}
+
+	// Replace srcDir with dstDir
+	if updated := bytes.ReplaceAll(content, p.srcDirBytes, p.dstDirBytes); !bytes.Equal(content, updated) {
+		return os.WriteFile(path, updated, 0644)
+	}
+	
+	return nil
+}
+
+// Start begins monitoring and adjusting the worker pool
+func (c *PoolController) Start() {
+	go c.controlLoop()
+}
+
+// Stop shuts down the controller
+func (c *PoolController) Stop() {
+	close(c.done)
+}
+
+// controlLoop is the main control logic that adjusts worker count
+func (c *PoolController) controlLoop() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	
+	var lastProcessed int64
+	var lastCheck time.Time = time.Now()
+	
+	for {
+		select {
+		case <-ticker.C:
+			workers, processed, queueLen := c.pool.GetStats()
+			
+			// Calculate processing rate
+			now := time.Now()
+			timeDelta := now.Sub(lastCheck).Seconds()
+			if timeDelta > 0 {
+				processingRate := float64(processed-lastProcessed) / timeDelta
+				lastProcessed = processed
+				lastCheck = now
+				
+				c.adjustWorkers(workers, queueLen, processingRate)
+			}
+			
+		case <-c.done:
+			return
+		}
+	}
+}
+
+// adjustWorkers implements the scaling logic
+func (c *PoolController) adjustWorkers(workers int32, queueLen int, processingRate float64) {
+	// Rate limit adjustments
+	if time.Since(c.lastAdjust) < time.Second {
+		return
+	}
+	
+	maxWorkers := int32(runtime.NumCPU() * 4)
+	
+	// Queue backing up and processing? Add workers
+	if queueLen > int(workers)*5 && workers < maxWorkers && processingRate > 0 {
+		c.pool.AddWorker()
+		c.lastAdjust = time.Now()
+		return
+	}
+	
+	// Queue empty and many workers? Remove workers
+	if queueLen == 0 && processingRate < 1 {
+		if c.pool.RemoveWorker() {
+			c.lastAdjust = time.Now()
+		}
+		return
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+
+---
+File: /pkg/cowgit/cow_test.go
+---
+
+package cowgit
+
+import (
+	"testing"
+)
+
+func TestIsAPFS(t *testing.T) {
+	// Test with current directory (should work on macOS)
+	result, err := isAPFS(".")
+	if err != nil {
+		t.Fatalf("Failed to check filesystem: %v", err)
+	}
+	
+	// On macOS, this should typically be true
+	t.Logf("Current directory is on APFS: %v", result)
+	
+	// Test with non-existent path
+	_, err = isAPFS("/nonexistent/path")
+	if err == nil {
+		t.Error("Expected error for non-existent path")
+	}
+}
+
+func TestCloneDirectory(t *testing.T) {
+	// This test will only work on APFS
+	result, err := isAPFS(".")
+	if err != nil {
+		t.Fatalf("Failed to check filesystem: %v", err)
+	}
+	
+	if !result {
+		t.Skip("Skipping CoW test - not on APFS filesystem")
+	}
+	
+	// Test with non-existent source
+	err = CloneDirectory("/nonexistent/source", "/tmp/test-dest")
+	if err == nil {
+		t.Error("Expected error for non-existent source")
+	}
+	
+	t.Logf("CoW clone correctly failed with non-existent source: %v", err)
+}
+
+func TestIsCoWSupported(t *testing.T) {
+	// Test with current directory
+	result, err := IsCoWSupported(".")
+	if err != nil {
+		t.Fatalf("Failed to check CoW support: %v", err)
+	}
+	
+	t.Logf("CoW supported for current directory: %v", result)
+	
+	// Test with non-existent path
+	_, err = IsCoWSupported("/nonexistent/path")
+	if err == nil {
+		t.Error("Expected error for non-existent path")
+	}
+}
+
+
+---
+File: /pkg/cowgit/cow.go
+---
+
+package cowgit
+
+import (
+	"errors"
+	"fmt"
+	"runtime"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
+)
+
+// CloneDirectory creates a copy-on-write clone of a directory using platform-specific methods
+func CloneDirectory(src, dst string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return cloneDirectoryAPFS(src, dst)
+	case "linux":
+		// TODO: Implement overlayfs for Linux
+		return errors.New("linux CoW not yet implemented")
+	default:
+		return fmt.Errorf("copy-on-write not supported on %s", runtime.GOOS)
+	}
+}
+
+// IsCoWSupported checks if copy-on-write is supported for the given path
+func IsCoWSupported(path string) (bool, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return isAPFS(path)
+	case "linux":
+		// TODO: Check overlayfs availability
+		return false, errors.New("linux CoW not yet implemented")
+	default:
+		return false, nil
+	}
+}
+
+// cloneDirectoryAPFS creates a CoW clone using APFS clonefile on macOS
+func cloneDirectoryAPFS(src, dst string) error {
+	// Check if we're on APFS
+	if isAPFS, err := isAPFS(src); err != nil {
+		return fmt.Errorf("failed to check filesystem: %w", err)
+	} else if !isAPFS {
+		return errors.New("copy-on-write requires APFS filesystem")
+	}
+
+	// Clone the directory
+	if err := unix.Clonefile(src, dst, unix.CLONE_NOFOLLOW); err != nil {
+		// Handle cases where clonefile isn't supported
+		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EXDEV) {
+			return fmt.Errorf("clonefile not supported: %w", err)
+		}
+		return fmt.Errorf("clonefile failed: %w", err)
+	}
+
+	return nil
+}
+
+// isAPFS checks if the given path is on an APFS filesystem
+func isAPFS(path string) (bool, error) {
+	var stat unix.Statfs_t
+	err := unix.Statfs(path, &stat)
+	if err != nil {
+		return false, err
+	}
+
+	// Convert filesystem name from C string
+	fstype := unix.ByteSliceToString((*[256]byte)(unsafe.Pointer(&stat.Fstypename[0]))[:])
+	return fstype == "apfs", nil
+}
+
+
+---
+File: /pkg/cowgit/dependency_test.go
+---
+
+package cowgit
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestCoWDependencies(t *testing.T) {
+	// Skip if not on APFS
+	result, err := isAPFS(".")
+	if err != nil {
+		t.Fatalf("Failed to check filesystem: %v", err)
+	}
+	if !result {
+		t.Skip("Skipping CoW dependency test - not on APFS filesystem")
+	}
+
+	// Create temporary directories
+	tempDir, err := os.MkdirTemp("", "cow-deps-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	srcDir := filepath.Join(tempDir, "source")
+	dstDir := filepath.Join(tempDir, "destination")
+
+	// Create source directory structure that mimics a real project
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("Failed to create source dir: %v", err)
+	}
+
+	// Create package.json
+	packageJson := `{
+  "name": "test-project",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(srcDir, "package.json"), []byte(packageJson), 0644); err != nil {
+		t.Fatalf("Failed to create package.json: %v", err)
+	}
+
+	// Create mock node_modules with nested structure
+	nodeModulesDir := filepath.Join(srcDir, "node_modules")
+	if err := os.MkdirAll(nodeModulesDir, 0755); err != nil {
+		t.Fatalf("Failed to create node_modules: %v", err)
+	}
+
+	// Create a mock lodash package
+	lodashDir := filepath.Join(nodeModulesDir, "lodash")
+	if err := os.MkdirAll(lodashDir, 0755); err != nil {
+		t.Fatalf("Failed to create lodash dir: %v", err)
+	}
+
+	// Create lodash package.json
+	lodashPackageJson := `{
+  "name": "lodash",
+  "version": "4.17.21",
+  "description": "Lodash modular utilities."
+}`
+	if err := os.WriteFile(filepath.Join(lodashDir, "package.json"), []byte(lodashPackageJson), 0644); err != nil {
+		t.Fatalf("Failed to create lodash package.json: %v", err)
+	}
+
+	// Create some JavaScript files
+	if err := os.WriteFile(filepath.Join(lodashDir, "index.js"), []byte("module.exports = require('./lodash');"), 0644); err != nil {
+		t.Fatalf("Failed to create lodash index.js: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(lodashDir, "lodash.js"), []byte("// Lodash library code here"), 0644); err != nil {
+		t.Fatalf("Failed to create lodash.js: %v", err)
+	}
+
+	// Create nested dependency
+	nestedDir := filepath.Join(nodeModulesDir, "nested-dep")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatalf("Failed to create nested dep: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(nestedDir, "index.js"), []byte("// Nested dependency"), 0644); err != nil {
+		t.Fatalf("Failed to create nested dep file: %v", err)
+	}
+
+	// Create some other common project files
+	if err := os.WriteFile(filepath.Join(srcDir, "README.md"), []byte("# Test Project"), 0644); err != nil {
+		t.Fatalf("Failed to create README.md: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(srcDir, "index.js"), []byte("const _ = require('lodash');"), 0644); err != nil {
+		t.Fatalf("Failed to create index.js: %v", err)
+	}
+
+	// Create build directory
+	buildDir := filepath.Join(srcDir, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		t.Fatalf("Failed to create build dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(buildDir, "app.js"), []byte("// Built application"), 0644); err != nil {
+		t.Fatalf("Failed to create built app: %v", err)
+	}
+
+	t.Logf("Created source directory with %d files", countFiles(srcDir))
+
+	// Test CoW clone
+	err = CloneDirectory(srcDir, dstDir)
+	if err != nil {
+		t.Fatalf("CoW clone failed: %v", err)
+	}
+
+	// Verify all files were copied
+	srcCount := countFiles(srcDir)
+	dstCount := countFiles(dstDir)
+	
+	if srcCount != dstCount {
+		t.Errorf("File count mismatch: source has %d files, destination has %d files", srcCount, dstCount)
+	}
+
+	// Verify specific important files
+	testFiles := []string{
+		"package.json",
+		"node_modules/lodash/package.json",
+		"node_modules/lodash/index.js",
+		"node_modules/lodash/lodash.js",
+		"node_modules/nested-dep/index.js",
+		"README.md",
+		"index.js",
+		"build/app.js",
+	}
+
+	for _, file := range testFiles {
+		srcFile := filepath.Join(srcDir, file)
+		dstFile := filepath.Join(dstDir, file)
+
+		// Check file exists
+		if _, err := os.Stat(dstFile); os.IsNotExist(err) {
+			t.Errorf("File %s not copied", file)
+			continue
+		}
+
+		// Check content matches
+		srcContent, err := os.ReadFile(srcFile)
+		if err != nil {
+			t.Errorf("Failed to read source file %s: %v", file, err)
+			continue
+		}
+
+		dstContent, err := os.ReadFile(dstFile)
+		if err != nil {
+			t.Errorf("Failed to read destination file %s: %v", file, err)
+			continue
+		}
+
+		if string(srcContent) != string(dstContent) {
+			t.Errorf("Content mismatch for %s", file)
+		}
+	}
+
+	t.Logf("CoW dependency test passed - all %d files copied correctly", srcCount)
+}
+
+func countFiles(dir string) int {
+	count := 0
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
+
+---
+File: /pkg/cowgit/integration_test.go
+---
+
+package cowgit
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestCoWIntegration(t *testing.T) {
+	// Skip if not on APFS
+	result, err := isAPFS(".")
+	if err != nil {
+		t.Fatalf("Failed to check filesystem: %v", err)
+	}
+	if !result {
+		t.Skip("Skipping CoW integration test - not on APFS filesystem")
+	}
+
+	// Create temporary directories
+	tempDir, err := os.MkdirTemp("", "cow-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	srcDir := filepath.Join(tempDir, "source")
+	dstDir := filepath.Join(tempDir, "destination")
+
+	// Create source directory with some content
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("Failed to create source dir: %v", err)
+	}
+
+	// Create some test files
+	testFile := filepath.Join(srcDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create subdirectory
+	subDir := filepath.Join(srcDir, "subdir")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+
+	subFile := filepath.Join(subDir, "subfile.txt")
+	if err := os.WriteFile(subFile, []byte("sub content"), 0644); err != nil {
+		t.Fatalf("Failed to create subfile: %v", err)
+	}
+
+	// Test CoW clone
+	err = CloneDirectory(srcDir, dstDir)
+	if err != nil {
+		t.Fatalf("CoW clone failed: %v", err)
+	}
+
+	// Verify destination exists
+	if _, err := os.Stat(dstDir); os.IsNotExist(err) {
+		t.Error("Destination directory doesn't exist")
+	}
+
+	// Verify files were copied
+	if _, err := os.Stat(filepath.Join(dstDir, "test.txt")); os.IsNotExist(err) {
+		t.Error("Test file not copied")
+	}
+
+	if _, err := os.Stat(filepath.Join(dstDir, "subdir", "subfile.txt")); os.IsNotExist(err) {
+		t.Error("Subdirectory file not copied")
+	}
+
+	// Verify content
+	content, err := os.ReadFile(filepath.Join(dstDir, "test.txt"))
+	if err != nil {
+		t.Fatalf("Failed to read copied file: %v", err)
+	}
+	if string(content) != "test content" {
+		t.Errorf("File content mismatch: got %q, want %q", string(content), "test content")
+	}
+
+	t.Logf("CoW integration test passed - successfully cloned directory structure")
+}
+
+
+---
+File: /pkg/cowgit/manager.go
+---
+
+package cowgit
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// Manager provides high-level operations for managing CoW worktrees
+type Manager struct {
+	RepoPath string
+}
+
+// NewManager creates a new Manager for the given repository path
+func NewManager(repoPath string) (*Manager, error) {
+	// Verify it's a git repository
+	if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
+		return nil, fmt.Errorf("not a git repository: %s", repoPath)
+	}
+	
+	return &Manager{RepoPath: repoPath}, nil
+}
+
+// CreateOptions holds options for creating a worktree
+type CreateOptions struct {
+	BranchName    string
+	WorktreePath  string
+	FromCommit    string
+	NoCoW         bool
+	NoRewrite     bool
+	Prefix        string
+}
+
+// Create creates a new CoW worktree with the given options
+func (m *Manager) Create(opts CreateOptions) (*Worktree, error) {
+	branchName := opts.BranchName
+	if opts.Prefix != "" {
+		branchName = opts.Prefix + branchName
+	}
+
+	// Determine worktree path if not specified
+	worktreePath := opts.WorktreePath
+	if worktreePath == "" {
+		worktreePath = filepath.Join(m.RepoPath, ".cow-worktrees", branchName)
+	}
+
+	// Create worktree instance
+	worktree := NewWorktreeWithOptions(m.RepoPath, worktreePath, branchName, opts.NoRewrite)
+
+	// Create the worktree
+	if !opts.NoCoW {
+		// Check if CoW is supported
+		if supported, err := IsCoWSupported(m.RepoPath); err == nil && supported {
+			if err := worktree.CreateCoWWorktree(); err == nil {
+				return worktree, nil
+			}
+		}
+	}
+
+	// Fall back to regular worktree
+	if err := m.createRegularWorktree(worktree); err != nil {
+		return nil, err
+	}
+
+	return worktree, nil
+}
+
+// CreateFromBranch creates a worktree from an existing branch
+func (m *Manager) CreateFromBranch(branchName, worktreePath string) (*Worktree, error) {
+	if worktreePath == "" {
+		worktreePath = filepath.Join(m.RepoPath, ".cow-worktrees", branchName)
+	}
+
+	worktree := NewWorktree(m.RepoPath, worktreePath, branchName)
+	if err := worktree.CreateFromExistingBranch(); err != nil {
+		return nil, err
+	}
+
+	return worktree, nil
+}
+
+// List returns all worktrees in the repository
+func (m *Manager) List() ([]WorktreeInfo, error) {
+	return ListWorktrees(m.RepoPath)
+}
+
+// ListCoW returns only CoW worktrees (those in .cow-worktrees)
+func (m *Manager) ListCoW() ([]WorktreeInfo, error) {
+	worktrees, err := ListWorktrees(m.RepoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var cowWorktrees []WorktreeInfo
+	for _, wt := range worktrees {
+		// Include worktrees that are in .cow-worktrees or not the main repo
+		if filepath.Base(filepath.Dir(wt.Path)) == ".cow-worktrees" || wt.Path != m.RepoPath {
+			cowWorktrees = append(cowWorktrees, wt)
+		}
+	}
+
+	return cowWorktrees, nil
+}
+
+// Remove removes a worktree by branch name
+func (m *Manager) Remove(branchName string, keepBranch bool) error {
+	// Find the worktree
+	worktrees, err := ListWorktrees(m.RepoPath)
+	if err != nil {
+		return fmt.Errorf("failed to list worktrees: %w", err)
+	}
+
+	var worktreePath string
+	for _, wt := range worktrees {
+		if wt.Branch == branchName {
+			worktreePath = wt.Path
+			break
+		}
+	}
+
+	if worktreePath == "" {
+		// Try default path
+		worktreePath = filepath.Join(m.RepoPath, ".cow-worktrees", branchName)
+	}
+
+	worktree := NewWorktree(m.RepoPath, worktreePath, branchName)
+
+	if keepBranch {
+		return worktree.Remove()
+	}
+
+	return worktree.RemoveWithBranch()
+}
+
+// IsCoWSupported checks if CoW is supported for this repository
+func (m *Manager) IsCoWSupported() (bool, error) {
+	return IsCoWSupported(m.RepoPath)
+}
+
+// createRegularWorktree creates a regular git worktree
+func (m *Manager) createRegularWorktree(worktree *Worktree) error {
+	if err := os.MkdirAll(filepath.Dir(worktree.WorktreePath), 0755); err != nil {
+		return fmt.Errorf("failed to create worktree directory: %w", err)
+	}
+
+	// Use git worktree add directly
+	if _, err := worktree.runGitCommand(m.RepoPath, "worktree", "add", "-b", worktree.BranchName, worktree.WorktreePath); err != nil {
+		return fmt.Errorf("failed to create regular worktree: %w", err)
+	}
+
+	return nil
+}
+
+
+---
+File: /pkg/cowgit/pathrewrite_test.go
+---
+
+package cowgit
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestGitIgnoreParsing(t *testing.T) {
+	// Create temporary directory for test
+	tempDir, err := os.MkdirTemp("", "gitignore-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Create .gitignore file
+	gitignoreContent := `# Comments should be ignored
+node_modules/
+*.log
+build
+dist/
+.env
+*.tmp
+
+# More patterns
+venv/
+__pycache__/
+*.pyc
+`
+	gitignorePath := filepath.Join(tempDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+		t.Fatalf("Failed to create .gitignore: %v", err)
+	}
+
+	// Parse gitignore
+	gitignore := parseGitignore(tempDir)
+
+	// Test cases
+	testCases := []struct {
+		path     string
+		expected bool
+	}{
+		{"node_modules/react/package.json", true},
+		{"build", true},
+		{"dist/app.js", true},
+		{"app.log", true},
+		{"debug.tmp", true},
+		{"venv/bin/python", true},
+		{"__pycache__/module.pyc", true},
+		{"src/app.js", false},
+		{"README.md", false},
+		{"package.json", false},
+		{".env", true},
+		{"config.env", false},
+	}
+
+	for _, tc := range testCases {
+		result := gitignore.Match(tc.path)
+		if result != tc.expected {
+			t.Errorf("gitignore.Match(%q) = %v, want %v", tc.path, result, tc.expected)
+		}
+	}
+}
+
+func TestPathRewriting(t *testing.T) {
+	// Skip if not on APFS (since we need CoW for full test)
+	result, err := isAPFS(".")
+	if err != nil {
+		t.Fatalf("Failed to check filesystem: %v", err)
+	}
+	if !result {
+		t.Skip("Skipping path rewriting test - not on APFS filesystem")
+	}
+
+	// Create temporary directories
+	tempDir, err := os.MkdirTemp("", "pathrewrite-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	srcDir := filepath.Join(tempDir, "source")
+	dstDir := filepath.Join(tempDir, "destination")
+
+	// Create source directory structure
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("Failed to create source dir: %v", err)
+	}
+
+	// Create .gitignore
+	gitignoreContent := `venv/
+node_modules/
+*.log
+build/
+`
+	if err := os.WriteFile(filepath.Join(srcDir, ".gitignore"), []byte(gitignoreContent), 0644); err != nil {
+		t.Fatalf("Failed to create .gitignore: %v", err)
+	}
+
+	// Create venv directory (gitignored)
+	venvDir := filepath.Join(srcDir, "venv")
+	if err := os.MkdirAll(venvDir, 0755); err != nil {
+		t.Fatalf("Failed to create venv dir: %v", err)
+	}
+
+	// Create pyvenv.cfg with absolute path
+	pyvenvContent := `home = /usr/bin
+include-system-site-packages = false
+version = 3.9.0
+executable = ` + srcDir + `/bin/python
+command = ` + srcDir + `/bin/python -m venv ` + srcDir + `/venv
+`
+	if err := os.WriteFile(filepath.Join(venvDir, "pyvenv.cfg"), []byte(pyvenvContent), 0644); err != nil {
+		t.Fatalf("Failed to create pyvenv.cfg: %v", err)
+	}
+
+	// Create activation script with absolute path
+	activateContent := `#!/bin/bash
+VIRTUAL_ENV="` + srcDir + `/venv"
+export VIRTUAL_ENV
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+`
+	binDir := filepath.Join(venvDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("Failed to create bin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "activate"), []byte(activateContent), 0755); err != nil {
+		t.Fatalf("Failed to create activate script: %v", err)
+	}
+
+	// Create source file (not gitignored) - should not be rewritten
+	srcFile := filepath.Join(srcDir, "main.py")
+	srcFileContent := `#!/usr/bin/env python3
+# This file should NOT be rewritten because it's not gitignored
+import sys
+print("Project path: ` + srcDir + `")
+`
+	if err := os.WriteFile(srcFile, []byte(srcFileContent), 0644); err != nil {
+		t.Fatalf("Failed to create source file: %v", err)
+	}
+
+	// Create binary file in gitignored directory (should be skipped)
+	binaryContent := []byte{0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE}
+	if err := os.WriteFile(filepath.Join(venvDir, "binary.dat"), binaryContent, 0644); err != nil {
+		t.Fatalf("Failed to create binary file: %v", err)
+	}
+
+	// Perform CoW clone
+	if err := CloneDirectory(srcDir, dstDir); err != nil {
+		t.Fatalf("CoW clone failed: %v", err)
+	}
+
+	// Run path rewriting
+	if err := rewriteAbsolutePathsAsync(srcDir, dstDir); err != nil {
+		t.Fatalf("Path rewriting failed: %v", err)
+	}
+
+	// Verify pyvenv.cfg was rewritten
+	rewrittenPyvenv, err := os.ReadFile(filepath.Join(dstDir, "venv", "pyvenv.cfg"))
+	if err != nil {
+		t.Fatalf("Failed to read rewritten pyvenv.cfg: %v", err)
+	}
+	rewrittenContent := string(rewrittenPyvenv)
+	if strings.Contains(rewrittenContent, srcDir) {
+		t.Errorf("pyvenv.cfg still contains source path: %s", rewrittenContent)
+	}
+	if !strings.Contains(rewrittenContent, dstDir) {
+		t.Errorf("pyvenv.cfg doesn't contain destination path: %s", rewrittenContent)
+	}
+
+	// Verify activate script was rewritten
+	rewrittenActivate, err := os.ReadFile(filepath.Join(dstDir, "venv", "bin", "activate"))
+	if err != nil {
+		t.Fatalf("Failed to read rewritten activate script: %v", err)
+	}
+	activateContent = string(rewrittenActivate)
+	if strings.Contains(activateContent, srcDir) {
+		t.Errorf("activate script still contains source path: %s", activateContent)
+	}
+	if !strings.Contains(activateContent, dstDir) {
+		t.Errorf("activate script doesn't contain destination path: %s", activateContent)
+	}
+
+	// Verify source file was NOT rewritten (not gitignored)
+	unchangedSrc, err := os.ReadFile(filepath.Join(dstDir, "main.py"))
+	if err != nil {
+		t.Fatalf("Failed to read source file: %v", err)
+	}
+	unchangedContent := string(unchangedSrc)
+	if !strings.Contains(unchangedContent, srcDir) {
+		t.Errorf("Source file was incorrectly rewritten: %s", unchangedContent)
+	}
+
+	// Verify binary file was not modified
+	unchangedBinary, err := os.ReadFile(filepath.Join(dstDir, "venv", "binary.dat"))
+	if err != nil {
+		t.Fatalf("Failed to read binary file: %v", err)
+	}
+	if len(unchangedBinary) != len(binaryContent) {
+		t.Errorf("Binary file was modified")
+	}
+
+	t.Logf("Path rewriting test passed - gitignored text files rewritten, others preserved")
+}
+
+func TestIsValidText(t *testing.T) {
+	testCases := []struct {
+		name     string
+		content  []byte
+		expected bool
+	}{
+		{
+			name:     "valid text",
+			content:  []byte("Hello, world!\nThis is text."),
+			expected: true,
+		},
+		{
+			name:     "empty file",
+			content:  []byte(""),
+			expected: true,
+		},
+		{
+			name:     "with null bytes",
+			content:  []byte("Hello\x00world"),
+			expected: false,
+		},
+		{
+			name:     "invalid utf8",
+			content:  []byte{0xFF, 0xFE, 0xFD},
+			expected: false,
+		},
+		{
+			name:     "mostly binary",
+			content:  []byte{0x01, 0x02, 0x03, 0x04, 0x05, 'h', 'i'},
+			expected: false,
+		},
+		{
+			name:     "json config",
+			content:  []byte(`{"name": "test", "version": "1.0.0"}`),
+			expected: true,
+		},
+		{
+			name:     "python code",
+			content:  []byte("#!/usr/bin/env python\nprint('hello')"),
+			expected: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isValidText(tc.content)
+			if result != tc.expected {
+				t.Errorf("isValidText() = %v, want %v", result, tc.expected)
+			}
+		})
+	}
+}
+
+
+---
+File: /pkg/cowgit/pathrewrite.go
+---
+
+package cowgit
+
+import (
+	"bufio"
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
+)
+
+// GitIgnore represents a parsed .gitignore file
+type GitIgnore struct {
+	patterns []string
+}
+
+// parseGitignore reads and parses .gitignore file
+func parseGitignore(repoPath string) *GitIgnore {
+	gitignorePath := filepath.Join(repoPath, ".gitignore")
+	file, err := os.Open(gitignorePath)
+	if err != nil {
+		// No .gitignore file, return empty gitignore
+		return &GitIgnore{patterns: []string{}}
+	}
+	defer file.Close()
+
+	var patterns []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Skip empty lines and comments
+		if line != "" && !strings.HasPrefix(line, "#") {
+			patterns = append(patterns, line)
+		}
+	}
+
+	return &GitIgnore{patterns: patterns}
+}
+
+// Match checks if a relative path matches any gitignore pattern
+func (g *GitIgnore) Match(relPath string) bool {
+	for _, pattern := range g.patterns {
+		if matchPattern(pattern, relPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchPattern implements basic gitignore pattern matching
+func matchPattern(pattern, path string) bool {
+	// Handle directory patterns (ending with /)
+	if strings.HasSuffix(pattern, "/") {
+		pattern = strings.TrimSuffix(pattern, "/")
+		// Check if path is in this directory
+		return strings.HasPrefix(path, pattern+"/") || path == pattern
+	}
+
+	// Handle wildcard patterns
+	if strings.Contains(pattern, "*") {
+		return matchWildcard(pattern, path)
+	}
+
+	// Exact match or directory match
+	return path == pattern || strings.HasPrefix(path, pattern+"/")
+}
+
+// matchWildcard implements basic wildcard matching
+func matchWildcard(pattern, path string) bool {
+	// Simple wildcard implementation - can be enhanced
+	if pattern == "*" {
+		return true
+	}
+	
+	// Handle *.extension patterns
+	if strings.HasPrefix(pattern, "*.") {
+		ext := pattern[1:]
+		return strings.HasSuffix(path, ext)
+	}
+	
+	// Handle prefix* patterns
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(path, prefix)
+	}
+	
+	// For more complex patterns, fall back to simple contains
+	wildcardParts := strings.Split(pattern, "*")
+	if len(wildcardParts) == 2 {
+		return strings.HasPrefix(path, wildcardParts[0]) && strings.HasSuffix(path, wildcardParts[1])
+	}
+	
+	return false
+}
+
+// rewriteAbsolutePathsAsync rewrites absolute paths in gitignored text files using adaptive worker pool
+func rewriteAbsolutePathsAsync(srcDir, dstDir string) error {
+	gitignore := parseGitignore(srcDir)
+	
+	// Create adaptive worker pool
+	pool := NewWorkerPool(srcDir, dstDir, gitignore)
+	controller := NewPoolController(pool)
+	
+	// Start pool and controller
+	pool.Start()
+	controller.Start()
+	
+	// Clean up when done
+	defer func() {
+		controller.Stop()
+		pool.Stop()
+	}()
+	
+	// Submit all files for processing
+	walkErr := filepath.Walk(dstDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			pool.Submit(path)
+		}
+		return nil
+	})
+	
+	if walkErr != nil {
+		return walkErr
+	}
+	
+	// Wait for any errors
+	select {
+	case err := <-pool.Error():
+		if err != nil {
+			return err
+		}
+	default:
+		// No errors
+	}
+	
+	return nil
+}
+
+// isValidText checks if content is valid UTF-8 text and not binary
+func isValidText(content []byte) bool {
+	// Check if valid UTF-8
+	if !utf8.Valid(content) {
+		return false
+	}
+
+	// Check for null bytes (common in binary files)
+	if bytes.Contains(content, []byte{0}) {
+		return false
+	}
+
+	// Additional heuristics for binary detection
+	// Check percentage of printable characters
+	printableCount := 0
+	for _, b := range content {
+		if b >= 32 && b <= 126 || b == '\t' || b == '\n' || b == '\r' {
+			printableCount++
+		}
+	}
+
+	// If less than 95% printable, consider it binary
+	if len(content) > 0 && float64(printableCount)/float64(len(content)) < 0.95 {
+		return false
+	}
+
+	return true
+}
+
+
+---
+File: /pkg/cowgit/worktree_test.go
+---
+
+package cowgit
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+func TestWorktreeOperations(t *testing.T) {
+	// Create a temporary git repository for testing
+	tempDir, err := os.MkdirTemp("", "coworktree-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Initialize git repo
+	if err := runCommand(tempDir, "git", "init"); err != nil {
+		t.Fatalf("Failed to init git repo: %v", err)
+	}
+
+	// Configure git
+	if err := runCommand(tempDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to config git email: %v", err)
+	}
+	if err := runCommand(tempDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to config git name: %v", err)
+	}
+
+	// Create initial commit
+	testFile := filepath.Join(tempDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("initial content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	if err := runCommand(tempDir, "git", "add", "."); err != nil {
+		t.Fatalf("Failed to add files: %v", err)
+	}
+
+	if err := runCommand(tempDir, "git", "commit", "-m", "Initial commit"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Test NewWorktree
+	worktreePath := filepath.Join(tempDir, ".cow-worktrees", "test-branch")
+	worktree := NewWorktree(tempDir, worktreePath, "test-branch")
+
+	if worktree.RepoPath != tempDir {
+		t.Errorf("Expected RepoPath %s, got %s", tempDir, worktree.RepoPath)
+	}
+	if worktree.BranchName != "test-branch" {
+		t.Errorf("Expected BranchName test-branch, got %s", worktree.BranchName)
+	}
+
+	// Test traditional worktree creation (since CoW may not be available)
+	if err := worktree.CreateCoWWorktree(); err != nil {
+		t.Logf("CoW worktree creation failed (expected on non-APFS): %v", err)
+		
+		// Fall back to regular git worktree for testing
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0755); err != nil {
+			t.Fatalf("Failed to create worktree dir: %v", err)
+		}
+		
+		if err := runCommand(tempDir, "git", "worktree", "add", "-b", "test-branch", worktreePath); err != nil {
+			t.Fatalf("Failed to create regular worktree: %v", err)
+		}
+		
+		t.Logf("Created regular worktree for testing")
+	}
+
+	// Verify worktree was created
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Error("Worktree path does not exist")
+	}
+
+	// Test ListWorktrees
+	worktrees, err := ListWorktrees(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to list worktrees: %v", err)
+	}
+
+	found := false
+	for _, wt := range worktrees {
+		if wt.Branch == "test-branch" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Created worktree not found in list")
+	}
+
+	// Test Remove
+	if err := worktree.Remove(); err != nil {
+		t.Fatalf("Failed to remove worktree: %v", err)
+	}
+
+	// Verify worktree was removed
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Error("Worktree path still exists after removal")
+	}
+}
+
+func runCommand(dir string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	return cmd.Run()
+}
+
+
+---
+File: /pkg/cowgit/worktree.go
+---
+
+package cowgit
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+)
+
+// Worktree represents a git worktree with CoW capabilities
+type Worktree struct {
+	RepoPath     string
+	WorktreePath string
+	BranchName   string
+	BaseCommit   string
+	NoRewrite    bool
+}
+
+// NewWorktree creates a new Worktree instance
+func NewWorktree(repoPath, worktreePath, branchName string) *Worktree {
+	return &Worktree{
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		BranchName:   branchName,
+	}
+}
+
+// NewWorktreeWithOptions creates a new Worktree instance with options
+func NewWorktreeWithOptions(repoPath, worktreePath, branchName string, noRewrite bool) *Worktree {
+	return &Worktree{
+		RepoPath:     repoPath,
+		WorktreePath: worktreePath,
+		BranchName:   branchName,
+		NoRewrite:    noRewrite,
+	}
+}
+
+// CreateCoWWorktree creates a new worktree using copy-on-write
+func (w *Worktree) CreateCoWWorktree() error {
+	// Ensure worktrees directory exists
+	worktreesDir := filepath.Dir(w.WorktreePath)
+	if err := os.MkdirAll(worktreesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create worktrees directory: %w", err)
+	}
+
+	// Clean up any existing worktree first
+	w.runGitCommand(w.RepoPath, "worktree", "remove", "-f", w.WorktreePath) // Ignore error if worktree doesn't exist
+
+	// Get HEAD commit
+	output, err := w.runGitCommand(w.RepoPath, "rev-parse", "HEAD")
+	if err != nil {
+		if strings.Contains(err.Error(), "fatal: ambiguous argument 'HEAD'") ||
+			strings.Contains(err.Error(), "fatal: not a valid object name") ||
+			strings.Contains(err.Error(), "fatal: HEAD: not a valid object name") {
+			return fmt.Errorf("this appears to be a brand new repository: please create an initial commit before creating a worktree")
+		}
+		return fmt.Errorf("failed to get HEAD commit hash: %w", err)
+	}
+	headCommit := strings.TrimSpace(string(output))
+	w.BaseCommit = headCommit
+
+	// Try copy-on-write first, fall back to regular worktree if it fails
+	if err := w.setupWorktreeWithCoW(); err != nil {
+		return w.setupRegularWorktree(headCommit)
+	}
+
+	return nil
+}
+
+// CreateFromExistingBranch creates a worktree from an existing branch
+func (w *Worktree) CreateFromExistingBranch() error {
+	// Ensure worktrees directory exists
+	worktreesDir := filepath.Dir(w.WorktreePath)
+	if err := os.MkdirAll(worktreesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create worktrees directory: %w", err)
+	}
+
+	// Clean up any existing worktree first
+	w.runGitCommand(w.RepoPath, "worktree", "remove", "-f", w.WorktreePath) // Ignore error if worktree doesn't exist
+
+	// Create a new worktree from the existing branch
+	if _, err := w.runGitCommand(w.RepoPath, "worktree", "add", w.WorktreePath, w.BranchName); err != nil {
+		return fmt.Errorf("failed to create worktree from branch %s: %w", w.BranchName, err)
+	}
+
+	return nil
+}
+
+// setupWorktreeWithCoW creates a worktree using copy-on-write
+func (w *Worktree) setupWorktreeWithCoW() error {
+	// Remove existing worktree path if it exists
+	if err := os.RemoveAll(w.WorktreePath); err != nil {
+		return fmt.Errorf("failed to remove existing worktree path: %w", err)
+	}
+
+	// Create CoW clone of the entire repository
+	if err := CloneDirectory(w.RepoPath, w.WorktreePath); err != nil {
+		return fmt.Errorf("failed to clone directory: %w", err)
+	}
+
+	// Create and checkout the new branch in the cloned directory
+	if _, err := w.runGitCommand(w.WorktreePath, "checkout", "-b", w.BranchName); err != nil {
+		// Clean up the clone if checkout fails
+		os.RemoveAll(w.WorktreePath)
+		return fmt.Errorf("failed to create branch %s: %w", w.BranchName, err)
+	}
+
+	// Register the cloned directory as a proper git worktree
+	if _, err := w.runGitCommand(w.RepoPath, "worktree", "add", "--detach", w.WorktreePath); err != nil {
+		// Clean up the clone if worktree registration fails
+		os.RemoveAll(w.WorktreePath)
+		return fmt.Errorf("failed to register worktree: %w", err)
+	}
+
+	// Rewrite absolute paths in gitignored files (unless disabled)
+	if !w.NoRewrite {
+		if err := rewriteAbsolutePathsAsync(w.RepoPath, w.WorktreePath); err != nil {
+			// Log warning but don't fail - path rewriting is best effort
+			// TODO: Add proper logging
+			_ = err
+		}
+	}
+
+	return nil
+}
+
+// setupRegularWorktree creates a worktree using the traditional git worktree method
+func (w *Worktree) setupRegularWorktree(headCommit string) error {
+	if _, err := w.runGitCommand(w.RepoPath, "worktree", "add", "-b", w.BranchName, w.WorktreePath, headCommit); err != nil {
+		return fmt.Errorf("failed to create worktree from commit %s: %w", headCommit, err)
+	}
+	return nil
+}
+
+// Remove removes the worktree but keeps the branch
+func (w *Worktree) Remove() error {
+	if _, err := w.runGitCommand(w.RepoPath, "worktree", "remove", "-f", w.WorktreePath); err != nil {
+		return fmt.Errorf("failed to remove worktree: %w", err)
+	}
+	return nil
+}
+
+// RemoveWithBranch removes the worktree and associated branch
+func (w *Worktree) RemoveWithBranch() error {
+	var errs []error
+
+	// Check if worktree path exists before attempting removal
+	if _, err := os.Stat(w.WorktreePath); err == nil {
+		// Remove the worktree using git command
+		if _, err := w.runGitCommand(w.RepoPath, "worktree", "remove", "-f", w.WorktreePath); err != nil {
+			errs = append(errs, err)
+		}
+	} else if !os.IsNotExist(err) {
+		errs = append(errs, fmt.Errorf("failed to check worktree path: %w", err))
+	}
+
+	// Open the repository for branch cleanup
+	repo, err := git.PlainOpen(w.RepoPath)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to open repository for cleanup: %w", err))
+		return combineErrors(errs)
+	}
+
+	branchRef := plumbing.NewBranchReferenceName(w.BranchName)
+
+	// Check if branch exists before attempting removal
+	if _, err := repo.Reference(branchRef, false); err == nil {
+		if err := repo.Storer.RemoveReference(branchRef); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove branch %s: %w", w.BranchName, err))
+		}
+	} else if err != plumbing.ErrReferenceNotFound {
+		errs = append(errs, fmt.Errorf("error checking branch %s existence: %w", w.BranchName, err))
+	}
+
+	// Prune the worktree to clean up any remaining references
+	if err := w.Prune(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return combineErrors(errs)
+	}
+
+	return nil
+}
+
+// Prune removes all working tree administrative files and directories
+func (w *Worktree) Prune() error {
+	if _, err := w.runGitCommand(w.RepoPath, "worktree", "prune"); err != nil {
+		return fmt.Errorf("failed to prune worktrees: %w", err)
+	}
+	return nil
+}
+
+// ListWorktrees returns a list of all worktrees in the repository
+func ListWorktrees(repoPath string) ([]WorktreeInfo, error) {
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = repoPath
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list worktrees: %w", err)
+	}
+
+	var worktrees []WorktreeInfo
+	var current WorktreeInfo
+	lines := strings.Split(string(output), "\n")
+	
+	for _, line := range lines {
+		if strings.HasPrefix(line, "worktree ") {
+			if current.Path != "" {
+				worktrees = append(worktrees, current)
+			}
+			current = WorktreeInfo{Path: strings.TrimPrefix(line, "worktree ")}
+		} else if strings.HasPrefix(line, "branch ") {
+			branchPath := strings.TrimPrefix(line, "branch ")
+			current.Branch = strings.TrimPrefix(branchPath, "refs/heads/")
+		} else if strings.HasPrefix(line, "HEAD ") {
+			current.HEAD = strings.TrimPrefix(line, "HEAD ")
+		}
+	}
+	
+	if current.Path != "" {
+		worktrees = append(worktrees, current)
+	}
+
+	return worktrees, nil
+}
+
+// WorktreeInfo represents information about a git worktree
+type WorktreeInfo struct {
+	Path   string
+	Branch string
+	HEAD   string
+}
+
+// runGitCommand executes a git command in the specified directory
+func (w *Worktree) runGitCommand(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Output()
+}
+
+// combineErrors combines multiple errors into a single error
+func combineErrors(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	
+	var messages []string
+	for _, err := range errs {
+		messages = append(messages, err.Error())
+	}
+	
+	return fmt.Errorf("multiple errors occurred: %s", strings.Join(messages, "; "))
+}
+
+
+---
+File: /go.mod
+---
+
+module coworktree
+
+go 1.24.4
+
+require (
+	github.com/go-git/go-git/v5 v5.16.2
+	github.com/spf13/cobra v1.9.1
+	golang.org/x/sys v0.33.0
+)
+
+require (
+	dario.cat/mergo v1.0.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/ProtonMail/go-crypto v1.1.6 // indirect
+	github.com/cloudflare/circl v1.6.1 // indirect
+	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
+	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
+	github.com/go-git/go-billy/v5 v5.6.2 // indirect
+	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
+	github.com/kevinburke/ssh_config v1.2.0 // indirect
+	github.com/pjbgf/sha1cd v0.3.2 // indirect
+	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
+	github.com/skeema/knownhosts v1.3.1 // indirect
+	github.com/spf13/pflag v1.0.6 // indirect
+	github.com/xanzy/ssh-agent v0.3.3 // indirect
+	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/net v0.39.0 // indirect
+	gopkg.in/warnings.v0 v0.1.2 // indirect
+)
+
+
+
+---
+File: /main.go
+---
+
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"coworktree/cmd"
+)
+
+func main() {
+	if err := cmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+
+---
+File: /README.md
+---
+
+# CoWorktree
+
+A Copy-on-Write Git Worktree Manager that combines filesystem-level CoW features with git worktrees to create instant, fully-featured development environments.
+
+## Features
+
+- **Instant environment setup**: Create working copies of projects in ~1 second instead of 10-30+ seconds
+- **Complete isolation**: Each worktree can modify dependencies without affecting others
+- **Zero manual setup**: No need to run `npm install`, `pip install`, `go mod download`, etc.
+- **Git integration**: Proper git worktree management with branch tracking
+- **Cross-platform**: Support macOS (APFS) and Linux (overlayfs - coming soon)
+
+## Installation
+
+```bash
+go build -o coworktree
+```
+
+## Usage
+
+### As a CLI Tool
+
+#### Create a new CoW worktree
+
+```bash
+coworktree create feature-branch
+```
+
+This will:
+1. Create a CoW clone of your entire project (including `node_modules`, build artifacts, etc.)
+2. Create a new git branch in the worktree
+3. Register the worktree with git
+
+#### List all worktrees
+
+```bash
+coworktree list
+coworktree list --format=json
+coworktree list --show-stats
+```
+
+#### Remove a worktree
+
+```bash
+coworktree remove feature-branch
+coworktree remove feature-branch --keep-branch
+```
+
+#### Global flags
+
+- `--verbose, -v`: Enable verbose logging
+- `--dry-run`: Show what would be done without executing
+- `--no-cow`: Force traditional git worktree (skip CoW)
+
+### As a Go Library
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    
+    "coworktree/pkg/cowgit"
+)
+
+func main() {
+    // Create a manager for the current repository
+    manager, err := cowgit.NewManager(".")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Create a new CoW worktree
+    opts := cowgit.CreateOptions{
+        BranchName: "feature-branch",
+        // WorktreePath: "/custom/path", // Optional custom path
+        // NoCoW: false,                // Optional: disable CoW
+        // Prefix: "prefix-",           // Optional: branch name prefix
+    }
+    
+    worktree, err := manager.Create(opts)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Created worktree at: %s\n", worktree.WorktreePath)
+    
+    // List all CoW worktrees
+    worktrees, err := manager.ListCoW()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    for _, wt := range worktrees {
+        fmt.Printf("Branch: %s, Path: %s\n", wt.Branch, wt.Path)
+    }
+    
+    // Remove a worktree (and its branch)
+    err = manager.Remove("feature-branch", false)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Check if CoW is supported
+    supported, err := manager.IsCoWSupported()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("CoW supported: %t\n", supported)
+}
+```
+
+## Platform Support
+
+### macOS (APFS)
+- Uses `clonefile()` syscall for true copy-on-write
+- Instant cloning regardless of project size
+- Requires APFS filesystem (default on modern macOS)
+
+### Linux (overlayfs)
+- Coming soon
+- Will use kernel overlayfs for CoW functionality
+
+### Fallback
+- Automatically falls back to traditional `git worktree` on unsupported platforms
+- Graceful degradation ensures compatibility everywhere
+
+## How It Works
+
+CoWorktree leverages filesystem-level copy-on-write features to create instant copies of your entire project directory, including:
+
+- Source code
+- Dependencies (`node_modules`, `venv`, `vendor`, etc.)
+- Build artifacts
+- IDE configuration
+- Any other project files
+
+The CoW clone shares storage with the original until files are modified, making it extremely space-efficient while providing complete isolation.
+
+## Use Cases
+
+- **Feature development**: Quickly spin up isolated environments for different features
+- **Experimentation**: Test dependency updates without affecting main environment
+- **Parallel work**: Multiple developers/agents working on same project simultaneously
+- **Code review**: Quickly checkout PRs with full working environment
+- **CI/CD**: Faster build environments with pre-installed dependencies
+
+## Performance
+
+On a typical Node.js project with 18k+ files in `node_modules`:
+- Traditional `git worktree` + `npm install`: 30-60 seconds
+- CoWorktree: <2 seconds
+
+## Testing
+
+```bash
+go test ./pkg/cowgit -v
+```
+
+Tests cover:
+- CoW functionality on APFS
+- Git worktree integration
+- Large project handling
+- Cross-platform compatibility
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
+
+## License
+
+MIT License
