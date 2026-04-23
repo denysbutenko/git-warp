@@ -195,7 +195,9 @@ impl AgentDiscovery {
             let Some(content) = load_session_file_lines(&file_path) else {
                 continue;
             };
-            sessions.extend(content.lines().filter_map(parse_codex_session_meta_line));
+            if let Some(summary) = parse_codex_session_file(&content) {
+                sessions.push(summary);
+            }
         }
 
         Ok(sessions)
@@ -325,6 +327,40 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
         is_live: false,
         source: AgentSessionSource::SessionStore,
     })
+}
+
+fn parse_codex_session_file(content: &str) -> Option<AgentSessionSummary> {
+    let mut session = None;
+    let mut newest_event_timestamp = None;
+
+    for line in content.lines() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        if let Some(timestamp) = value
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(parse_timestamp)
+        {
+            newest_event_timestamp = Some(match newest_event_timestamp {
+                Some(current) if current >= timestamp => current,
+                _ => timestamp,
+            });
+        }
+
+        if value.get("type").and_then(|v| v.as_str()) == Some("session_meta") {
+            session = parse_codex_session_meta_line(line);
+        }
+    }
+
+    let mut session = session?;
+    if let Some(timestamp) = newest_event_timestamp {
+        session.last_activity = timestamp;
+    }
+
+    Some(session)
 }
 
 pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSessionSummary> {

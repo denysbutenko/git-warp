@@ -286,11 +286,19 @@ fn test_discover_keeps_distinct_recent_history_rows_without_live_status() {
     fs::create_dir_all(&codex_sessions).unwrap();
 
     fs::write(
-        codex_sessions.join("sessions.jsonl"),
+        codex_sessions.join("session-a.jsonl"),
         format!(
             r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat"}}}}
-{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat-2"}}}}"#,
-            worktree_root.display(),
+{{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
+            worktree_root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        codex_sessions.join("session-b.jsonl"),
+        format!(
+            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat-2"}}}}
+{{"timestamp":"2026-04-22T10:30:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
     )
@@ -334,11 +342,19 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
     )
     .unwrap();
     fs::write(
-        codex_sessions.join("sessions.jsonl"),
+        codex_sessions.join("session-a.jsonl"),
         format!(
             r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat"}}}}
-{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat-2"}}}}"#,
-            worktree_root.display(),
+{{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
+            worktree_root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        codex_sessions.join("session-b.jsonl"),
+        format!(
+            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat-2"}}}}
+{{"timestamp":"2026-04-22T10:30:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
     )
@@ -355,14 +371,14 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
     assert!(sessions.iter().any(|session| {
         session.is_live
             && session.source == AgentSessionSource::Merged
-            && session.session_id.as_deref() == Some("session-2")
-            && session.branch.as_deref() == Some("feat-2")
+            && session.session_id.as_deref() == Some("session-1")
+            && session.branch.as_deref() == Some("feat")
     }));
     assert!(sessions.iter().any(|session| {
         !session.is_live
             && session.source == AgentSessionSource::SessionStore
-            && session.session_id.as_deref() == Some("session-1")
-            && session.branch.as_deref() == Some("feat")
+            && session.session_id.as_deref() == Some("session-2")
+            && session.branch.as_deref() == Some("feat-2")
     }));
 }
 
