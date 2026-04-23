@@ -8,6 +8,7 @@ pub mod cow;
 pub mod error;
 pub mod git;
 pub mod hooks;
+pub mod post_create;
 pub mod process;
 pub mod rewrite;
 pub mod terminal;
