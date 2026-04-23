@@ -1,4 +1,5 @@
 // Unit tests for individual components
+pub mod agents_tests;
 pub mod config_tests;
 pub mod cow_tests;
 pub mod git_tests;

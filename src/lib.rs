@@ -3,6 +3,7 @@
 //! This crate combines Copy-on-Write (CoW) filesystem operations with advanced Git worktree
 //! management to provide fast, reliable development environment setup.
 
+pub mod agents;
 pub mod config;
 pub mod cow;
 pub mod error;
