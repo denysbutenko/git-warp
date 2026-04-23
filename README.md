@@ -82,6 +82,10 @@ warp ls
 warp switch feature/new-feature
 warp feature/new-feature  # Short form
 
+# Reopen the most recent or waiting agent branch
+warp switch --latest
+warp switch --waiting
+
 # Custom worktree location  
 warp switch --path /custom/location feature/branch
 
@@ -129,7 +133,7 @@ warp hooks-remove --level user
 # View current configuration
 warp config --show
 
-# Interactive configuration editor
+# Open the config file in your editor
 warp config --edit
 
 # Terminal mode options
@@ -208,7 +212,6 @@ kill_timeout = 5               # Timeout in seconds
 [terminal]
 app = "auto"                   # auto, terminal, iterm2, warp
 auto_activate = true           # Activate new terminal windows
-init_commands = []             # Commands to run in new terminals
 
 [agent]
 enabled = true                 # Enable Claude Code integration
