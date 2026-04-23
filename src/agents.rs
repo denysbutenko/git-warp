@@ -66,7 +66,10 @@ pub fn parse_live_status_file(
         Err(err) => return Err(err.into()),
     };
 
-    let value: Value = serde_json::from_str(&content)?;
+    let value: Value = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
     let last_activity = value
         .get("last_activity")
         .and_then(|v| v.as_str())

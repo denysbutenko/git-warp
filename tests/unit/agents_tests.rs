@@ -4,8 +4,6 @@ use git_warp::agents::{
     parse_codex_session_meta_line, parse_live_status_file,
 };
 use std::fs;
-use std::thread::sleep;
-use std::time::Duration;
 
 #[test]
 fn test_parse_live_status_file() {
@@ -32,14 +30,27 @@ fn test_parse_live_status_file_falls_back_to_modified_time() {
     let status_path = temp_dir.path().join("status");
     fs::write(&status_path, r#"{"status":"working","last_activity":"not-a-time"}"#).unwrap();
 
-    sleep(Duration::from_millis(1100));
-
     let summary = parse_live_status_file(AgentRuntime::Codex, &status_path)
         .unwrap()
         .expect("status file should parse");
     let modified = DateTime::<Local>::from(fs::metadata(&status_path).unwrap().modified().unwrap());
 
     assert_eq!(summary.last_activity, modified);
+}
+
+#[test]
+fn test_parse_live_status_file_malformed_json_returns_none() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let status_path = temp_dir.path().join("status");
+
+    for content in ["", "{", r#"{"status":"working""#] {
+        fs::write(&status_path, content).unwrap();
+
+        assert_eq!(
+            parse_live_status_file(AgentRuntime::Codex, &status_path).unwrap(),
+            None
+        );
+    }
 }
 
 #[test]
