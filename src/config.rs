@@ -84,6 +84,7 @@ pub struct TerminalConfig {
 
     /// Custom init commands for new worktrees
     #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub init_commands: Vec<String>,
 }
 
@@ -267,9 +268,6 @@ app = "{}"
 
 # Auto-activate new tabs/windows
 auto_activate = {}
-
-# Custom commands to run in new worktrees
-# init_commands = ["npm install", "source .env"]
 
 [agent]
 # Enable agent monitoring

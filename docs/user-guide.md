@@ -126,6 +126,10 @@ warp ls
 # Switch to existing branch
 warp switch existing-branch
 
+# Switch to the most recent or waiting agent branch
+warp switch --latest
+warp switch --waiting
+
 # List worktrees with details
 warp ls --debug
 
@@ -272,10 +276,10 @@ warp config --show
 # Shows all configuration with current values
 ```
 
-**Generate Sample Config**:
+**Open the Config File**:
 ```bash
 warp config --edit
-# Shows sample configuration and creates default if needed
+# Creates the default config if needed, then opens it in your editor
 ```
 
 **Environment Variables** (Override any setting):
@@ -398,9 +402,6 @@ app = "auto"
 # Auto-activate new tabs/windows
 auto_activate = true
 
-# Custom commands to run in new worktrees
-# init_commands = ["npm install", "source .env"]
-
 [agent]
 # Enable agent monitoring
 enabled = true
@@ -518,9 +519,8 @@ git worktree remove --force broken-branch
 # Remove config file
 rm ~/.config/git-warp/config.toml
 
-# Regenerate default
+# Recreate and open the default config
 warp config --edit
-# Press 'y' when prompted
 ```
 
 ---

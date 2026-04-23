@@ -70,7 +70,13 @@ fn status_file_path(root: &Path, runtime: AgentRuntime) -> PathBuf {
     }
 }
 
+fn normalize_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn is_path_within_root(path: &Path, root: &Path) -> bool {
+    let path = normalize_path(path);
+    let root = normalize_path(root);
     path == root || path.starts_with(root)
 }
 
@@ -271,13 +277,12 @@ pub fn parse_live_status_file(
         .parent()
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
+        .unwrap_or_else(|| Path::new("."));
 
     Ok(Some(AgentSessionSummary {
         runtime,
         session_id: None,
-        cwd,
+        cwd: normalize_path(cwd),
         branch: None,
         agent_label: match runtime {
             AgentRuntime::Claude => "Claude".to_string(),
@@ -312,7 +317,7 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
             .get("id")
             .and_then(|v| v.as_str())
             .map(str::to_string),
-        cwd: PathBuf::from(cwd),
+        cwd: normalize_path(Path::new(cwd)),
         branch: payload
             .get("git")
             .and_then(|git| git.get("branch"))
@@ -513,7 +518,7 @@ pub fn parse_claude_session_event_line(line: &str) -> Option<AgentSessionSummary
             .get("sessionId")
             .and_then(|v| v.as_str())
             .map(str::to_string),
-        cwd: PathBuf::from(cwd),
+        cwd: normalize_path(Path::new(cwd)),
         branch: value
             .get("gitBranch")
             .and_then(|v| v.as_str())

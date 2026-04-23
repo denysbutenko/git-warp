@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(
@@ -28,10 +30,6 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub terminal: Option<String>,
 
-    /// Always create new terminal session
-    #[arg(long, global = true)]
-    pub always_new: bool,
-
     /// Auto-confirm operations
     #[arg(long, short = 'y', global = true)]
     pub auto_confirm: bool,
@@ -42,17 +40,14 @@ pub enum Commands {
     /// Create or switch to a worktree
     Switch {
         /// Branch name
-        branch: String,
+        branch: Option<String>,
         /// Custom worktree path
         #[arg(long)]
         path: Option<String>,
-        /// Init script to run after creation
-        #[arg(long)]
-        init: Option<String>,
-        /// Skip to latest agent
+        /// Switch to the most recent agent branch
         #[arg(long)]
         latest: bool,
-        /// Skip to waiting agent
+        /// Switch to the most recent waiting agent branch
         #[arg(long)]
         waiting: bool,
         /// Force traditional worktree (skip CoW)
@@ -92,7 +87,7 @@ pub enum Commands {
         /// Show current configuration
         #[arg(long)]
         show: bool,
-        /// Edit configuration interactively
+        /// Open the configuration file in your editor
         #[arg(long)]
         edit: bool,
     },
@@ -147,7 +142,7 @@ impl Cli {
             None => {
                 if let Some(branch) = &self.branch {
                     // Dynamic branch command - same as switch
-                    self.handle_switch(branch, None, None, false, false, false)
+                    self.handle_switch(Some(branch), None, false, false, false)
                 } else {
                     // No command or branch - show help
                     let mut cmd = Self::command();
@@ -163,14 +158,12 @@ impl Cli {
             Commands::Switch {
                 branch,
                 path,
-                init,
                 latest,
                 waiting,
                 no_cow,
             } => self.handle_switch(
-                branch,
+                branch.as_deref(),
                 path.as_deref(),
-                init.as_deref(),
                 *latest,
                 *waiting,
                 *no_cow,
@@ -198,11 +191,10 @@ impl Cli {
 
     fn handle_switch(
         &self,
-        branch: &str,
+        branch: Option<&str>,
         path: Option<&str>,
-        _init: Option<&str>,
-        _latest: bool,
-        _waiting: bool,
+        latest: bool,
+        waiting: bool,
         no_cow: bool,
     ) -> Result<()> {
         use crate::config::ConfigManager;
@@ -211,13 +203,13 @@ impl Cli {
         use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
         use crate::rewrite::PathRewriter;
         use crate::terminal::{TerminalManager, TerminalMode};
-        use std::path::PathBuf;
-
-        info!("Switching to branch: {}", branch);
 
         // Find the Git repository
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let branch = self.resolve_switch_branch(&git_repo, branch, latest, waiting)?;
+
+        info!("Switching to branch: {}", branch);
 
         let config_manager = ConfigManager::new()?;
         let config = config_manager.get();
@@ -226,7 +218,7 @@ impl Cli {
         let worktree_path = if let Some(path) = path {
             PathBuf::from(path)
         } else {
-            git_repo.get_worktree_path_with_base(branch, config.worktrees_path.as_deref())
+            git_repo.get_worktree_path_with_base(&branch, config.worktrees_path.as_deref())
         };
 
         if self.dry_run {
@@ -259,7 +251,7 @@ impl Cli {
                 println!("⚡ Using Copy-on-Write for instant creation...");
 
                 // Create worktree using traditional method first
-                git_repo.create_worktree_and_branch(branch, &worktree_path, None)?;
+                git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
 
                 // If we have existing worktrees, try CoW enhancement
                 let worktrees = git_repo.list_worktrees()?;
@@ -273,7 +265,7 @@ impl Cli {
                     if let Err(e) = cow::clone_directory(&main_worktree.path, &worktree_path) {
                         log::warn!("CoW failed, falling back to traditional method: {}", e);
                         // Recreate using traditional method
-                        git_repo.create_worktree_and_branch(branch, &worktree_path, None)?;
+                        git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
                     } else {
                         // Rewrite paths in the CoW copy
                         let rewriter = PathRewriter::new(&main_worktree.path, &worktree_path);
@@ -282,9 +274,8 @@ impl Cli {
                         }
 
                         // Switch to the correct branch
-                        use std::process::Command;
                         let output = Command::new("git")
-                            .args(&["checkout", branch])
+                            .args(["checkout", branch.as_str()])
                             .current_dir(&worktree_path)
                             .output()?;
 
@@ -296,7 +287,7 @@ impl Cli {
                 }
             } else {
                 println!("📦 Using traditional Git worktree creation...");
-                git_repo.create_worktree_and_branch(branch, &worktree_path, None)?;
+                git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
             }
 
             println!("✅ Worktree created successfully!");
@@ -342,6 +333,77 @@ impl Cli {
         }
 
         Ok(())
+    }
+
+    fn resolve_switch_branch(
+        &self,
+        git_repo: &crate::git::GitRepository,
+        branch: Option<&str>,
+        latest: bool,
+        waiting: bool,
+    ) -> Result<String> {
+        let selector_count =
+            usize::from(branch.is_some()) + usize::from(latest) + usize::from(waiting);
+        if selector_count != 1 {
+            return Err(anyhow::anyhow!(
+                "Specify exactly one of [BRANCH], --latest, or --waiting"
+            ));
+        }
+
+        if let Some(branch) = branch {
+            return Ok(branch.to_string());
+        }
+
+        use crate::agents::{AgentDiscovery, AgentSessionState};
+        use chrono::Local;
+
+        let discovery = AgentDiscovery::new(Self::agent_monitored_paths(git_repo)?);
+        let sessions = discovery.discover(Local::now())?;
+
+        let branch = if waiting {
+            sessions
+                .into_iter()
+                .find(|session| {
+                    session.state == AgentSessionState::Waiting
+                        && session
+                            .branch
+                            .as_ref()
+                            .is_some_and(|branch| !branch.is_empty())
+                })
+                .and_then(|session| session.branch)
+        } else {
+            sessions
+                .into_iter()
+                .find(|session| {
+                    session.state != AgentSessionState::Completed
+                        && session
+                            .branch
+                            .as_ref()
+                            .is_some_and(|branch| !branch.is_empty())
+                })
+                .and_then(|session| session.branch)
+        };
+
+        branch.ok_or_else(|| {
+            if waiting {
+                anyhow::anyhow!("No waiting agent branches were found for this repository")
+            } else {
+                anyhow::anyhow!("No recent agent branches were found for this repository")
+            }
+        })
+    }
+
+    fn agent_monitored_paths(git_repo: &crate::git::GitRepository) -> Result<Vec<PathBuf>> {
+        let mut monitored_paths = vec![git_repo.root_path().to_path_buf()];
+        monitored_paths.extend(
+            git_repo
+                .list_worktrees()?
+                .into_iter()
+                .map(|worktree| worktree.path),
+        );
+        monitored_paths.sort();
+        monitored_paths.dedup();
+        Ok(monitored_paths)
     }
 
     fn handle_ls(&self, debug: bool) -> Result<()> {
@@ -653,9 +715,6 @@ impl Cli {
             println!("🖥️  Terminal Integration:");
             println!("  App: {}", config.terminal.app);
             println!("  Auto-activate: {}", config.terminal.auto_activate);
-            if !config.terminal.init_commands.is_empty() {
-                println!("  Init commands: {:?}", config.terminal.init_commands);
-            }
             println!();
 
             println!("🤖 Agent Settings:");
@@ -664,36 +723,22 @@ impl Cli {
             println!("  Max activities: {}", config.agent.max_activities);
             println!("  Claude hooks: {}", config.agent.claude_hooks);
         } else if edit {
-            // Interactive config editing (for now, show sample config)
-            println!("📝 Sample Configuration:");
-            println!("Copy this to: {}", config_manager.config_path().display());
-            println!();
-            config_manager.show_sample_config();
-
             if !config_manager.config_exists() {
-                println!();
-                println!("💡 No config file found. Create one? [y/N]: ");
-                use std::io::{self, Write};
-                io::stdout().flush()?;
-
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-
-                if input.trim().to_lowercase().starts_with('y') {
-                    config_manager.create_default_config()?;
-                    println!(
-                        "✅ Created default configuration at: {}",
-                        config_manager.config_path().display()
-                    );
-                }
+                config_manager.create_default_config()?;
+                println!(
+                    "✅ Created default configuration at: {}",
+                    config_manager.config_path().display()
+                );
             }
+
+            Self::open_in_editor(config_manager.config_path())?;
         } else {
             // Show help for config command
             println!("⚙️  Configuration Management");
             println!();
             println!("Usage:");
             println!("  warp config --show     Show current configuration");
-            println!("  warp config --edit     Edit configuration interactively");
+            println!("  warp config --edit     Open configuration in your editor");
             println!();
             println!("Configuration file location:");
             println!("  {}", config_manager.config_path().display());
@@ -721,17 +766,8 @@ impl Cli {
 
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
-        let mut monitored_paths = vec![git_repo.root_path().to_path_buf()];
-        monitored_paths.extend(
-            git_repo
-                .list_worktrees()?
-                .into_iter()
-                .map(|worktree| worktree.path),
-        );
-        monitored_paths.sort();
-        monitored_paths.dedup();
-
-        let dashboard = AgentsDashboard::new(AgentDiscovery::new(monitored_paths));
+        let dashboard =
+            AgentsDashboard::new(AgentDiscovery::new(Self::agent_monitored_paths(&git_repo)?));
         dashboard.run()
     }
 
@@ -780,7 +816,96 @@ impl Cli {
 
     fn handle_shell_config(&self, shell: Option<&str>) -> Result<()> {
         info!("Generating shell config for: {:?}", shell);
-        println!("🚧 Shell config not yet implemented");
+        let detected_shell = shell
+            .map(str::to_string)
+            .or_else(|| {
+                std::env::var("SHELL").ok().and_then(|value| {
+                    value
+                        .rsplit('/')
+                        .next()
+                        .map(str::to_string)
+                        .filter(|value| !value.is_empty())
+                })
+            })
+            .unwrap_or_else(|| "bash".to_string());
+
+        match detected_shell.as_str() {
+            "bash" => {
+                println!("# Add to ~/.bashrc");
+                println!(
+                    "{}",
+                    r#"warp_cd() { eval "$(warp --terminal echo "$@")"; }"#
+                );
+            }
+            "zsh" => {
+                println!("# Add to ~/.zshrc");
+                println!(
+                    "{}",
+                    r#"warp_cd() { eval "$(warp --terminal echo "$@")"; }"#
+                );
+            }
+            "fish" => {
+                println!("# Add to ~/.config/fish/config.fish");
+                println!("function warp_cd");
+                println!("    eval (warp --terminal echo $argv)");
+                println!("end");
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported shell '{other}'. Supported shells: bash, zsh, fish"
+                ));
+            }
+        }
         Ok(())
+    }
+
+    fn open_in_editor(path: &Path) -> Result<()> {
+        let editor = std::env::var("VISUAL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("EDITOR")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+
+        if let Some(editor) = editor {
+            let mut parts = editor.split_whitespace();
+            let program = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Invalid editor command"))?;
+            let status = Command::new(program)
+                .args(parts)
+                .arg(path)
+                .status()
+                .map_err(|err| anyhow::anyhow!("Failed to launch editor '{}': {}", editor, err))?;
+
+            if status.success() {
+                return Ok(());
+            }
+
+            return Err(anyhow::anyhow!(
+                "Editor '{}' exited with status {:?}",
+                editor,
+                status.code()
+            ));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let status = Command::new("open")
+                .args(["-t"])
+                .arg(path)
+                .status()
+                .map_err(|err| anyhow::anyhow!("Failed to open config file: {}", err))?;
+
+            if status.success() {
+                return Ok(());
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "No editor configured. Set $VISUAL or $EDITOR to use `warp config --edit`"
+        ))
     }
 }
