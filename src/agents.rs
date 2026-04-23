@@ -1,16 +1,19 @@
 use crate::error::Result;
-use chrono::{DateTime, Local};
+use crate::git::GitRepository;
+use chrono::{DateTime, Duration, Local};
+use ignore::WalkBuilder;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AgentRuntime {
     Claude,
     Codex,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AgentSessionState {
     Working,
     Processing,
@@ -20,7 +23,7 @@ pub enum AgentSessionState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AgentSessionSource {
     LiveStatus,
     SessionStore,
@@ -40,6 +43,11 @@ pub struct AgentSessionSummary {
     pub source: AgentSessionSource,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentDiscovery {
+    monitored_paths: Vec<PathBuf>,
+}
+
 fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
     chrono::DateTime::parse_from_rfc3339(value)
         .ok()
@@ -53,6 +61,119 @@ fn map_status(value: &str) -> AgentSessionState {
         "waiting" => AgentSessionState::Waiting,
         "subagent_complete" => AgentSessionState::Completed,
         _ => AgentSessionState::Unknown,
+    }
+}
+
+fn status_file_path(root: &Path, runtime: AgentRuntime) -> PathBuf {
+    match runtime {
+        AgentRuntime::Claude => root.join(".claude").join("git-warp").join("status"),
+        AgentRuntime::Codex => root.join(".codex").join("git-warp").join("status"),
+    }
+}
+
+fn is_path_within_root(path: &Path, root: &Path) -> bool {
+    path == root || path.starts_with(root)
+}
+
+fn is_fallback_label(runtime: AgentRuntime, label: &str) -> bool {
+    let label = label.trim();
+    label.is_empty()
+        || matches!(
+            (runtime, label),
+            (AgentRuntime::Claude, "Claude") | (AgentRuntime::Codex, "Codex")
+        )
+}
+
+fn preferred_group<'a>(items: &'a [AgentSessionSummary]) -> Vec<&'a AgentSessionSummary> {
+    let mut refs: Vec<&AgentSessionSummary> = items.iter().collect();
+    refs.sort_by(|a, b| {
+        b.is_live
+            .cmp(&a.is_live)
+            .then_with(|| b.last_activity.cmp(&a.last_activity))
+            .then_with(|| a.cwd.cmp(&b.cwd))
+    });
+    refs
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum AgentSessionKey {
+    SessionId {
+        runtime: AgentRuntime,
+        session_id: String,
+    },
+    Cwd {
+        runtime: AgentRuntime,
+        cwd: PathBuf,
+    },
+}
+
+fn session_key(session: &AgentSessionSummary) -> AgentSessionKey {
+    match &session.session_id {
+        Some(session_id) => AgentSessionKey::SessionId {
+            runtime: session.runtime,
+            session_id: session_id.clone(),
+        },
+        None => AgentSessionKey::Cwd {
+            runtime: session.runtime,
+            cwd: session.cwd.clone(),
+        },
+    }
+}
+
+fn jsonl_files_under(root: &Path) -> Vec<PathBuf> {
+    WalkBuilder::new(root)
+        .hidden(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_exclude(false)
+        .git_global(false)
+        .build()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let file_type = entry.file_type()?;
+            if !file_type.is_file() {
+                return None;
+            }
+            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                return None;
+            }
+            Some(entry.path().to_path_buf())
+        })
+        .collect()
+}
+
+fn load_session_file_lines(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
+impl AgentDiscovery {
+    pub fn new(monitored_paths: Vec<PathBuf>) -> Self {
+        Self { monitored_paths }
+    }
+
+    pub fn keep_session(&self, session: &AgentSessionSummary, now: DateTime<Local>) -> bool {
+        if now.signed_duration_since(session.last_activity) > Duration::days(7) {
+            return false;
+        }
+
+        self.monitored_paths
+            .iter()
+            .any(|root| is_path_within_root(&session.cwd, root))
+    }
+
+    pub fn discover(&self) -> Result<Vec<AgentSessionSummary>> {
+        let now = Local::now();
+        let mut sessions = Vec::new();
+
+        sessions.extend(load_live_statuses()?);
+        sessions.extend(load_codex_sessions()?);
+        sessions.extend(load_claude_sessions()?);
+
+        sessions.retain(|session| self.keep_session(session, now));
+
+        let mut merged = merge_session_summaries(sessions);
+        sort_session_summaries(&mut merged);
+        Ok(merged)
     }
 }
 
@@ -138,6 +259,133 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
         is_live: false,
         source: AgentSessionSource::SessionStore,
     })
+}
+
+pub fn load_live_statuses() -> Result<Vec<AgentSessionSummary>> {
+    let git_repo = match GitRepository::find() {
+        Ok(repo) => repo,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut roots = vec![git_repo.root_path().to_path_buf()];
+    if let Ok(worktrees) = git_repo.list_worktrees() {
+        for worktree in worktrees {
+            if !roots.iter().any(|root| root == &worktree.path) {
+                roots.push(worktree.path);
+            }
+        }
+    }
+
+    let mut sessions = Vec::new();
+    for root in roots {
+        for runtime in [AgentRuntime::Claude, AgentRuntime::Codex] {
+            let status_path = status_file_path(&root, runtime);
+            if let Some(summary) = parse_live_status_file(runtime, &status_path)? {
+                sessions.push(summary);
+            }
+        }
+    }
+
+    Ok(sessions)
+}
+
+pub fn load_codex_sessions() -> Result<Vec<AgentSessionSummary>> {
+    let Some(home_dir) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+    let sessions_root = home_dir.join(".codex").join("sessions");
+
+    let mut sessions = Vec::new();
+    for file_path in jsonl_files_under(&sessions_root) {
+        let Some(content) = load_session_file_lines(&file_path) else {
+            continue;
+        };
+        sessions.extend(content.lines().filter_map(parse_codex_session_meta_line));
+    }
+
+    Ok(sessions)
+}
+
+pub fn load_claude_sessions() -> Result<Vec<AgentSessionSummary>> {
+    let Some(home_dir) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+    let sessions_root = home_dir.join(".claude").join("projects");
+
+    let mut sessions = Vec::new();
+    for file_path in jsonl_files_under(&sessions_root) {
+        let Some(content) = load_session_file_lines(&file_path) else {
+            continue;
+        };
+        sessions.extend(content.lines().filter_map(parse_claude_session_event_line));
+    }
+
+    Ok(sessions)
+}
+
+pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSessionSummary> {
+    let mut grouped: HashMap<AgentSessionKey, Vec<AgentSessionSummary>> = HashMap::new();
+
+    for item in items {
+        grouped.entry(session_key(&item)).or_default().push(item);
+    }
+
+    let mut merged = Vec::with_capacity(grouped.len());
+
+    for mut group in grouped.into_values() {
+        if group.len() == 1 {
+            merged.push(group.pop().unwrap());
+            continue;
+        }
+
+        let ordered = preferred_group(&group);
+        let mut selected = ordered[0].clone();
+        let newest_timestamp = ordered
+            .iter()
+            .map(|item| item.last_activity)
+            .max()
+            .unwrap_or(selected.last_activity);
+        let live_item = ordered.iter().find(|item| item.is_live);
+
+        if let Some(item) = live_item {
+            selected.state = item.state;
+            selected.is_live = true;
+        }
+
+        if let Some(branch) = ordered
+            .iter()
+            .filter_map(|item| item.branch.clone())
+            .find(|branch| !branch.is_empty())
+        {
+            selected.branch = Some(branch);
+        }
+
+        if is_fallback_label(selected.runtime, &selected.agent_label) {
+            if let Some(label) = ordered
+                .iter()
+                .map(|item| item.agent_label.as_str())
+                .find(|label| !is_fallback_label(selected.runtime, label))
+            {
+                selected.agent_label = label.to_string();
+            }
+        }
+
+        selected.last_activity = newest_timestamp;
+        selected.source = AgentSessionSource::Merged;
+        merged.push(selected);
+    }
+
+    merged
+}
+
+pub fn sort_session_summaries(items: &mut [AgentSessionSummary]) {
+    items.sort_by(|a, b| {
+        b.is_live
+            .cmp(&a.is_live)
+            .then_with(|| b.last_activity.cmp(&a.last_activity))
+            .then_with(|| a.session_id.cmp(&b.session_id))
+            .then_with(|| a.cwd.cmp(&b.cwd))
+    });
 }
 
 pub fn parse_claude_session_event_line(line: &str) -> Option<AgentSessionSummary> {
