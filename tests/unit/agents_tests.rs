@@ -120,7 +120,7 @@ fn test_parse_live_status_file_malformed_json_returns_none() {
 
 #[test]
 fn test_parse_codex_session_meta_line() {
-    let line = r#"{"timestamp":"2026-04-23T05:35:14.983Z","type":"session_meta","payload":{"id":"019db8d5-cf8c-7c10-ab48-7f495e8dc54b","timestamp":"2026-04-23T05:35:13.308Z","cwd":"/tmp/repo/.worktrees/feat","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker"}}"#;
+    let line = r#"{"timestamp":"2026-04-23T05:35:14.983Z","type":"session_meta","payload":{"id":"019db8d5-cf8c-7c10-ab48-7f495e8dc54b","timestamp":"2026-04-23T05:35:13.308Z","cwd":"/tmp/repo/.worktrees/feat","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{"branch":"feat"}}}"#;
 
     let summary = parse_codex_session_meta_line(line).expect("codex session should parse");
 
@@ -129,6 +129,7 @@ fn test_parse_codex_session_meta_line() {
         summary.session_id.as_deref(),
         Some("019db8d5-cf8c-7c10-ab48-7f495e8dc54b")
     );
+    assert_eq!(summary.branch.as_deref(), Some("feat"));
     assert_eq!(summary.agent_label, "Parfit (worker)");
     assert_eq!(summary.state, AgentSessionState::Recent);
 }
@@ -288,7 +289,7 @@ fn test_discover_keeps_distinct_recent_history_rows_without_live_status() {
     fs::write(
         codex_sessions.join("session-a.jsonl"),
         format!(
-            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat"}}}}
+            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
@@ -297,7 +298,7 @@ fn test_discover_keeps_distinct_recent_history_rows_without_live_status() {
     fs::write(
         codex_sessions.join("session-b.jsonl"),
         format!(
-            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat-2"}}}}
+            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat-2"}}}}}}
 {{"timestamp":"2026-04-22T10:30:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
@@ -344,7 +345,7 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
     fs::write(
         codex_sessions.join("session-a.jsonl"),
         format!(
-            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat"}}}}
+            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
@@ -353,7 +354,7 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
     fs::write(
         codex_sessions.join("session-b.jsonl"),
         format!(
-            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat-2"}}}}
+            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat-2"}}}}}}
 {{"timestamp":"2026-04-22T10:30:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
@@ -402,7 +403,7 @@ fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps()
     fs::write(
         codex_sessions.join("session-b.jsonl"),
         format!(
-            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Zulu","agent_role":"worker","gitBranch":"feat-z"}}}}
+            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Zulu","agent_role":"worker","git":{{"branch":"feat-z"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),
@@ -411,7 +412,7 @@ fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps()
     fs::write(
         codex_sessions.join("session-a.jsonl"),
         format!(
-            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Alpha","agent_role":"worker","gitBranch":"feat-a"}}}}
+            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Alpha","agent_role":"worker","git":{{"branch":"feat-a"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
             worktree_root.display()
         ),

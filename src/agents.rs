@@ -314,10 +314,17 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
             .map(str::to_string),
         cwd: PathBuf::from(cwd),
         branch: payload
-            .get("gitBranch")
-            .or_else(|| payload.get("branch"))
+            .get("git")
+            .and_then(|git| git.get("branch"))
             .and_then(|v| v.as_str())
-            .map(str::to_string),
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .get("gitBranch")
+                    .or_else(|| payload.get("branch"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            }),
         agent_label,
         state: AgentSessionState::Recent,
         last_activity: payload
