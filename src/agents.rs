@@ -424,8 +424,10 @@ fn merge_live_sessions(
             Some(history_group) if history_group.len() == 1 => {
                 merged.push(merge_session_group(vec![&live, &history_group[0]]));
             }
-            Some(history_group) => {
-                merged.push(live);
+            Some(mut history_group) => {
+                history_group.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+                let newest_history = history_group.remove(0);
+                merged.push(merge_session_group(vec![&live, &newest_history]));
                 merged.extend(history_group);
             }
             None => merged.push(live),
