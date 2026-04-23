@@ -71,7 +71,13 @@ pub fn parse_live_status_file(
         .get("last_activity")
         .and_then(|v| v.as_str())
         .and_then(parse_timestamp)
-        .unwrap_or_else(Local::now);
+        .unwrap_or_else(|| {
+            fs::metadata(status_path)
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .map(DateTime::<Local>::from)
+                .unwrap_or_else(Local::now)
+        });
 
     let cwd = status_path
         .parent()
