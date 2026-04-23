@@ -487,10 +487,10 @@ fn merge_live_sessions(
 fn history_merge_order(a: &AgentSessionSummary, b: &AgentSessionSummary) -> std::cmp::Ordering {
     b.last_activity
         .cmp(&a.last_activity)
-        .then_with(|| a.session_id.cmp(&b.session_id))
-        .then_with(|| a.branch.cmp(&b.branch))
-        .then_with(|| a.agent_label.cmp(&b.agent_label))
-        .then_with(|| a.cwd.cmp(&b.cwd))
+        .then_with(|| b.session_id.cmp(&a.session_id))
+        .then_with(|| b.branch.cmp(&a.branch))
+        .then_with(|| b.agent_label.cmp(&a.agent_label))
+        .then_with(|| b.cwd.cmp(&a.cwd))
 }
 
 pub fn sort_session_summaries(items: &mut [AgentSessionSummary]) {

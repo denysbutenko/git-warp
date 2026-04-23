@@ -135,6 +135,15 @@ fn test_parse_codex_session_meta_line() {
 }
 
 #[test]
+fn test_parse_codex_session_meta_line_legacy_branch_fallback() {
+    let line = r#"{"timestamp":"2026-04-23T05:35:14.983Z","type":"session_meta","payload":{"id":"019db8d5-cf8c-7c10-ab48-7f495e8dc54b","timestamp":"2026-04-23T05:35:13.308Z","cwd":"/tmp/repo/.worktrees/feat","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"legacy-feat"}}"#;
+
+    let summary = parse_codex_session_meta_line(line).expect("codex session should parse");
+
+    assert_eq!(summary.branch.as_deref(), Some("legacy-feat"));
+}
+
+#[test]
 fn test_parse_claude_session_event_line() {
     let line = r#"{"type":"user","timestamp":"2026-04-23T04:10:00.000Z","cwd":"/tmp/repo","sessionId":"claude-session-1","gitBranch":"main"}"#;
 
@@ -430,14 +439,14 @@ fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps()
     assert!(sessions.iter().any(|session| {
         session.is_live
             && session.source == AgentSessionSource::Merged
-            && session.session_id.as_deref() == Some("session-1")
-            && session.branch.as_deref() == Some("feat-a")
+            && session.session_id.as_deref() == Some("session-2")
+            && session.branch.as_deref() == Some("feat-z")
     }));
     assert!(sessions.iter().any(|session| {
         !session.is_live
             && session.source == AgentSessionSource::SessionStore
-            && session.session_id.as_deref() == Some("session-2")
-            && session.branch.as_deref() == Some("feat-z")
+            && session.session_id.as_deref() == Some("session-1")
+            && session.branch.as_deref() == Some("feat-a")
     }));
 }
 
