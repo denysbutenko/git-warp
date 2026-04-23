@@ -152,16 +152,14 @@ fn test_parse_claude_session_event_line() {
 }
 
 #[test]
-fn test_merge_prefers_live_state_and_newest_timestamp() {
+fn test_merge_keeps_recent_session_rows_with_distinct_ids() {
     let merged = merge_session_summaries(vec![
         AgentSessionSummary {
             session_id: Some("session-1".to_string()),
             branch: Some("feat".to_string()),
             agent_label: "Parfit (worker)".to_string(),
             state: AgentSessionState::Recent,
-            last_activity: Local
-                .with_ymd_and_hms(2026, 4, 23, 9, 0, 0)
-                .unwrap(),
+            last_activity: Local.with_ymd_and_hms(2026, 4, 23, 9, 0, 0).unwrap(),
             is_live: false,
             source: AgentSessionSource::SessionStore,
             ..sample_summary(
@@ -175,31 +173,36 @@ fn test_merge_prefers_live_state_and_newest_timestamp() {
             )
         },
         AgentSessionSummary {
-            session_id: None,
-            branch: None,
-            agent_label: "Codex".to_string(),
-            state: AgentSessionState::Working,
+            session_id: Some("session-2".to_string()),
+            branch: Some("feat-2".to_string()),
+            agent_label: "Parfit (worker)".to_string(),
+            state: AgentSessionState::Recent,
             last_activity: Local.with_ymd_and_hms(2026, 4, 23, 10, 0, 0).unwrap(),
-            is_live: true,
-            source: AgentSessionSource::LiveStatus,
+            is_live: false,
+            source: AgentSessionSource::SessionStore,
             ..sample_summary(
                 AgentRuntime::Codex,
-                None,
+                Some("session-2"),
                 "/repo/.worktrees/feat",
-                AgentSessionState::Working,
+                AgentSessionState::Recent,
                 10,
-                true,
-                AgentSessionSource::LiveStatus,
+                false,
+                AgentSessionSource::SessionStore,
             )
         },
     ]);
 
-    assert_eq!(merged.len(), 1);
-    assert_eq!(merged[0].session_id.as_deref(), Some("session-1"));
-    assert_eq!(merged[0].state, AgentSessionState::Working);
-    assert!(merged[0].is_live);
-    assert_eq!(merged[0].source, AgentSessionSource::Merged);
-    assert_eq!(merged[0].branch.as_deref(), Some("feat"));
+    assert_eq!(merged.len(), 2);
+    assert!(
+        merged
+            .iter()
+            .any(|item| item.session_id.as_deref() == Some("session-1"))
+    );
+    assert!(
+        merged
+            .iter()
+            .any(|item| item.session_id.as_deref() == Some("session-2"))
+    );
 }
 
 #[test]
@@ -273,7 +276,50 @@ fn test_discover_for_repo_filters_by_worktree_and_recency() {
 }
 
 #[test]
-fn test_discover_merges_live_rows_before_cutoff_filtering() {
+fn test_discover_merges_live_row_with_single_recent_history_row() {
+    let _guard = home_guard();
+    let temp_home = tempfile::tempdir().unwrap();
+    let repo_root = tempfile::tempdir().unwrap();
+    let worktree_root = repo_root.path().join(".worktrees").join("feat");
+    let live_status = worktree_root.join(".codex").join("git-warp").join("status");
+    let codex_sessions = temp_home.path().join(".codex").join("sessions");
+
+    fs::create_dir_all(&live_status.parent().unwrap()).unwrap();
+    fs::create_dir_all(&codex_sessions).unwrap();
+
+    fs::write(
+        &live_status,
+        r#"{"status":"working","last_activity":"2026-04-23T10:00:00+00:00"}"#,
+    )
+    .unwrap();
+    fs::write(
+        codex_sessions.join("sessions.jsonl"),
+        format!(
+            r#"{{"timestamp":"2026-04-19T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-19T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat"}}}}"#,
+            worktree_root.display()
+        ),
+    )
+    .unwrap();
+
+    let _home_override = HomeOverride::set(&temp_home.path().to_path_buf());
+
+    let discovery =
+        AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = discovery.discover(now).unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    let session = &sessions[0];
+    assert_eq!(session.state, AgentSessionState::Working);
+    assert!(session.is_live);
+    assert_eq!(session.source, AgentSessionSource::Merged);
+    assert_eq!(session.branch.as_deref(), Some("feat"));
+    assert_eq!(session.session_id.as_deref(), Some("session-1"));
+    assert_eq!(session.agent_label, "Parfit (worker)");
+}
+
+#[test]
+fn test_discover_does_not_backfill_from_old_history() {
     let _guard = home_guard();
     let temp_home = tempfile::tempdir().unwrap();
     let repo_root = tempfile::tempdir().unwrap();
@@ -300,7 +346,8 @@ fn test_discover_merges_live_rows_before_cutoff_filtering() {
 
     let _home_override = HomeOverride::set(&temp_home.path().to_path_buf());
 
-    let discovery = AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
+    let discovery =
+        AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
     let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
     let sessions = discovery.discover(now).unwrap();
 
@@ -308,8 +355,8 @@ fn test_discover_merges_live_rows_before_cutoff_filtering() {
     let session = &sessions[0];
     assert_eq!(session.state, AgentSessionState::Working);
     assert!(session.is_live);
-    assert_eq!(session.source, AgentSessionSource::Merged);
-    assert_eq!(session.branch.as_deref(), Some("feat"));
-    assert_eq!(session.session_id.as_deref(), Some("session-1"));
-    assert_eq!(session.agent_label, "Parfit (worker)");
+    assert_eq!(session.source, AgentSessionSource::LiveStatus);
+    assert_eq!(session.branch.as_deref(), None);
+    assert_eq!(session.session_id.as_deref(), None);
+    assert_eq!(session.agent_label, "Codex");
 }

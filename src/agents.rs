@@ -94,6 +94,31 @@ fn preferred_group<'a>(items: &'a [AgentSessionSummary]) -> Vec<&'a AgentSession
     refs
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum AgentSessionKey {
+    SessionId {
+        runtime: AgentRuntime,
+        session_id: String,
+    },
+    Cwd {
+        runtime: AgentRuntime,
+        cwd: PathBuf,
+    },
+}
+
+fn session_key(session: &AgentSessionSummary) -> AgentSessionKey {
+    match &session.session_id {
+        Some(session_id) => AgentSessionKey::SessionId {
+            runtime: session.runtime,
+            session_id: session_id.clone(),
+        },
+        None => AgentSessionKey::Cwd {
+            runtime: session.runtime,
+            cwd: session.cwd.clone(),
+        },
+    }
+}
+
 fn jsonl_files_under(root: &Path) -> Vec<PathBuf> {
     WalkBuilder::new(root)
         .hidden(false)
@@ -136,13 +161,10 @@ impl AgentDiscovery {
     }
 
     pub fn discover(&self, now: DateTime<Local>) -> Result<Vec<AgentSessionSummary>> {
-        let mut sessions = Vec::new();
-
-        sessions.extend(self.load_live_statuses()?);
-        sessions.extend(self.load_codex_sessions()?);
-        sessions.extend(self.load_claude_sessions()?);
-
-        let mut merged = merge_session_summaries(sessions);
+        let live_sessions = merge_session_summaries(self.load_live_statuses()?);
+        let recent_history = self.load_recent_history_sessions(now)?;
+        let merged_history = merge_session_summaries(recent_history);
+        let mut merged = merge_live_sessions(live_sessions, merged_history);
         merged.retain(|session| self.keep_session(session, now));
         sort_session_summaries(&mut merged);
         Ok(merged)
@@ -193,6 +215,26 @@ impl AgentDiscovery {
             };
             sessions.extend(content.lines().filter_map(parse_claude_session_event_line));
         }
+
+        Ok(sessions)
+    }
+
+    fn load_recent_history_sessions(
+        &self,
+        now: DateTime<Local>,
+    ) -> Result<Vec<AgentSessionSummary>> {
+        let mut sessions = Vec::new();
+
+        sessions.extend(
+            self.load_codex_sessions()?
+                .into_iter()
+                .filter(|session| self.keep_session(session, now)),
+        );
+        sessions.extend(
+            self.load_claude_sessions()?
+                .into_iter()
+                .filter(|session| self.keep_session(session, now)),
+        );
 
         Ok(sessions)
     }
@@ -287,13 +329,10 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
 }
 
 pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSessionSummary> {
-    let mut grouped: HashMap<(AgentRuntime, PathBuf), Vec<AgentSessionSummary>> = HashMap::new();
+    let mut grouped: HashMap<AgentSessionKey, Vec<AgentSessionSummary>> = HashMap::new();
 
     for item in items {
-        grouped
-            .entry((item.runtime, item.cwd.clone()))
-            .or_default()
-            .push(item);
+        grouped.entry(session_key(&item)).or_default().push(item);
     }
 
     let mut merged = Vec::with_capacity(grouped.len());
@@ -305,58 +344,101 @@ pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSess
         }
 
         let ordered = preferred_group(&group);
-        let mut selected = ordered[0].clone();
-        let newest_timestamp = ordered
+        merged.push(merge_session_group(ordered));
+    }
+
+    merged
+}
+
+fn merge_session_group(items: Vec<&AgentSessionSummary>) -> AgentSessionSummary {
+    let mut selected = items[0].clone();
+    let newest_timestamp = items
+        .iter()
+        .map(|item| item.last_activity)
+        .max()
+        .unwrap_or(selected.last_activity);
+    let live_item = items.iter().copied().find(|item| item.is_live);
+    let session_store_item = items
+        .iter()
+        .copied()
+        .find(|item| matches!(item.source, AgentSessionSource::SessionStore));
+
+    if let Some(item) = live_item {
+        selected.state = item.state;
+        selected.is_live = true;
+    }
+
+    if selected.branch.is_none()
+        || is_fallback_label(selected.runtime, selected.agent_label.as_str())
+    {
+        if let Some(branch) = items
             .iter()
-            .map(|item| item.last_activity)
-            .max()
-            .unwrap_or(selected.last_activity);
-        let live_item = ordered.iter().find(|item| item.is_live);
-        let session_store_item = ordered
+            .filter_map(|item| item.branch.clone())
+            .find(|branch| !branch.is_empty())
+        {
+            selected.branch = Some(branch);
+        }
+    }
+
+    if is_fallback_label(selected.runtime, &selected.agent_label)
+        && session_store_item
+            .map(|item| !is_fallback_label(selected.runtime, &item.agent_label))
+            .unwrap_or(false)
+    {
+        if let Some(label) = items
             .iter()
-            .find(|item| matches!(item.source, AgentSessionSource::SessionStore));
-
-        if let Some(item) = live_item {
-            selected.state = item.state;
-            selected.is_live = true;
-        }
-
-        if selected.branch.is_none()
-            || is_fallback_label(selected.runtime, selected.agent_label.as_str())
+            .map(|item| item.agent_label.as_str())
+            .find(|label| !is_fallback_label(selected.runtime, label))
         {
-            if let Some(branch) = ordered
-                .iter()
-                .filter_map(|item| item.branch.clone())
-                .find(|branch| !branch.is_empty())
-            {
-                selected.branch = Some(branch);
+            selected.agent_label = label.to_string();
+        }
+    }
+
+    if selected.session_id.is_none() {
+        selected.session_id = items.iter().find_map(|item| item.session_id.clone());
+    }
+
+    selected.last_activity = newest_timestamp;
+    selected.source = AgentSessionSource::Merged;
+    selected
+}
+
+fn merge_live_sessions(
+    live_sessions: Vec<AgentSessionSummary>,
+    history_sessions: Vec<AgentSessionSummary>,
+) -> Vec<AgentSessionSummary> {
+    let mut history_by_cwd: HashMap<(AgentRuntime, PathBuf), Vec<AgentSessionSummary>> =
+        HashMap::new();
+
+    for session in history_sessions {
+        history_by_cwd
+            .entry((session.runtime, session.cwd.clone()))
+            .or_default()
+            .push(session);
+    }
+
+    let mut merged = Vec::new();
+
+    for live in live_sessions {
+        let key = (live.runtime, live.cwd.clone());
+        match history_by_cwd.remove(&key) {
+            Some(history_group) if history_group.len() == 1 => {
+                merged.push(merge_session_group(vec![&live, &history_group[0]]));
             }
-        }
-
-        if is_fallback_label(selected.runtime, &selected.agent_label)
-            && session_store_item
-                .map(|item| !is_fallback_label(selected.runtime, &item.agent_label))
-                .unwrap_or(false)
-        {
-            if let Some(label) = ordered
-                .iter()
-                .map(|item| item.agent_label.as_str())
-                .find(|label| !is_fallback_label(selected.runtime, label))
-            {
-                selected.agent_label = label.to_string();
+            Some(history_group) => {
+                merged.push(live);
+                merged.extend(history_group);
             }
+            None => merged.push(live),
         }
+    }
 
-        if selected.session_id.is_none() {
-            selected.session_id = ordered
-                .iter()
-                .find_map(|item| item.session_id.clone())
-                .or(selected.session_id);
+    for history_group in history_by_cwd.into_values() {
+        if history_group.len() == 1 {
+            merged.push(history_group.into_iter().next().unwrap());
+        } else {
+            merged.push(merge_session_group(history_group.iter().collect()));
         }
-
-        selected.last_activity = newest_timestamp;
-        selected.source = AgentSessionSource::Merged;
-        merged.push(selected);
     }
 
     merged
