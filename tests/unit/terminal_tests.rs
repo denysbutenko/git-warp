@@ -1,4 +1,6 @@
-use git_warp::terminal::{Terminal, TerminalManager, TerminalMode};
+use git_warp::terminal::{
+    Terminal, TerminalManager, TerminalMode, TerminalPreference, resolve_terminal_preference,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -279,4 +281,16 @@ fn test_terminal_cleanup() {
         // - Clearing session state
         // - Handling graceful shutdown
     }
+}
+
+#[test]
+fn test_resolve_terminal_preference_prefers_warp_term_program() {
+    let resolved = resolve_terminal_preference("auto", Some("WarpTerminal"), true, true);
+    assert_eq!(resolved, TerminalPreference::Warp);
+}
+
+#[test]
+fn test_resolve_terminal_preference_honors_explicit_warp() {
+    let resolved = resolve_terminal_preference("warp", Some("iTerm.app"), true, true);
+    assert_eq!(resolved, TerminalPreference::Warp);
 }

@@ -1,0 +1,198 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::tempdir;
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+fn setup_git_repo() -> tempfile::TempDir {
+    let temp_dir = tempdir().unwrap();
+    let repo_path = temp_dir.path();
+
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    fs::write(repo_path.join("README.md"), "# Test Repository\n").unwrap();
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    temp_dir
+}
+
+fn create_fake_osascript(bin_dir: &Path, log_path: &Path) -> PathBuf {
+    let script_path = bin_dir.join("osascript");
+    fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = \"-e\" ]; then\n  printf '%s\\n---\\n' \"$2\" >> \"{}\"\nfi\nexit 0\n",
+            log_path.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    make_executable(&script_path);
+    script_path
+}
+
+fn create_fake_open(bin_dir: &Path, log_path: &Path) -> PathBuf {
+    let script_path = bin_dir.join("open");
+    fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 0\n",
+            log_path.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    make_executable(&script_path);
+    script_path
+}
+
+fn write_config(home_dir: &Path, app: &str) {
+    let config_dir = home_dir
+        .join("Library")
+        .join("Application Support")
+        .join("git-warp");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            r#"
+terminal_mode = "tab"
+use_cow = false
+
+[terminal]
+app = "{app}"
+auto_activate = true
+init_commands = []
+"#
+        ),
+    )
+    .unwrap();
+}
+
+fn run_warp_switch(
+    repo_path: &Path,
+    branch: &str,
+    home_dir: &Path,
+    path_env: &str,
+    term_program: &str,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["switch", "--no-cow", branch])
+        .current_dir(repo_path)
+        .env("HOME", home_dir)
+        .env("PATH", path_env)
+        .env("TERM_PROGRAM", term_program)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn test_warp_switch_honors_explicit_warp_terminal_app() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let osascript_log_dir = tempdir().unwrap();
+    let open_log_dir = tempdir().unwrap();
+    let osascript_log = osascript_log_dir.path().join("osascript.log");
+    let open_log = open_log_dir.path().join("open.log");
+
+    write_config(home_dir.path(), "warp");
+    create_fake_osascript(bin_dir.path(), &osascript_log);
+    create_fake_open(bin_dir.path(), &open_log);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+
+    let output = run_warp_switch(
+        repo_path,
+        "feature/warp-explicit",
+        home_dir.path(),
+        &path_env,
+        "iTerm.app",
+    );
+
+    assert!(output.status.success());
+
+    let osascript_contents = fs::read_to_string(&osascript_log).unwrap_or_default();
+    let open_contents = fs::read_to_string(&open_log).unwrap_or_default();
+    assert!(
+        open_contents.contains("warp://action/new_tab?path="),
+        "expected Warp URI open call, got open={}, osascript={}",
+        open_contents,
+        osascript_contents
+    );
+}
+
+#[test]
+fn test_warp_switch_auto_prefers_current_warp_terminal() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let osascript_log_dir = tempdir().unwrap();
+    let open_log_dir = tempdir().unwrap();
+    let osascript_log = osascript_log_dir.path().join("osascript.log");
+    let open_log = open_log_dir.path().join("open.log");
+
+    write_config(home_dir.path(), "auto");
+    create_fake_osascript(bin_dir.path(), &osascript_log);
+    create_fake_open(bin_dir.path(), &open_log);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+
+    let output = run_warp_switch(
+        repo_path,
+        "feature/warp-auto",
+        home_dir.path(),
+        &path_env,
+        "WarpTerminal",
+    );
+
+    assert!(output.status.success());
+
+    let osascript_contents = fs::read_to_string(&osascript_log).unwrap_or_default();
+    let open_contents = fs::read_to_string(&open_log).unwrap_or_default();
+    assert!(
+        open_contents.contains("warp://action/new_tab?path="),
+        "expected Warp URI open call, got open={}, osascript={}",
+        open_contents,
+        osascript_contents
+    );
+}

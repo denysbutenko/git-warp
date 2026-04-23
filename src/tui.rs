@@ -765,11 +765,8 @@ mod tests {
 
     #[test]
     fn test_terminal_cleanup_attempt_keeps_guard_active_when_cleanup_fails() {
-        let (active, result) = terminal_cleanup_attempt(
-            true,
-            || Ok(()),
-            || Err(io::Error::other("cleanup failed")),
-        );
+        let (active, result) =
+            terminal_cleanup_attempt(true, || Ok(()), || Err(io::Error::other("cleanup failed")));
 
         assert!(active);
         let message = result.expect_err("cleanup should fail").to_string();
