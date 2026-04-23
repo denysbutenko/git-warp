@@ -383,6 +383,64 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
 }
 
 #[test]
+fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps() {
+    let _guard = home_guard();
+    let temp_home = tempfile::tempdir().unwrap();
+    let repo_root = tempfile::tempdir().unwrap();
+    let worktree_root = repo_root.path().join(".worktrees").join("feat");
+    let live_status = worktree_root.join(".codex").join("git-warp").join("status");
+    let codex_sessions = temp_home.path().join(".codex").join("sessions");
+
+    fs::create_dir_all(&live_status.parent().unwrap()).unwrap();
+    fs::create_dir_all(&codex_sessions).unwrap();
+
+    fs::write(
+        &live_status,
+        r#"{"status":"working","last_activity":"2026-04-23T10:00:00+00:00"}"#,
+    )
+    .unwrap();
+    fs::write(
+        codex_sessions.join("session-b.jsonl"),
+        format!(
+            r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Zulu","agent_role":"worker","gitBranch":"feat-z"}}}}
+{{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
+            worktree_root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        codex_sessions.join("session-a.jsonl"),
+        format!(
+            r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Alpha","agent_role":"worker","gitBranch":"feat-a"}}}}
+{{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
+            worktree_root.display()
+        ),
+    )
+    .unwrap();
+
+    let _home_override = HomeOverride::set(&temp_home.path().to_path_buf());
+
+    let discovery =
+        AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = discovery.discover(now).unwrap();
+
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions.iter().any(|session| {
+        session.is_live
+            && session.source == AgentSessionSource::Merged
+            && session.session_id.as_deref() == Some("session-1")
+            && session.branch.as_deref() == Some("feat-a")
+    }));
+    assert!(sessions.iter().any(|session| {
+        !session.is_live
+            && session.source == AgentSessionSource::SessionStore
+            && session.session_id.as_deref() == Some("session-2")
+            && session.branch.as_deref() == Some("feat-z")
+    }));
+}
+
+#[test]
 fn test_discover_keeps_live_row_even_when_older_than_cutoff() {
     let _guard = home_guard();
     let temp_home = tempfile::tempdir().unwrap();
