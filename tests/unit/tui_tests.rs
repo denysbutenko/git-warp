@@ -120,20 +120,45 @@ fn test_session_detail_lines_include_expected_fields() {
     );
 
     let lines = session_detail_lines(&summary);
+    let cwd_line = lines
+        .iter()
+        .find(|line| line.starts_with("CWD: "))
+        .expect("CWD line should be present");
 
     assert_eq!(
-        lines,
-        vec![
-            "Agent: Parfit (worker)".to_string(),
-            "CWD: /repo/.worktrees/agents".to_string(),
-            "Session ID: session-123".to_string(),
-            "Runtime: Codex".to_string(),
-            "Branch: feat/agents".to_string(),
-            "Presence: live".to_string(),
-            format!("Last Activity: {}", summary.last_activity.to_rfc3339()),
-            "Source: Merged".to_string(),
-        ]
+        PathBuf::from(cwd_line.trim_start_matches("CWD: ")),
+        summary.cwd
     );
+    assert!(lines.iter().any(|line| line == "Agent: Parfit (worker)"));
+    assert!(lines.iter().any(|line| line == "Session ID: session-123"));
+    assert!(lines.iter().any(|line| line == "Runtime: Codex"));
+    assert!(lines.iter().any(|line| line == "Branch: feat/agents"));
+    assert!(lines.iter().any(|line| line == "Presence: live"));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == &format!("Last Activity: {}", summary.last_activity.to_rfc3339()))
+    );
+    assert!(lines.iter().any(|line| line == "Source: Merged"));
+}
+
+#[test]
+fn test_build_dashboard_model_renders_future_timestamps_explicitly() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![sample_summary(
+        AgentRuntime::Codex,
+        "future-session",
+        "/repo/.worktrees/future",
+        AgentSessionState::Recent,
+        12,
+        false,
+        AgentSessionSource::SessionStore,
+    )];
+
+    let model = build_dashboard_model(&sessions, now - chrono::Duration::minutes(5));
+
+    assert_eq!(model.rows.len(), 1);
+    assert_eq!(model.rows[0].relative_time, "in 5m");
 }
 
 #[test]

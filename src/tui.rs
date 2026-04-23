@@ -27,6 +27,47 @@ use std::{
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
+struct TuiTerminalGuard {
+    active: bool,
+}
+
+impl TuiTerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+            let _ = disable_raw_mode();
+            return Err(err.into());
+        }
+
+        Ok(Self { active: true })
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+
+        disable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for TuiTerminalGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DashboardRow {
     pub session: AgentSessionSummary,
@@ -63,26 +104,20 @@ impl TuiApp {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        // Setup terminal
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout);
+        let mut terminal_guard = TuiTerminalGuard::enter()?;
+        let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = RatatuiTerminal::new(backend)?;
 
-        self.refresh_sessions()?;
-        let res = self.run_app(&mut terminal);
+        let run_result = self
+            .refresh_sessions()
+            .and_then(|_| self.run_app(&mut terminal));
+        let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
+        drop(terminal);
+        let cleanup_result = terminal_guard.restore();
 
-        // Restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
-
-        res
+        run_result?;
+        cursor_result?;
+        cleanup_result
     }
 
     fn run_app(
@@ -183,8 +218,7 @@ impl TuiApp {
             let session_items: Vec<ListItem> = model
                 .rows
                 .iter()
-                .enumerate()
-                .map(|(index, row)| {
+                .map(|row| {
                     let text = format!(
                         "{} {:<6} {:<18} {:<20} {}",
                         row.state_symbol,
@@ -193,11 +227,7 @@ impl TuiApp {
                         truncate_label(&row.agent_label, 20),
                         row.relative_time
                     );
-                    let style = if index == self.selected_index {
-                        Style::default().fg(session_state_color(row.session.state))
-                    } else {
-                        Style::default().fg(session_state_color(row.session.state))
-                    };
+                    let style = Style::default().fg(session_state_color(row.session.state));
                     ListItem::new(Line::from(text)).style(style)
                 })
                 .collect();
@@ -342,7 +372,18 @@ fn session_location_label(session: &AgentSessionSummary) -> String {
 
 fn relative_time_label(last_activity: DateTime<Local>, now: DateTime<Local>) -> String {
     let delta = now.signed_duration_since(last_activity);
-    if delta < ChronoDuration::minutes(1) {
+    if delta < ChronoDuration::zero() {
+        let future_delta = last_activity.signed_duration_since(now);
+        if future_delta < ChronoDuration::minutes(1) {
+            "in <1m".to_string()
+        } else if future_delta < ChronoDuration::hours(1) {
+            format!("in {}m", future_delta.num_minutes())
+        } else if future_delta < ChronoDuration::days(1) {
+            format!("in {}h", future_delta.num_hours())
+        } else {
+            format!("in {}d", future_delta.num_days())
+        }
+    } else if delta < ChronoDuration::minutes(1) {
         "just now".to_string()
     } else if delta < ChronoDuration::hours(1) {
         format!("{}m ago", delta.num_minutes())
