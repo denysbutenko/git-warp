@@ -208,6 +208,7 @@ impl Cli {
         use crate::config::ConfigManager;
         use crate::cow;
         use crate::git::GitRepository;
+        use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
         use crate::rewrite::PathRewriter;
         use crate::terminal::{TerminalManager, TerminalMode};
         use std::path::PathBuf;
@@ -241,6 +242,8 @@ impl Cli {
             }
             return Ok(());
         }
+
+        let mut worktree_created = false;
 
         // Check if worktree already exists
         if worktree_path.exists() {
@@ -297,6 +300,21 @@ impl Cli {
             }
 
             println!("✅ Worktree created successfully!");
+            worktree_created = true;
+        }
+
+        match run_post_create_setup(&worktree_path, worktree_created) {
+            PostCreateSetupStatus::Installed => {
+                println!("📦 Detected pnpm repo, ran `pnpm install`");
+            }
+            PostCreateSetupStatus::Warned(reason) => {
+                println!(
+                    "⚠️  Detected pnpm repo but `pnpm install` failed: {}",
+                    reason
+                );
+            }
+            PostCreateSetupStatus::SkippedExistingWorktree
+            | PostCreateSetupStatus::SkippedNonPnpmRepo => {}
         }
 
         // Handle terminal switching

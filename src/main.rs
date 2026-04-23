@@ -5,6 +5,7 @@ mod cow;
 mod error;
 mod git;
 mod hooks;
+mod post_create;
 mod process;
 mod rewrite;
 mod terminal;
