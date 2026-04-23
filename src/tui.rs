@@ -48,11 +48,25 @@ impl TuiTerminalGuard {
             return Ok(());
         }
 
-        disable_raw_mode()?;
+        let mut errors = Vec::new();
+
+        if let Err(err) = disable_raw_mode() {
+            errors.push(anyhow::Error::new(err));
+        }
+
         let mut stdout = io::stdout();
-        execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
+        if let Err(err) = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture) {
+            errors.push(err.into());
+        }
+
         self.active = false;
-        Ok(())
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let first = errors.remove(0);
+            Err(combine_errors(first, errors))
+        }
     }
 }
 
@@ -111,13 +125,31 @@ impl TuiApp {
         let run_result = self
             .refresh_sessions()
             .and_then(|_| self.run_app(&mut terminal));
+        let cleanup_result = terminal_guard.restore();
         let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
         drop(terminal);
-        let cleanup_result = terminal_guard.restore();
 
-        run_result?;
-        cursor_result?;
-        cleanup_result
+        match run_result {
+            Err(err) => {
+                let mut follow_on_errors = Vec::new();
+                if let Err(cleanup_err) = cleanup_result {
+                    follow_on_errors.push(cleanup_err);
+                }
+                if let Err(cursor_err) = cursor_result {
+                    follow_on_errors.push(cursor_err);
+                }
+
+                if follow_on_errors.is_empty() {
+                    Err(err)
+                } else {
+                    Err(combine_errors(err, follow_on_errors))
+                }
+            }
+            Ok(()) => {
+                cleanup_result?;
+                cursor_result
+            }
+        }
     }
 
     fn run_app(
@@ -405,6 +437,19 @@ fn truncate_label(value: &str, max_chars: usize) -> String {
     } else {
         candidate
     }
+}
+
+fn combine_errors(
+    primary: anyhow::Error,
+    additional: impl IntoIterator<Item = anyhow::Error>,
+) -> anyhow::Error {
+    let mut message = primary.to_string();
+    for err in additional {
+        message.push_str("; ");
+        message.push_str(&err.to_string());
+    }
+
+    anyhow::anyhow!(message)
 }
 
 pub struct AgentsDashboard {
