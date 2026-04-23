@@ -36,37 +36,26 @@ impl TuiTerminalGuard {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
-            let _ = disable_raw_mode();
-            return Err(err.into());
+            return Err(rollback_terminal_entry(
+                err.into(),
+                disable_raw_mode,
+                || {
+                    let mut rollback_stdout = io::stdout();
+                    execute!(rollback_stdout, LeaveAlternateScreen, DisableMouseCapture)
+                },
+            ));
         }
 
         Ok(Self { active: true })
     }
 
     fn restore(&mut self) -> Result<()> {
-        if !self.active {
-            return Ok(());
-        }
-
-        let mut errors = Vec::new();
-
-        if let Err(err) = disable_raw_mode() {
-            errors.push(anyhow::Error::new(err));
-        }
-
-        let mut stdout = io::stdout();
-        if let Err(err) = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture) {
-            errors.push(err.into());
-        }
-
-        self.active = false;
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            let first = errors.remove(0);
-            Err(combine_errors(first, errors))
-        }
+        let (active, result) = terminal_cleanup_attempt(self.active, disable_raw_mode, || {
+            let mut stdout = io::stdout();
+            execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)
+        });
+        self.active = active;
+        result
     }
 }
 
@@ -452,6 +441,53 @@ fn combine_errors(
     anyhow::anyhow!(message)
 }
 
+fn terminal_cleanup_attempt<FDisable, FCleanup>(
+    active: bool,
+    disable_raw: FDisable,
+    cleanup_terminal: FCleanup,
+) -> (bool, Result<()>)
+where
+    FDisable: FnOnce() -> io::Result<()>,
+    FCleanup: FnOnce() -> io::Result<()>,
+{
+    if !active {
+        return (false, Ok(()));
+    }
+
+    let mut errors = Vec::new();
+
+    if let Err(err) = disable_raw() {
+        errors.push(anyhow::Error::new(err));
+    }
+
+    if let Err(err) = cleanup_terminal() {
+        errors.push(anyhow::Error::new(err));
+    }
+
+    if errors.is_empty() {
+        (false, Ok(()))
+    } else {
+        let first = errors.remove(0);
+        (true, Err(combine_errors(first, errors)))
+    }
+}
+
+fn rollback_terminal_entry<FDisable, FCleanup>(
+    primary: anyhow::Error,
+    disable_raw: FDisable,
+    cleanup_terminal: FCleanup,
+) -> anyhow::Error
+where
+    FDisable: FnOnce() -> io::Result<()>,
+    FCleanup: FnOnce() -> io::Result<()>,
+{
+    let (_, rollback_result) = terminal_cleanup_attempt(true, disable_raw, cleanup_terminal);
+    match rollback_result {
+        Ok(()) => primary,
+        Err(rollback_error) => combine_errors(primary, [rollback_error]),
+    }
+}
+
 pub struct AgentsDashboard {
     discovery: AgentDiscovery,
 }
@@ -678,6 +714,7 @@ impl ConfigTui {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use std::io;
 
     #[test]
     fn test_tui_creation() {
@@ -714,5 +751,37 @@ mod tests {
 
         assert!(lines.iter().any(|line| line == "Runtime: Codex"));
         assert!(lines.iter().any(|line| line == "Source: Merged"));
+    }
+
+    #[test]
+    fn test_terminal_cleanup_attempt_keeps_guard_active_on_failure() {
+        let (active, result) =
+            terminal_cleanup_attempt(true, || Err(io::Error::other("disable failed")), || Ok(()));
+
+        assert!(active);
+        let message = result.expect_err("cleanup should fail").to_string();
+        assert!(message.contains("disable failed"));
+    }
+
+    #[test]
+    fn test_terminal_cleanup_attempt_deactivates_guard_on_success() {
+        let (active, result) = terminal_cleanup_attempt(true, || Ok(()), || Ok(()));
+
+        assert!(!active);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rollback_terminal_entry_combines_primary_and_cleanup_failures() {
+        let error = rollback_terminal_entry(
+            anyhow::anyhow!("enter failed"),
+            || Err(io::Error::other("disable failed")),
+            || Err(io::Error::other("leave failed")),
+        );
+
+        let message = error.to_string();
+        assert!(message.contains("enter failed"));
+        assert!(message.contains("disable failed"));
+        assert!(message.contains("leave failed"));
     }
 }
