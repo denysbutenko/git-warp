@@ -307,7 +307,12 @@ impl Cli {
         };
 
         let terminal_manager = TerminalManager;
-        match terminal_manager.switch_to_worktree(&worktree_path, terminal_mode, None) {
+        match terminal_manager.switch_to_worktree_with_app(
+            &worktree_path,
+            terminal_mode,
+            None,
+            Some(config.terminal.app.as_str()),
+        ) {
             Ok(()) => {
                 println!("🔄 Switched to worktree: {}", worktree_path.display());
             }

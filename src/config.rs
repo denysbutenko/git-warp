@@ -74,7 +74,7 @@ pub struct ProcessConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalConfig {
-    /// Preferred terminal application (iterm2, terminal, auto)
+    /// Preferred terminal application (iterm2, terminal, warp, auto)
     #[serde(default = "default_terminal_app")]
     pub app: String,
 
@@ -262,7 +262,7 @@ auto_kill = {}
 kill_timeout = {}
 
 [terminal]
-# Terminal app: auto, iterm2, terminal
+# Terminal app: auto, iterm2, terminal, warp
 app = "{}"
 
 # Auto-activate new tabs/windows
