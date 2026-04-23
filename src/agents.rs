@@ -1,5 +1,4 @@
 use crate::error::Result;
-use crate::git::GitRepository;
 use chrono::{DateTime, Duration, Local};
 use ignore::WalkBuilder;
 use serde_json::Value;
@@ -95,31 +94,6 @@ fn preferred_group<'a>(items: &'a [AgentSessionSummary]) -> Vec<&'a AgentSession
     refs
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-enum AgentSessionKey {
-    SessionId {
-        runtime: AgentRuntime,
-        session_id: String,
-    },
-    Cwd {
-        runtime: AgentRuntime,
-        cwd: PathBuf,
-    },
-}
-
-fn session_key(session: &AgentSessionSummary) -> AgentSessionKey {
-    match &session.session_id {
-        Some(session_id) => AgentSessionKey::SessionId {
-            runtime: session.runtime,
-            session_id: session_id.clone(),
-        },
-        None => AgentSessionKey::Cwd {
-            runtime: session.runtime,
-            cwd: session.cwd.clone(),
-        },
-    }
-}
-
 fn jsonl_files_under(root: &Path) -> Vec<PathBuf> {
     WalkBuilder::new(root)
         .hidden(false)
@@ -161,19 +135,66 @@ impl AgentDiscovery {
             .any(|root| is_path_within_root(&session.cwd, root))
     }
 
-    pub fn discover(&self) -> Result<Vec<AgentSessionSummary>> {
-        let now = Local::now();
+    pub fn discover(&self, now: DateTime<Local>) -> Result<Vec<AgentSessionSummary>> {
         let mut sessions = Vec::new();
 
-        sessions.extend(load_live_statuses()?);
-        sessions.extend(load_codex_sessions()?);
-        sessions.extend(load_claude_sessions()?);
-
-        sessions.retain(|session| self.keep_session(session, now));
+        sessions.extend(self.load_live_statuses()?);
+        sessions.extend(self.load_codex_sessions()?);
+        sessions.extend(self.load_claude_sessions()?);
 
         let mut merged = merge_session_summaries(sessions);
+        merged.retain(|session| self.keep_session(session, now));
         sort_session_summaries(&mut merged);
         Ok(merged)
+    }
+
+    pub fn load_live_statuses(&self) -> Result<Vec<AgentSessionSummary>> {
+        let mut sessions = Vec::new();
+
+        for root in &self.monitored_paths {
+            for runtime in [AgentRuntime::Claude, AgentRuntime::Codex] {
+                let status_path = status_file_path(root, runtime);
+                if let Some(summary) = parse_live_status_file(runtime, &status_path)? {
+                    sessions.push(summary);
+                }
+            }
+        }
+
+        Ok(sessions)
+    }
+
+    pub fn load_codex_sessions(&self) -> Result<Vec<AgentSessionSummary>> {
+        let Some(home_dir) = dirs::home_dir() else {
+            return Ok(Vec::new());
+        };
+        let sessions_root = home_dir.join(".codex").join("sessions");
+
+        let mut sessions = Vec::new();
+        for file_path in jsonl_files_under(&sessions_root) {
+            let Some(content) = load_session_file_lines(&file_path) else {
+                continue;
+            };
+            sessions.extend(content.lines().filter_map(parse_codex_session_meta_line));
+        }
+
+        Ok(sessions)
+    }
+
+    pub fn load_claude_sessions(&self) -> Result<Vec<AgentSessionSummary>> {
+        let Some(home_dir) = dirs::home_dir() else {
+            return Ok(Vec::new());
+        };
+        let sessions_root = home_dir.join(".claude").join("projects");
+
+        let mut sessions = Vec::new();
+        for file_path in jsonl_files_under(&sessions_root) {
+            let Some(content) = load_session_file_lines(&file_path) else {
+                continue;
+            };
+            sessions.extend(content.lines().filter_map(parse_claude_session_event_line));
+        }
+
+        Ok(sessions)
     }
 }
 
@@ -249,7 +270,11 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
             .and_then(|v| v.as_str())
             .map(str::to_string),
         cwd: PathBuf::from(cwd),
-        branch: None,
+        branch: payload
+            .get("gitBranch")
+            .or_else(|| payload.get("branch"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         agent_label,
         state: AgentSessionState::Recent,
         last_activity: payload
@@ -261,73 +286,14 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
     })
 }
 
-pub fn load_live_statuses() -> Result<Vec<AgentSessionSummary>> {
-    let git_repo = match GitRepository::find() {
-        Ok(repo) => repo,
-        Err(_) => return Ok(Vec::new()),
-    };
-
-    let mut roots = vec![git_repo.root_path().to_path_buf()];
-    if let Ok(worktrees) = git_repo.list_worktrees() {
-        for worktree in worktrees {
-            if !roots.iter().any(|root| root == &worktree.path) {
-                roots.push(worktree.path);
-            }
-        }
-    }
-
-    let mut sessions = Vec::new();
-    for root in roots {
-        for runtime in [AgentRuntime::Claude, AgentRuntime::Codex] {
-            let status_path = status_file_path(&root, runtime);
-            if let Some(summary) = parse_live_status_file(runtime, &status_path)? {
-                sessions.push(summary);
-            }
-        }
-    }
-
-    Ok(sessions)
-}
-
-pub fn load_codex_sessions() -> Result<Vec<AgentSessionSummary>> {
-    let Some(home_dir) = dirs::home_dir() else {
-        return Ok(Vec::new());
-    };
-    let sessions_root = home_dir.join(".codex").join("sessions");
-
-    let mut sessions = Vec::new();
-    for file_path in jsonl_files_under(&sessions_root) {
-        let Some(content) = load_session_file_lines(&file_path) else {
-            continue;
-        };
-        sessions.extend(content.lines().filter_map(parse_codex_session_meta_line));
-    }
-
-    Ok(sessions)
-}
-
-pub fn load_claude_sessions() -> Result<Vec<AgentSessionSummary>> {
-    let Some(home_dir) = dirs::home_dir() else {
-        return Ok(Vec::new());
-    };
-    let sessions_root = home_dir.join(".claude").join("projects");
-
-    let mut sessions = Vec::new();
-    for file_path in jsonl_files_under(&sessions_root) {
-        let Some(content) = load_session_file_lines(&file_path) else {
-            continue;
-        };
-        sessions.extend(content.lines().filter_map(parse_claude_session_event_line));
-    }
-
-    Ok(sessions)
-}
-
 pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSessionSummary> {
-    let mut grouped: HashMap<AgentSessionKey, Vec<AgentSessionSummary>> = HashMap::new();
+    let mut grouped: HashMap<(AgentRuntime, PathBuf), Vec<AgentSessionSummary>> = HashMap::new();
 
     for item in items {
-        grouped.entry(session_key(&item)).or_default().push(item);
+        grouped
+            .entry((item.runtime, item.cwd.clone()))
+            .or_default()
+            .push(item);
     }
 
     let mut merged = Vec::with_capacity(grouped.len());
@@ -346,21 +312,32 @@ pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSess
             .max()
             .unwrap_or(selected.last_activity);
         let live_item = ordered.iter().find(|item| item.is_live);
+        let session_store_item = ordered
+            .iter()
+            .find(|item| matches!(item.source, AgentSessionSource::SessionStore));
 
         if let Some(item) = live_item {
             selected.state = item.state;
             selected.is_live = true;
         }
 
-        if let Some(branch) = ordered
-            .iter()
-            .filter_map(|item| item.branch.clone())
-            .find(|branch| !branch.is_empty())
+        if selected.branch.is_none()
+            || is_fallback_label(selected.runtime, selected.agent_label.as_str())
         {
-            selected.branch = Some(branch);
+            if let Some(branch) = ordered
+                .iter()
+                .filter_map(|item| item.branch.clone())
+                .find(|branch| !branch.is_empty())
+            {
+                selected.branch = Some(branch);
+            }
         }
 
-        if is_fallback_label(selected.runtime, &selected.agent_label) {
+        if is_fallback_label(selected.runtime, &selected.agent_label)
+            && session_store_item
+                .map(|item| !is_fallback_label(selected.runtime, &item.agent_label))
+                .unwrap_or(false)
+        {
             if let Some(label) = ordered
                 .iter()
                 .map(|item| item.agent_label.as_str())
@@ -368,6 +345,13 @@ pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSess
             {
                 selected.agent_label = label.to_string();
             }
+        }
+
+        if selected.session_id.is_none() {
+            selected.session_id = ordered
+                .iter()
+                .find_map(|item| item.session_id.clone())
+                .or(selected.session_id);
         }
 
         selected.last_activity = newest_timestamp;

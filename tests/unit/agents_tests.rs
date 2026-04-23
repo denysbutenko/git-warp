@@ -4,8 +4,39 @@ use git_warp::agents::{
     merge_session_summaries, parse_claude_session_event_line, parse_codex_session_meta_line,
     parse_live_status_file, sort_session_summaries,
 };
+use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+static HOME_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct HomeOverride {
+    original_home: Option<std::ffi::OsString>,
+}
+
+impl HomeOverride {
+    fn set(temp_home: &PathBuf) -> Self {
+        let original_home = env::var_os("HOME");
+        unsafe {
+            env::set_var("HOME", temp_home);
+        }
+        Self { original_home }
+    }
+}
+
+impl Drop for HomeOverride {
+    fn drop(&mut self) {
+        match self.original_home.take() {
+            Some(value) => unsafe {
+                env::set_var("HOME", value);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
+        }
+    }
+}
 
 fn sample_summary(
     runtime: AgentRuntime,
@@ -29,6 +60,10 @@ fn sample_summary(
         is_live,
         source,
     }
+}
+
+fn home_guard() -> std::sync::MutexGuard<'static, ()> {
+    HOME_GUARD.get_or_init(|| Mutex::new(())).lock().unwrap()
 }
 
 #[test]
@@ -119,30 +154,52 @@ fn test_parse_claude_session_event_line() {
 #[test]
 fn test_merge_prefers_live_state_and_newest_timestamp() {
     let merged = merge_session_summaries(vec![
-        sample_summary(
-            AgentRuntime::Codex,
-            Some("session-1"),
-            "/repo/.worktrees/feat",
-            AgentSessionState::Recent,
-            9,
-            false,
-            AgentSessionSource::SessionStore,
-        ),
-        sample_summary(
-            AgentRuntime::Codex,
-            Some("session-1"),
-            "/repo/.worktrees/feat",
-            AgentSessionState::Working,
-            10,
-            true,
-            AgentSessionSource::LiveStatus,
-        ),
+        AgentSessionSummary {
+            session_id: Some("session-1".to_string()),
+            branch: Some("feat".to_string()),
+            agent_label: "Parfit (worker)".to_string(),
+            state: AgentSessionState::Recent,
+            last_activity: Local
+                .with_ymd_and_hms(2026, 4, 23, 9, 0, 0)
+                .unwrap(),
+            is_live: false,
+            source: AgentSessionSource::SessionStore,
+            ..sample_summary(
+                AgentRuntime::Codex,
+                Some("session-1"),
+                "/repo/.worktrees/feat",
+                AgentSessionState::Recent,
+                9,
+                false,
+                AgentSessionSource::SessionStore,
+            )
+        },
+        AgentSessionSummary {
+            session_id: None,
+            branch: None,
+            agent_label: "Codex".to_string(),
+            state: AgentSessionState::Working,
+            last_activity: Local.with_ymd_and_hms(2026, 4, 23, 10, 0, 0).unwrap(),
+            is_live: true,
+            source: AgentSessionSource::LiveStatus,
+            ..sample_summary(
+                AgentRuntime::Codex,
+                None,
+                "/repo/.worktrees/feat",
+                AgentSessionState::Working,
+                10,
+                true,
+                AgentSessionSource::LiveStatus,
+            )
+        },
     ]);
 
     assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].session_id.as_deref(), Some("session-1"));
     assert_eq!(merged[0].state, AgentSessionState::Working);
     assert!(merged[0].is_live);
     assert_eq!(merged[0].source, AgentSessionSource::Merged);
+    assert_eq!(merged[0].branch.as_deref(), Some("feat"));
 }
 
 #[test]
@@ -213,4 +270,46 @@ fn test_discover_for_repo_filters_by_worktree_and_recency() {
 
     assert!(kept);
     assert!(!rejected);
+}
+
+#[test]
+fn test_discover_merges_live_rows_before_cutoff_filtering() {
+    let _guard = home_guard();
+    let temp_home = tempfile::tempdir().unwrap();
+    let repo_root = tempfile::tempdir().unwrap();
+    let worktree_root = repo_root.path().join(".worktrees").join("feat");
+    let live_status = worktree_root.join(".codex").join("git-warp").join("status");
+    let codex_sessions = temp_home.path().join(".codex").join("sessions");
+
+    fs::create_dir_all(&live_status.parent().unwrap()).unwrap();
+    fs::create_dir_all(&codex_sessions).unwrap();
+
+    fs::write(
+        &live_status,
+        r#"{"status":"working","last_activity":"2026-04-23T10:00:00+00:00"}"#,
+    )
+    .unwrap();
+    fs::write(
+        codex_sessions.join("sessions.jsonl"),
+        format!(
+            r#"{{"timestamp":"2026-04-15T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-15T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","gitBranch":"feat"}}}}"#,
+            worktree_root.display()
+        ),
+    )
+    .unwrap();
+
+    let _home_override = HomeOverride::set(&temp_home.path().to_path_buf());
+
+    let discovery = AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = discovery.discover(now).unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    let session = &sessions[0];
+    assert_eq!(session.state, AgentSessionState::Working);
+    assert!(session.is_live);
+    assert_eq!(session.source, AgentSessionSource::Merged);
+    assert_eq!(session.branch.as_deref(), Some("feat"));
+    assert_eq!(session.session_id.as_deref(), Some("session-1"));
+    assert_eq!(session.agent_label, "Parfit (worker)");
 }
