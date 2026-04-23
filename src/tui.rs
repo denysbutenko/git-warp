@@ -1,5 +1,11 @@
-use crate::error::Result;
-use chrono::Timelike;
+use crate::{
+    agents::{
+        AgentDiscovery, AgentRuntime, AgentSessionSource, AgentSessionState, AgentSessionSummary,
+        sort_session_summaries,
+    },
+    error::Result,
+};
+use chrono::{DateTime, Duration as ChronoDuration, Local};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, poll},
     execute,
@@ -8,10 +14,10 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal as RatatuiTerminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Margin},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Cell, Gauge, List, ListItem, ListState, Paragraph, Row, Table},
+    text::Line,
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use std::{
     io,
@@ -19,130 +25,133 @@ use std::{
     time::{Duration, Instant},
 };
 
+const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
+struct TuiTerminalGuard {
+    active: bool,
+}
+
+impl TuiTerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+            return Err(rollback_terminal_entry(
+                err.into(),
+                disable_raw_mode,
+                || {
+                    let mut rollback_stdout = io::stdout();
+                    execute!(rollback_stdout, LeaveAlternateScreen, DisableMouseCapture)
+                },
+            ));
+        }
+
+        Ok(Self { active: true })
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        let (active, result) = terminal_cleanup_attempt(self.active, disable_raw_mode, || {
+            let mut stdout = io::stdout();
+            execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)
+        });
+        self.active = active;
+        result
+    }
+}
+
+impl Drop for TuiTerminalGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DashboardRow {
+    pub session: AgentSessionSummary,
+    pub state_symbol: &'static str,
+    pub runtime_label: &'static str,
+    pub location_label: String,
+    pub agent_label: String,
+    pub relative_time: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DashboardModel {
+    pub rows: Vec<DashboardRow>,
+    pub empty_state_lines: Vec<String>,
+}
+
 pub struct TuiApp {
     should_quit: bool,
     selected_index: usize,
-    last_update: Instant,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentActivity {
-    pub timestamp: String,
-    pub agent_name: String,
-    pub activity: String,
-    pub file_path: Option<PathBuf>,
-    pub status: AgentStatus,
-}
-
-#[derive(Debug, Clone)]
-pub enum AgentStatus {
-    Active,
-    Waiting,
-    Completed,
-    Error,
-}
-
-impl AgentStatus {
-    pub fn color(&self) -> Color {
-        match self {
-            AgentStatus::Active => Color::Green,
-            AgentStatus::Waiting => Color::Yellow,
-            AgentStatus::Completed => Color::Blue,
-            AgentStatus::Error => Color::Red,
-        }
-    }
-
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            AgentStatus::Active => "🔄",
-            AgentStatus::Waiting => "⏳",
-            AgentStatus::Completed => "✅",
-            AgentStatus::Error => "❌",
-        }
-    }
+    last_refresh: Instant,
+    discovery: AgentDiscovery,
+    sessions: Vec<AgentSessionSummary>,
 }
 
 impl TuiApp {
-    pub fn new() -> Self {
+    pub fn new(discovery: AgentDiscovery) -> Self {
         Self {
             should_quit: false,
             selected_index: 0,
-            last_update: Instant::now(),
+            last_refresh: Instant::now() - REFRESH_INTERVAL,
+            discovery,
+            sessions: Vec::new(),
         }
     }
 
-    pub fn get_selected_index(&self) -> usize {
-        self.selected_index
-    }
-
-    pub fn set_selected_index(&mut self, index: usize) {
-        self.selected_index = index;
-    }
-
-    pub fn get_last_update(&self) -> Instant {
-        self.last_update
-    }
-
-    pub fn set_last_update(&mut self, time: Instant) {
-        self.last_update = time;
-    }
-
-    pub fn should_quit(&self) -> bool {
-        self.should_quit
-    }
-
     pub fn run(&mut self) -> Result<()> {
-        // Setup terminal
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout);
+        let mut terminal_guard = TuiTerminalGuard::enter()?;
+        let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = RatatuiTerminal::new(backend)?;
 
-        let res = self.run_app(&mut terminal);
+        let run_result = self
+            .refresh_sessions()
+            .and_then(|_| self.run_app(&mut terminal));
+        let cleanup_result = terminal_guard.restore();
+        let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
+        drop(terminal);
 
-        // Restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
+        match run_result {
+            Err(err) => {
+                let mut follow_on_errors = Vec::new();
+                if let Err(cleanup_err) = cleanup_result {
+                    follow_on_errors.push(cleanup_err);
+                }
+                if let Err(cursor_err) = cursor_result {
+                    follow_on_errors.push(cursor_err);
+                }
 
-        res
+                if follow_on_errors.is_empty() {
+                    Err(err)
+                } else {
+                    Err(combine_errors(err, follow_on_errors))
+                }
+            }
+            Ok(()) => {
+                cleanup_result?;
+                cursor_result
+            }
+        }
     }
 
     fn run_app(
         &mut self,
         terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<()> {
-        // Mock agent data for demo - in real implementation this would come from file watchers
-        let mut activities = vec![
-            AgentActivity {
-                timestamp: "14:32:15".to_string(),
-                agent_name: "Claude-Code".to_string(),
-                activity: "Analyzing code structure".to_string(),
-                file_path: Some(PathBuf::from("/project/src/main.rs")),
-                status: AgentStatus::Active,
-            },
-            AgentActivity {
-                timestamp: "14:31:42".to_string(),
-                agent_name: "Claude-Code".to_string(),
-                activity: "Refactoring function".to_string(),
-                file_path: Some(PathBuf::from("/project/src/utils.rs")),
-                status: AgentStatus::Completed,
-            },
-            AgentActivity {
-                timestamp: "14:30:18".to_string(),
-                agent_name: "Claude-Code".to_string(),
-                activity: "Waiting for user input".to_string(),
-                file_path: None,
-                status: AgentStatus::Waiting,
-            },
-        ];
-
         loop {
+            if self.last_refresh.elapsed() >= REFRESH_INTERVAL {
+                self.refresh_sessions()?;
+            }
+
+            terminal.draw(|f| self.draw_agents_dashboard(f, Local::now()))?;
+
             // Non-blocking event check
             let timeout = Duration::from_millis(100);
             if poll(timeout)? {
@@ -160,36 +169,17 @@ impl TuiApp {
                             }
                         }
                         KeyCode::Down => {
-                            if self.selected_index < activities.len().saturating_sub(1) {
+                            if self.selected_index < self.sessions.len().saturating_sub(1) {
                                 self.selected_index += 1;
                             }
                         }
                         KeyCode::Char('r') => {
-                            // Simulate refresh - add new activity
-                            activities.insert(
-                                0,
-                                AgentActivity {
-                                    timestamp: format!(
-                                        "{:02}:{:02}:{:02}",
-                                        chrono::Local::now().hour(),
-                                        chrono::Local::now().minute(),
-                                        chrono::Local::now().second()
-                                    ),
-                                    agent_name: "Claude-Code".to_string(),
-                                    activity: "Processing new request".to_string(),
-                                    file_path: Some(PathBuf::from("/project/src/new_module.rs")),
-                                    status: AgentStatus::Active,
-                                },
-                            );
-                            self.selected_index = 0;
+                            self.refresh_sessions()?;
                         }
                         _ => {}
                     }
                 }
             }
-
-            // Update UI
-            terminal.draw(|f| self.draw_agents_dashboard(f, &activities))?;
 
             if self.should_quit {
                 break;
@@ -199,20 +189,31 @@ impl TuiApp {
         Ok(())
     }
 
-    fn draw_agents_dashboard(&self, f: &mut Frame, activities: &[AgentActivity]) {
+    fn refresh_sessions(&mut self) -> Result<()> {
+        self.sessions = self.discovery.discover(Local::now())?;
+        if self.sessions.is_empty() {
+            self.selected_index = 0;
+        } else {
+            self.selected_index = self.selected_index.min(self.sessions.len() - 1);
+        }
+        self.last_refresh = Instant::now();
+        Ok(())
+    }
+
+    fn draw_agents_dashboard(&self, f: &mut Frame, now: DateTime<Local>) {
+        let model = build_dashboard_model(&self.sessions, now);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
                 Constraint::Length(3), // Header
                 Constraint::Min(8),    // Main content
-                Constraint::Length(5), // Stats
                 Constraint::Length(3), // Help
             ])
             .split(f.size());
 
         // Header
-        let header = Paragraph::new("🤖 Agent Activity Monitor")
+        let header = Paragraph::new(format!("Warp Agents ({})", model.rows.len()))
             .style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -222,146 +223,288 @@ impl TuiApp {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
-        // Main activity list
-        let activity_items: Vec<ListItem> = activities
-            .iter()
-            .enumerate()
-            .map(|(i, activity)| {
-                let style = if i == self.selected_index {
-                    Style::default().bg(Color::DarkGray)
-                } else {
+        if model.rows.is_empty() {
+            let empty_state = Paragraph::new(model.empty_state_lines.join("\n\n"))
+                .block(Block::default().title("No Sessions").borders(Borders::ALL))
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Gray))
+                .wrap(Wrap { trim: false });
+            f.render_widget(empty_state, chunks[1]);
+        } else {
+            let content_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .split(chunks[1]);
+
+            let session_items: Vec<ListItem> = model
+                .rows
+                .iter()
+                .map(|row| {
+                    let text = format!(
+                        "{} {:<6} {:<18} {:<20} {}",
+                        row.state_symbol,
+                        row.runtime_label,
+                        truncate_label(&row.location_label, 18),
+                        truncate_label(&row.agent_label, 20),
+                        row.relative_time
+                    );
+                    let style = Style::default().fg(session_state_color(row.session.state));
+                    ListItem::new(Line::from(text)).style(style)
+                })
+                .collect();
+
+            let sessions_list = List::new(session_items)
+                .block(Block::default().title("Sessions").borders(Borders::ALL))
+                .highlight_style(
                     Style::default()
-                };
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol(">> ");
+            let mut list_state = ListState::default();
+            list_state.select(Some(self.selected_index));
+            f.render_stateful_widget(sessions_list, content_chunks[0], &mut list_state);
 
-                let file_info = if let Some(path) = &activity.file_path {
-                    format!(
-                        " ({})",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    )
-                } else {
-                    String::new()
-                };
-
-                let content = format!(
-                    "{} {} [{}] {}{}!",
-                    activity.status.symbol(),
-                    activity.timestamp,
-                    activity.agent_name,
-                    activity.activity,
-                    file_info
-                );
-
-                ListItem::new(Line::from(Span::styled(
-                    content,
-                    style.fg(activity.status.color()),
-                )))
-            })
-            .collect();
-
-        let activities_list = List::new(activity_items)
-            .block(
-                Block::default()
-                    .title("Recent Activity")
-                    .borders(Borders::ALL),
-            )
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol(">> ");
-
-        let mut list_state = ListState::default();
-        list_state.select(Some(self.selected_index));
-        f.render_stateful_widget(activities_list, chunks[1], &mut list_state);
-
-        // Stats section
-        let stats_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
-                Constraint::Percentage(34),
-            ])
-            .split(chunks[2]);
-
-        let active_count = activities
-            .iter()
-            .filter(|a| matches!(a.status, AgentStatus::Active))
-            .count();
-        let total_count = activities.len();
-        let completed_count = activities
-            .iter()
-            .filter(|a| matches!(a.status, AgentStatus::Completed))
-            .count();
-
-        // Active agents gauge
-        let active_ratio = if total_count > 0 {
-            active_count as f64 / total_count as f64
-        } else {
-            0.0
-        };
-        let active_gauge = Gauge::default()
-            .block(Block::default().title("Active").borders(Borders::ALL))
-            .gauge_style(Style::default().fg(Color::Green))
-            .ratio(active_ratio)
-            .label(format!("{}/{}", active_count, total_count));
-        f.render_widget(active_gauge, stats_chunks[0]);
-
-        // Completion rate
-        let completion_ratio = if total_count > 0 {
-            completed_count as f64 / total_count as f64
-        } else {
-            0.0
-        };
-        let completion_gauge = Gauge::default()
-            .block(Block::default().title("Completed").borders(Borders::ALL))
-            .gauge_style(Style::default().fg(Color::Blue))
-            .ratio(completion_ratio)
-            .label(format!("{:.1}%", completion_ratio * 100.0));
-        f.render_widget(completion_gauge, stats_chunks[1]);
-
-        // Uptime
-        let uptime = self.last_update.elapsed().as_secs();
-        let uptime_display = Paragraph::new(format!("{}m {}s", uptime / 60, uptime % 60))
-            .block(Block::default().title("Uptime").borders(Borders::ALL))
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Yellow));
-        f.render_widget(uptime_display, stats_chunks[2]);
+            if let Some(selected_row) = model.rows.get(self.selected_index) {
+                let details =
+                    Paragraph::new(session_detail_lines(&selected_row.session).join("\n"))
+                        .block(Block::default().title("Details").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::White))
+                        .wrap(Wrap { trim: false });
+                f.render_widget(details, content_chunks[1]);
+            }
+        }
 
         // Help
-        let help_text = "↑↓: Navigate | r: Refresh | q: Quit | Esc: Exit";
+        let help_text = "↑↓: Navigate | r: Refresh | q/Esc: Quit";
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title("Help"));
-        f.render_widget(help, chunks[3]);
+        f.render_widget(help, chunks[2]);
     }
 }
 
-pub struct AgentsDashboard;
+pub fn build_dashboard_model(
+    sessions: &[AgentSessionSummary],
+    now: DateTime<Local>,
+) -> DashboardModel {
+    let mut ordered_sessions = sessions.to_vec();
+    sort_session_summaries(&mut ordered_sessions);
+
+    let rows = ordered_sessions
+        .into_iter()
+        .map(|session| DashboardRow {
+            state_symbol: session_state_symbol(session.state),
+            runtime_label: runtime_label(session.runtime),
+            location_label: session_location_label(&session),
+            agent_label: session.agent_label.clone(),
+            relative_time: relative_time_label(session.last_activity, now),
+            session,
+        })
+        .collect::<Vec<_>>();
+
+    let empty_state_lines = if rows.is_empty() {
+        vec![
+            "No live or recent Claude/Codex sessions found for this repo in the last 7 days."
+                .to_string(),
+            "Hint: run `warp hooks-install --runtime all --level user` to enable live monitoring."
+                .to_string(),
+        ]
+    } else {
+        Vec::new()
+    };
+
+    DashboardModel {
+        rows,
+        empty_state_lines,
+    }
+}
+
+pub fn session_detail_lines(session: &AgentSessionSummary) -> Vec<String> {
+    vec![
+        format!("Agent: {}", session.agent_label),
+        format!("CWD: {}", session.cwd.display()),
+        format!(
+            "Session ID: {}",
+            session.session_id.as_deref().unwrap_or("-")
+        ),
+        format!("Runtime: {}", runtime_label(session.runtime)),
+        format!("Branch: {}", session.branch.as_deref().unwrap_or("-")),
+        format!(
+            "Presence: {}",
+            if session.is_live { "live" } else { "recent" }
+        ),
+        format!("Last Activity: {}", session.last_activity.to_rfc3339()),
+        format!("Source: {}", source_label(session.source)),
+    ]
+}
+
+fn session_state_symbol(state: AgentSessionState) -> &'static str {
+    match state {
+        AgentSessionState::Working => "●",
+        AgentSessionState::Processing => "◔",
+        AgentSessionState::Waiting => "⏳",
+        AgentSessionState::Completed => "✓",
+        AgentSessionState::Recent => "○",
+        AgentSessionState::Unknown => "?",
+    }
+}
+
+fn session_state_color(state: AgentSessionState) -> Color {
+    match state {
+        AgentSessionState::Working => Color::Green,
+        AgentSessionState::Processing => Color::Cyan,
+        AgentSessionState::Waiting => Color::Yellow,
+        AgentSessionState::Completed => Color::Blue,
+        AgentSessionState::Recent => Color::Gray,
+        AgentSessionState::Unknown => Color::Red,
+    }
+}
+
+fn runtime_label(runtime: AgentRuntime) -> &'static str {
+    match runtime {
+        AgentRuntime::Claude => "Claude",
+        AgentRuntime::Codex => "Codex",
+    }
+}
+
+fn source_label(source: AgentSessionSource) -> &'static str {
+    match source {
+        AgentSessionSource::LiveStatus => "LiveStatus",
+        AgentSessionSource::SessionStore => "SessionStore",
+        AgentSessionSource::Merged => "Merged",
+    }
+}
+
+fn session_location_label(session: &AgentSessionSummary) -> String {
+    session
+        .branch
+        .clone()
+        .filter(|branch| !branch.trim().is_empty())
+        .unwrap_or_else(|| {
+            session
+                .cwd
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| session.cwd.display().to_string())
+        })
+}
+
+fn relative_time_label(last_activity: DateTime<Local>, now: DateTime<Local>) -> String {
+    let delta = now.signed_duration_since(last_activity);
+    if delta < ChronoDuration::zero() {
+        let future_delta = last_activity.signed_duration_since(now);
+        if future_delta < ChronoDuration::minutes(1) {
+            "in <1m".to_string()
+        } else if future_delta < ChronoDuration::hours(1) {
+            format!("in {}m", future_delta.num_minutes())
+        } else if future_delta < ChronoDuration::days(1) {
+            format!("in {}h", future_delta.num_hours())
+        } else {
+            format!("in {}d", future_delta.num_days())
+        }
+    } else if delta < ChronoDuration::minutes(1) {
+        "just now".to_string()
+    } else if delta < ChronoDuration::hours(1) {
+        format!("{}m ago", delta.num_minutes())
+    } else if delta < ChronoDuration::days(1) {
+        format!("{}h ago", delta.num_hours())
+    } else {
+        format!("{}d ago", delta.num_days())
+    }
+}
+
+fn truncate_label(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let candidate: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() && max_chars > 3 {
+        format!(
+            "{}...",
+            candidate.chars().take(max_chars - 3).collect::<String>()
+        )
+    } else {
+        candidate
+    }
+}
+
+fn combine_errors(
+    primary: anyhow::Error,
+    additional: impl IntoIterator<Item = anyhow::Error>,
+) -> anyhow::Error {
+    let mut message = primary.to_string();
+    for err in additional {
+        message.push_str("; ");
+        message.push_str(&err.to_string());
+    }
+
+    anyhow::anyhow!(message)
+}
+
+fn terminal_cleanup_attempt<FDisable, FCleanup>(
+    active: bool,
+    disable_raw: FDisable,
+    cleanup_terminal: FCleanup,
+) -> (bool, Result<()>)
+where
+    FDisable: FnOnce() -> io::Result<()>,
+    FCleanup: FnOnce() -> io::Result<()>,
+{
+    if !active {
+        return (false, Ok(()));
+    }
+
+    let mut errors = Vec::new();
+
+    if let Err(err) = disable_raw() {
+        errors.push(anyhow::Error::new(err));
+    }
+
+    if let Err(err) = cleanup_terminal() {
+        errors.push(anyhow::Error::new(err));
+    }
+
+    if errors.is_empty() {
+        (false, Ok(()))
+    } else {
+        let first = errors.remove(0);
+        (true, Err(combine_errors(first, errors)))
+    }
+}
+
+fn rollback_terminal_entry<FDisable, FCleanup>(
+    primary: anyhow::Error,
+    disable_raw: FDisable,
+    cleanup_terminal: FCleanup,
+) -> anyhow::Error
+where
+    FDisable: FnOnce() -> io::Result<()>,
+    FCleanup: FnOnce() -> io::Result<()>,
+{
+    let (_, rollback_result) = terminal_cleanup_attempt(true, disable_raw, cleanup_terminal);
+    match rollback_result {
+        Ok(()) => primary,
+        Err(rollback_error) => combine_errors(primary, [rollback_error]),
+    }
+}
+
+pub struct AgentsDashboard {
+    discovery: AgentDiscovery,
+}
 
 impl AgentsDashboard {
-    pub fn new() -> Self {
-        Self
+    pub fn new(discovery: AgentDiscovery) -> Self {
+        Self { discovery }
     }
 
     pub fn run(&self) -> Result<()> {
-        let mut app = TuiApp::new();
+        let mut app = TuiApp::new(self.discovery.clone());
         app.run()
     }
 
     /// Start monitoring agents in a specific worktree
     pub fn monitor_worktree(&self, worktree_path: PathBuf) -> Result<()> {
-        println!(
-            "🔍 Starting agent monitoring for: {}",
-            worktree_path.display()
-        );
-
-        // TODO: In real implementation, set up file watchers here
-        // let (tx, rx) = mpsc::channel();
-        // let mut watcher: RecommendedWatcher = Watcher::new_immediate(move |res| {
-        //     tx.send(res).unwrap();
-        // })?;
-        // watcher.watch(&worktree_path, RecursiveMode::Recursive)?;
-
-        let mut app = TuiApp::new();
+        let mut app = TuiApp::new(AgentDiscovery::new(vec![worktree_path]));
         app.run()
     }
 }
@@ -414,7 +557,7 @@ impl CleanupTui {
         let mut should_quit = false;
         let mut confirmed = false;
 
-        let result = loop {
+        loop {
             terminal.draw(|f| {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -519,7 +662,7 @@ impl CleanupTui {
                     }
                 }
             }
-        };
+        }
 
         // Cleanup terminal
         disable_raw_mode()?;
@@ -562,7 +705,7 @@ impl ConfigTui {
         println!("💡 Edit config file at: ~/.config/git-warp/config.toml");
 
         // Show current TUI for demonstration
-        let mut app = TuiApp::new();
+        let mut app = TuiApp::new(AgentDiscovery::new(Vec::new()));
         app.run()
     }
 }
@@ -570,34 +713,85 @@ impl ConfigTui {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+    use std::io;
 
     #[test]
     fn test_tui_creation() {
-        let dashboard = AgentsDashboard::new();
-        // Just test that we can create the TUI components
+        let _dashboard =
+            AgentsDashboard::new(AgentDiscovery::new(vec![PathBuf::from("/tmp/repo")]));
         let _cleanup_tui = CleanupTui::new();
         let _config_tui = ConfigTui::new();
     }
 
     #[test]
-    fn test_agent_status() {
-        assert_eq!(AgentStatus::Active.symbol(), "🔄");
-        assert_eq!(AgentStatus::Waiting.color(), Color::Yellow);
-        assert_eq!(AgentStatus::Completed.symbol(), "✅");
-        assert_eq!(AgentStatus::Error.color(), Color::Red);
+    fn test_build_dashboard_model_empty_state() {
+        let model =
+            build_dashboard_model(&[], Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap());
+
+        assert!(model.rows.is_empty());
+        assert_eq!(model.empty_state_lines.len(), 2);
     }
 
     #[test]
-    fn test_agent_activity() {
-        let activity = AgentActivity {
-            timestamp: "12:34:56".to_string(),
-            agent_name: "TestAgent".to_string(),
-            activity: "Testing".to_string(),
-            file_path: Some(PathBuf::from("/test/file.rs")),
-            status: AgentStatus::Active,
+    fn test_session_detail_lines() {
+        let session = AgentSessionSummary {
+            runtime: AgentRuntime::Codex,
+            session_id: Some("session-123".to_string()),
+            cwd: PathBuf::from("/tmp/repo/.worktrees/agents"),
+            branch: Some("feat/agents".to_string()),
+            agent_label: "Parfit (worker)".to_string(),
+            state: AgentSessionState::Working,
+            last_activity: Local.with_ymd_and_hms(2026, 4, 23, 11, 0, 0).unwrap(),
+            is_live: true,
+            source: AgentSessionSource::Merged,
         };
 
-        assert_eq!(activity.agent_name, "TestAgent");
-        assert!(activity.file_path.is_some());
+        let lines = session_detail_lines(&session);
+
+        assert!(lines.iter().any(|line| line == "Runtime: Codex"));
+        assert!(lines.iter().any(|line| line == "Source: Merged"));
+    }
+
+    #[test]
+    fn test_terminal_cleanup_attempt_keeps_guard_active_on_failure() {
+        let (active, result) =
+            terminal_cleanup_attempt(true, || Err(io::Error::other("disable failed")), || Ok(()));
+
+        assert!(active);
+        let message = result.expect_err("cleanup should fail").to_string();
+        assert!(message.contains("disable failed"));
+    }
+
+    #[test]
+    fn test_terminal_cleanup_attempt_keeps_guard_active_when_cleanup_fails() {
+        let (active, result) =
+            terminal_cleanup_attempt(true, || Ok(()), || Err(io::Error::other("cleanup failed")));
+
+        assert!(active);
+        let message = result.expect_err("cleanup should fail").to_string();
+        assert!(message.contains("cleanup failed"));
+    }
+
+    #[test]
+    fn test_terminal_cleanup_attempt_deactivates_guard_on_success() {
+        let (active, result) = terminal_cleanup_attempt(true, || Ok(()), || Ok(()));
+
+        assert!(!active);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rollback_terminal_entry_combines_primary_and_cleanup_failures() {
+        let error = rollback_terminal_entry(
+            anyhow::anyhow!("enter failed"),
+            || Err(io::Error::other("disable failed")),
+            || Err(io::Error::other("leave failed")),
+        );
+
+        let message = error.to_string();
+        assert!(message.contains("enter failed"));
+        assert!(message.contains("disable failed"));
+        assert!(message.contains("leave failed"));
     }
 }

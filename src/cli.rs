@@ -208,6 +208,7 @@ impl Cli {
         use crate::config::ConfigManager;
         use crate::cow;
         use crate::git::GitRepository;
+        use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
         use crate::rewrite::PathRewriter;
         use crate::terminal::{TerminalManager, TerminalMode};
         use std::path::PathBuf;
@@ -241,6 +242,8 @@ impl Cli {
             }
             return Ok(());
         }
+
+        let mut worktree_created = false;
 
         // Check if worktree already exists
         if worktree_path.exists() {
@@ -297,6 +300,21 @@ impl Cli {
             }
 
             println!("✅ Worktree created successfully!");
+            worktree_created = true;
+        }
+
+        match run_post_create_setup(&worktree_path, worktree_created) {
+            PostCreateSetupStatus::Installed => {
+                println!("📦 Detected pnpm repo, ran `pnpm install`");
+            }
+            PostCreateSetupStatus::Warned(reason) => {
+                println!(
+                    "⚠️  Detected pnpm repo but `pnpm install` failed: {}",
+                    reason
+                );
+            }
+            PostCreateSetupStatus::SkippedExistingWorktree
+            | PostCreateSetupStatus::SkippedNonPnpmRepo => {}
         }
 
         // Handle terminal switching
@@ -691,6 +709,7 @@ impl Cli {
     }
 
     fn handle_agents(&self) -> Result<()> {
+        use crate::agents::AgentDiscovery;
         use crate::git::GitRepository;
         use crate::tui::AgentsDashboard;
 
@@ -700,20 +719,19 @@ impl Cli {
             return Ok(());
         }
 
-        // Find the Git repository
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let mut monitored_paths = vec![git_repo.root_path().to_path_buf()];
+        monitored_paths.extend(
+            git_repo
+                .list_worktrees()?
+                .into_iter()
+                .map(|worktree| worktree.path),
+        );
+        monitored_paths.sort();
+        monitored_paths.dedup();
 
-        println!("🤖 Starting Agent Activity Monitor...");
-        println!("💡 This will show live Claude Code agent activities");
-        println!("⏱️  Press any key to start the dashboard...");
-
-        // Wait for user confirmation
-        use std::io::{self, Read};
-        let mut buffer = [0; 1];
-        io::stdin().read_exact(&mut buffer).ok();
-
-        let dashboard = AgentsDashboard::new();
+        let dashboard = AgentsDashboard::new(AgentDiscovery::new(monitored_paths));
         dashboard.run()
     }
 
