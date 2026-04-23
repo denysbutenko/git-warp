@@ -165,7 +165,6 @@ impl AgentDiscovery {
         let recent_history = self.load_recent_history_sessions(now)?;
         let merged_history = merge_session_summaries(recent_history);
         let mut merged = merge_live_sessions(live_sessions, merged_history);
-        merged.retain(|session| self.keep_session(session, now));
         sort_session_summaries(&mut merged);
         Ok(merged)
     }
@@ -434,11 +433,7 @@ fn merge_live_sessions(
     }
 
     for history_group in history_by_cwd.into_values() {
-        if history_group.len() == 1 {
-            merged.push(history_group.into_iter().next().unwrap());
-        } else {
-            merged.push(merge_session_group(history_group.iter().collect()));
-        }
+        merged.extend(history_group);
     }
 
     merged
