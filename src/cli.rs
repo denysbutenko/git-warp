@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 #[derive(Parser)]
 #[command(
@@ -248,6 +249,7 @@ impl Cli {
                 is_occupied: process_manager
                     .has_processes_in_directory(&worktree.path)
                     .unwrap_or(false),
+                last_touched: worktree_last_touched(&worktree.path),
             })
             .collect()
     }
@@ -1085,4 +1087,13 @@ impl Cli {
             "No editor configured. Set $VISUAL or $EDITOR to use `warp config --edit`"
         ))
     }
+}
+
+fn worktree_last_touched(path: &Path) -> Option<SystemTime> {
+    let metadata = std::fs::metadata(path).ok()?;
+
+    [metadata.modified().ok(), metadata.created().ok()]
+        .into_iter()
+        .flatten()
+        .max()
 }

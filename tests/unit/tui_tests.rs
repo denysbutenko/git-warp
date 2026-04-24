@@ -7,7 +7,10 @@ use git_warp::tui::{
     AgentsDashboard, WorktreeRuntimeStatus, build_dashboard_model, build_worktree_switch_model,
     session_detail_lines,
 };
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 
 fn sample_summary(
     runtime: AgentRuntime,
@@ -197,12 +200,14 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
             is_current: true,
             is_dirty: true,
             is_occupied: false,
+            last_touched: None,
         },
         WorktreeRuntimeStatus {
             path: PathBuf::from("/repo/.worktrees/detached"),
             is_current: false,
             is_dirty: false,
             is_occupied: true,
+            last_touched: None,
         },
     ];
 
@@ -213,6 +218,71 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
     assert_eq!(model.rows[0].badges, vec!["primary", "current", "dirty"]);
     assert_eq!(model.rows[1].branch_label, "(detached HEAD: abcdef01)");
     assert_eq!(model.rows[1].badges, vec!["detached", "occupied"]);
+}
+
+#[test]
+fn test_build_worktree_switch_model_orders_recently_touched_worktrees_first() {
+    let older_path = PathBuf::from("/repo/.worktrees/older");
+    let newer_path = PathBuf::from("/repo/.worktrees/newer");
+    let middle_path = PathBuf::from("/repo/.worktrees/middle");
+    let worktrees = vec![
+        WorktreeInfo {
+            path: older_path.clone(),
+            branch: "older".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: newer_path.clone(),
+            branch: "newer".to_string(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: middle_path.clone(),
+            branch: "middle".to_string(),
+            head: "fedcba9876543210".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+    ];
+    let statuses = vec![
+        WorktreeRuntimeStatus {
+            path: older_path,
+            is_current: false,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(10)),
+        },
+        WorktreeRuntimeStatus {
+            path: newer_path,
+            is_current: false,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(30)),
+        },
+        WorktreeRuntimeStatus {
+            path: middle_path,
+            is_current: false,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(20)),
+        },
+    ];
+
+    let model = build_worktree_switch_model(&worktrees, &statuses);
+    let branch_labels: Vec<_> = model
+        .rows
+        .iter()
+        .map(|row| row.branch_label.as_str())
+        .collect();
+
+    assert_eq!(branch_labels, vec!["newer", "middle", "older"]);
 }
 
 #[test]

@@ -23,7 +23,7 @@ use ratatui::{
 use std::{
     io,
     path::PathBuf,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -94,6 +94,7 @@ pub struct WorktreeRuntimeStatus {
     pub is_current: bool,
     pub is_dirty: bool,
     pub is_occupied: bool,
+    pub last_touched: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -324,9 +325,10 @@ pub fn build_worktree_switch_model(
     worktrees: &[WorktreeInfo],
     statuses: &[WorktreeRuntimeStatus],
 ) -> WorktreeSwitchModel {
-    let rows = worktrees
+    let mut rows = worktrees
         .iter()
-        .map(|worktree| {
+        .enumerate()
+        .map(|(index, worktree)| {
             let status = statuses.iter().find(|status| status.path == worktree.path);
             let is_detached = worktree.branch.trim().is_empty();
             let mut badges = Vec::new();
@@ -347,17 +349,28 @@ pub fn build_worktree_switch_model(
                 badges.push("occupied".to_string());
             }
 
-            WorktreeSwitchRow {
-                branch_label: worktree_branch_label(worktree),
-                path_label: worktree.path.display().to_string(),
-                badges,
-                target: WorktreeSwitchTarget {
-                    branch: (!is_detached).then(|| worktree.branch.clone()),
-                    path: worktree.path.clone(),
+            (
+                index,
+                status.and_then(|status| status.last_touched),
+                WorktreeSwitchRow {
+                    branch_label: worktree_branch_label(worktree),
+                    path_label: worktree.path.display().to_string(),
+                    badges,
+                    target: WorktreeSwitchTarget {
+                        branch: (!is_detached).then(|| worktree.branch.clone()),
+                        path: worktree.path.clone(),
+                    },
                 },
-            }
+            )
         })
         .collect::<Vec<_>>();
+
+    rows.sort_by(|(left_index, left_time, _), (right_index, right_time, _)| {
+        right_time
+            .cmp(left_time)
+            .then_with(|| left_index.cmp(right_index))
+    });
+    let rows = rows.into_iter().map(|(_, _, row)| row).collect::<Vec<_>>();
 
     let empty_state_lines = if rows.is_empty() {
         vec![
