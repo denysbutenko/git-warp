@@ -517,6 +517,7 @@ impl CleanupTui {
     }
 
     pub fn run(&self) -> Result<Vec<String>> {
+        use crate::config::ConfigManager;
         use crate::git::GitRepository;
         use crossterm::{
             event::{self, Event, KeyCode, KeyEventKind},
@@ -537,8 +538,13 @@ impl CleanupTui {
         // Get the git repository and worktrees
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a git repository"))?;
+        let config_manager = ConfigManager::new()?;
+        let protected_branches = config_manager.get().git.protected_branches.clone();
         let worktrees = git_repo.list_worktrees()?;
-        let branch_statuses = git_repo.analyze_branches_for_cleanup(&worktrees)?;
+        let branch_statuses = git_repo.analyze_branches_for_cleanup_with_protected_branches(
+            &worktrees,
+            &protected_branches,
+        )?;
 
         if branch_statuses.is_empty() {
             println!("✨ No worktrees found that can be cleaned up!");

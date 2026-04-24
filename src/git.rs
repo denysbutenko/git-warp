@@ -1,3 +1,4 @@
+use crate::config::GitConfig;
 use crate::error::{GitWarpError, Result};
 use gix::Repository;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,12 @@ pub struct BranchStatus {
 pub struct GitRepository {
     repo: Repository,
     repo_path: PathBuf,
+}
+
+fn is_protected_branch(branch: &str, protected_branches: &[String]) -> bool {
+    protected_branches
+        .iter()
+        .any(|protected_branch| protected_branch.trim() == branch)
 }
 
 impl GitRepository {
@@ -121,11 +128,11 @@ impl GitRepository {
             .canonicalize()
             .unwrap_or_else(|_| self.repo_path.clone());
 
-        for (index, worktree) in worktrees.iter_mut().enumerate() {
-            if index == 0 {
-                worktree.is_primary = true;
-            }
+        if let Some(first_worktree) = worktrees.first_mut() {
+            first_worktree.is_primary = true;
+        }
 
+        for worktree in &mut worktrees {
             let worktree_path = worktree
                 .path
                 .canonicalize()
@@ -264,12 +271,27 @@ impl GitRepository {
         &self,
         worktrees: &[WorktreeInfo],
     ) -> Result<Vec<BranchStatus>> {
+        self.analyze_branches_for_cleanup_with_protected_branches(
+            worktrees,
+            &GitConfig::default().protected_branches,
+        )
+    }
+
+    /// Analyze branches for cleanup using an explicit protected branch list
+    pub fn analyze_branches_for_cleanup_with_protected_branches(
+        &self,
+        worktrees: &[WorktreeInfo],
+        protected_branches: &[String],
+    ) -> Result<Vec<BranchStatus>> {
         use std::process::Command;
 
         let mut branch_statuses = Vec::new();
 
         for worktree in worktrees {
-            if worktree.is_primary || worktree.branch.is_empty() {
+            if worktree.is_primary
+                || worktree.branch.is_empty()
+                || is_protected_branch(&worktree.branch, protected_branches)
+            {
                 continue;
             }
 
@@ -287,12 +309,15 @@ impl GitRepository {
                 output.status.success() && !output.stdout.is_empty()
             };
 
-            // Check if branch is merged to main/master
+            // Check if branch is merged to a protected base branch
             let is_merged = {
-                let main_branches = ["main", "master", "develop"];
                 let mut merged = false;
 
-                for main_branch in &main_branches {
+                for main_branch in protected_branches {
+                    if branch == main_branch {
+                        continue;
+                    }
+
                     let output = Command::new("git")
                         .args(&["merge-base", "--is-ancestor", branch, main_branch])
                         .current_dir(&self.repo_path)

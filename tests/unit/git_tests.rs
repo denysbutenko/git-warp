@@ -1,4 +1,4 @@
-use git_warp::git::{BranchStatus, GitRepository};
+use git_warp::git::GitRepository;
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
@@ -9,7 +9,7 @@ fn setup_test_repo() -> tempfile::TempDir {
 
     // Initialize git repo
     Command::new("git")
-        .args(&["init", "-b", "main"])
+        .args(&["init", "--initial-branch", "main"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -121,6 +121,78 @@ fn test_list_worktrees_marks_main_primary_and_linked_current() {
     assert!(!main.is_current);
     assert!(!linked.is_primary);
     assert!(linked.is_current);
+}
+
+#[test]
+fn test_cleanup_analysis_excludes_protected_branches() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+
+    Command::new("git")
+        .args(&["branch", "develop"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let develop_path = repo_path.join("worktrees").join("develop");
+    git_repo
+        .create_worktree_and_branch("develop", &develop_path, Some("develop"))
+        .unwrap();
+
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let branch_statuses = git_repo.analyze_branches_for_cleanup(&worktrees).unwrap();
+
+    assert!(branch_statuses.iter().all(|status| status.branch != "main"));
+    assert!(
+        branch_statuses
+            .iter()
+            .all(|status| status.branch != "develop")
+    );
+}
+
+#[test]
+fn test_cleanup_analysis_excludes_custom_protected_branches() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+
+    Command::new("git")
+        .args(&["branch", "staging"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let staging_path = repo_path.join("worktrees").join("staging");
+    git_repo
+        .create_worktree_and_branch("staging", &staging_path, Some("staging"))
+        .unwrap();
+
+    let feature_path = repo_path.join("worktrees").join("feature");
+    git_repo
+        .create_worktree_and_branch("feature", &feature_path, None)
+        .unwrap();
+
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let protected_branches = vec!["staging".to_string()];
+    let branch_statuses = git_repo
+        .analyze_branches_for_cleanup_with_protected_branches(&worktrees, &protected_branches)
+        .unwrap();
+
+    assert!(
+        branch_statuses
+            .iter()
+            .all(|status| status.branch != "staging")
+    );
+    assert!(
+        branch_statuses
+            .iter()
+            .any(|status| status.branch == "feature")
+    );
 }
 
 #[test]
