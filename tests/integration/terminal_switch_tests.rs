@@ -81,6 +81,18 @@ fn create_fake_open(bin_dir: &Path, log_path: &Path) -> PathBuf {
     script_path
 }
 
+fn create_failing_open(bin_dir: &Path) -> PathBuf {
+    let script_path = bin_dir.join("open");
+    fs::write(
+        &script_path,
+        "#!/bin/sh\necho \"open failed\" >&2\nexit 1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    make_executable(&script_path);
+    script_path
+}
+
 fn create_fake_shell(bin_dir: &Path, log_path: &Path) -> PathBuf {
     let script_path = bin_dir.join("fake-shell");
     fs::write(
@@ -172,6 +184,104 @@ fn test_warp_switch_honors_explicit_warp_terminal_app() {
         open_contents,
         osascript_contents
     );
+}
+
+#[test]
+fn test_warp_switch_reports_terminal_handoff_failure_as_incomplete() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let osascript_log_dir = tempdir().unwrap();
+    let osascript_log = osascript_log_dir.path().join("osascript.log");
+
+    write_config(home_dir.path(), "warp");
+    create_fake_osascript(bin_dir.path(), &osascript_log);
+    create_failing_open(bin_dir.path());
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let worktree_path = repo_path.join("worktrees").join("handoff-fails");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["switch", "--no-cow", "feature/handoff-fails", "--path"])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .env("HOME", home_dir.path())
+        .env("PATH", path_env)
+        .env("TERM_PROGRAM", "WarpTerminal")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("✅ Worktree creation: created"), "{stdout}");
+    assert!(
+        stdout.contains("✅ Branch checkout: feature/handoff-fails"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("⚠️  Terminal handoff: failed"), "{stdout}");
+    assert!(stdout.contains("⚠️  Switch incomplete"), "{stdout}");
+    assert!(stdout.contains("💡 Run: cd '"), "{stdout}");
+}
+
+#[test]
+fn test_warp_switch_reports_existing_worktree_branch_mismatch_as_incomplete() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let osascript_log_dir = tempdir().unwrap();
+    let osascript_log = osascript_log_dir.path().join("osascript.log");
+    let worktree_path = repo_path.join("worktrees").join("feature-existing");
+
+    write_config(home_dir.path(), "warp");
+    create_fake_osascript(bin_dir.path(), &osascript_log);
+
+    let create_output = Command::new("git")
+        .args(["worktree", "add", "-b", "feature/existing"])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(
+        create_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&create_output.stderr)
+    );
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args([
+            "--terminal",
+            "echo",
+            "switch",
+            "--no-cow",
+            "feature/wrong",
+            "--path",
+        ])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .env("HOME", home_dir.path())
+        .env("PATH", path_env)
+        .env("TERM_PROGRAM", "WarpTerminal")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("↪️  Worktree creation: already existed"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("⚠️  Branch checkout: expected feature/wrong"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("⚠️  Switch incomplete"), "{stdout}");
+    assert!(stdout.contains("💡 Run: cd '"), "{stdout}");
 }
 
 #[test]
