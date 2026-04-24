@@ -2,7 +2,11 @@ use chrono::{Local, TimeZone};
 use git_warp::agents::{
     AgentDiscovery, AgentRuntime, AgentSessionSource, AgentSessionState, AgentSessionSummary,
 };
-use git_warp::tui::{AgentsDashboard, build_dashboard_model, session_detail_lines};
+use git_warp::git::WorktreeInfo;
+use git_warp::tui::{
+    AgentsDashboard, WorktreeRuntimeStatus, build_dashboard_model, build_worktree_switch_model,
+    session_detail_lines,
+};
 use std::path::PathBuf;
 
 fn sample_summary(
@@ -165,4 +169,69 @@ fn test_build_dashboard_model_renders_future_timestamps_explicitly() {
 fn test_agents_dashboard_accepts_discovery() {
     let discovery = AgentDiscovery::new(vec![PathBuf::from("/repo")]);
     let _dashboard = AgentsDashboard::new(discovery);
+}
+
+#[test]
+fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
+    let worktrees = vec![
+        WorktreeInfo {
+            path: PathBuf::from("/repo"),
+            branch: "main".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: true,
+            is_current: true,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/detached"),
+            branch: String::new(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: true,
+        },
+    ];
+    let statuses = vec![
+        WorktreeRuntimeStatus {
+            path: PathBuf::from("/repo"),
+            is_current: true,
+            is_dirty: true,
+            is_occupied: false,
+        },
+        WorktreeRuntimeStatus {
+            path: PathBuf::from("/repo/.worktrees/detached"),
+            is_current: false,
+            is_dirty: false,
+            is_occupied: true,
+        },
+    ];
+
+    let model = build_worktree_switch_model(&worktrees, &statuses);
+
+    assert_eq!(model.rows.len(), 2);
+    assert_eq!(model.rows[0].branch_label, "main");
+    assert_eq!(model.rows[0].badges, vec!["primary", "current", "dirty"]);
+    assert_eq!(model.rows[1].branch_label, "(detached HEAD: abcdef01)");
+    assert_eq!(model.rows[1].badges, vec!["detached", "occupied"]);
+}
+
+#[test]
+fn test_worktree_switch_model_returns_selected_target() {
+    let worktrees = vec![WorktreeInfo {
+        path: PathBuf::from("/repo/.worktrees/feature"),
+        branch: "feature/default-picker".to_string(),
+        head: "0123456789abcdef".to_string(),
+        is_primary: false,
+        is_current: false,
+        is_detached: false,
+    }];
+
+    let model = build_worktree_switch_model(&worktrees, &[]);
+    let target = model
+        .target_at(0)
+        .expect("selected row should have a target");
+
+    assert_eq!(target.branch.as_deref(), Some("feature/default-picker"));
+    assert_eq!(target.path, PathBuf::from("/repo/.worktrees/feature"));
+    assert!(model.target_at(1).is_none());
 }
