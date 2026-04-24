@@ -125,5 +125,5 @@ fn test_warp_switch_warns_when_pnpm_install_fails_but_still_succeeds() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Detected pnpm repo but `pnpm install` failed: install failed"));
-    assert!(stdout.contains("Worktree created successfully"));
+    assert!(stdout.contains("Worktree creation: created"));
 }

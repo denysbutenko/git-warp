@@ -130,6 +130,82 @@ pub enum Commands {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwitchStepStatus {
+    Done,
+    Skipped,
+    Warning,
+}
+
+struct SwitchStep {
+    label: &'static str,
+    status: SwitchStepStatus,
+    detail: String,
+}
+
+impl SwitchStep {
+    fn print(&self) {
+        let icon = match self.status {
+            SwitchStepStatus::Done => "✅",
+            SwitchStepStatus::Skipped => "↪️ ",
+            SwitchStepStatus::Warning => "⚠️ ",
+        };
+
+        println!("{} {}: {}", icon, self.label, self.detail);
+    }
+}
+
+struct SwitchOutcomeReport {
+    worktree_path: PathBuf,
+    steps: Vec<SwitchStep>,
+}
+
+impl SwitchOutcomeReport {
+    fn new(worktree_path: PathBuf) -> Self {
+        Self {
+            worktree_path,
+            steps: Vec::new(),
+        }
+    }
+
+    fn done(&mut self, label: &'static str, detail: impl Into<String>) {
+        self.push(label, SwitchStepStatus::Done, detail);
+    }
+
+    fn skipped(&mut self, label: &'static str, detail: impl Into<String>) {
+        self.push(label, SwitchStepStatus::Skipped, detail);
+    }
+
+    fn warned(&mut self, label: &'static str, detail: impl Into<String>) {
+        self.push(label, SwitchStepStatus::Warning, detail);
+    }
+
+    fn push(&mut self, label: &'static str, status: SwitchStepStatus, detail: impl Into<String>) {
+        let step = SwitchStep {
+            label,
+            status,
+            detail: detail.into(),
+        };
+        step.print();
+        self.steps.push(step);
+    }
+
+    fn has_warnings(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| step.status == SwitchStepStatus::Warning)
+    }
+
+    fn finish(&self) {
+        if self.has_warnings() {
+            println!("⚠️  Switch incomplete: {}", self.worktree_path.display());
+            println!("💡 Run: cd '{}'", self.worktree_path.display());
+        } else {
+            println!("✅ Switch complete: {}", self.worktree_path.display());
+        }
+    }
+}
+
 impl Cli {
     pub fn run(&self) -> Result<()> {
         if self.debug {
@@ -291,7 +367,17 @@ impl Cli {
             TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
         };
 
-        self.switch_to_worktree_path(worktree_path, terminal_mode, config.terminal.app.as_str())
+        let mut report = SwitchOutcomeReport::new(worktree_path.to_path_buf());
+        report.skipped("Worktree creation", "already existed");
+        self.record_terminal_handoff(
+            &mut report,
+            worktree_path,
+            terminal_mode,
+            config.terminal.app.as_str(),
+        );
+        report.finish();
+
+        Ok(())
     }
 
     fn handle_switch(
@@ -340,11 +426,14 @@ impl Cli {
             return Ok(());
         }
 
+        let mut report = SwitchOutcomeReport::new(worktree_path.clone());
         let mut worktree_created = false;
+        let mut checkout_warning = None;
 
         // Check if worktree already exists
         if worktree_path.exists() {
             println!("📁 Worktree already exists at: {}", worktree_path.display());
+            report.skipped("Worktree creation", "already existed");
         } else {
             println!("🚀 Creating worktree for branch '{}'", branch);
 
@@ -386,7 +475,9 @@ impl Cli {
 
                         if !output.status.success() {
                             let error = String::from_utf8_lossy(&output.stderr);
+                            let error = error.trim().to_string();
                             log::warn!("Failed to checkout branch in CoW worktree: {}", error);
+                            checkout_warning = Some(error);
                         }
                     }
                 }
@@ -395,9 +486,21 @@ impl Cli {
                 git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
             }
 
-            println!("✅ Worktree created successfully!");
+            if worktree_path.exists() {
+                report.done("Worktree creation", "created");
+            } else {
+                report.warned(
+                    "Worktree creation",
+                    format!(
+                        "path was not found after creation: {}",
+                        worktree_path.display()
+                    ),
+                );
+            }
             worktree_created = true;
         }
+
+        Self::record_branch_checkout(&mut report, &worktree_path, &branch, checkout_warning);
 
         match run_post_create_setup(&worktree_path, worktree_created) {
             PostCreateSetupStatus::Installed => {
@@ -419,22 +522,89 @@ impl Cli {
             TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
         };
 
-        self.switch_to_worktree_path(&worktree_path, terminal_mode, config.terminal.app.as_str())
+        self.record_terminal_handoff(
+            &mut report,
+            &worktree_path,
+            terminal_mode,
+            config.terminal.app.as_str(),
+        );
+        report.finish();
+
+        Ok(())
     }
 
-    fn switch_to_worktree_path(
+    fn record_branch_checkout(
+        report: &mut SwitchOutcomeReport,
+        worktree_path: &Path,
+        branch: &str,
+        checkout_warning: Option<String>,
+    ) {
+        match Self::current_branch_at_path(worktree_path) {
+            Ok(current_branch) if current_branch == branch && checkout_warning.is_none() => {
+                report.done("Branch checkout", branch);
+            }
+            Ok(current_branch) if current_branch == branch => {
+                report.warned(
+                    "Branch checkout",
+                    format!(
+                        "checkout reported warning for {}: {}",
+                        branch,
+                        checkout_warning.unwrap_or_default()
+                    ),
+                );
+            }
+            Ok(current_branch) => {
+                let found = if current_branch.is_empty() {
+                    "detached HEAD".to_string()
+                } else {
+                    current_branch
+                };
+                let detail = match checkout_warning {
+                    Some(warning) if !warning.is_empty() => {
+                        format!("expected {branch}, found {found}; checkout failed: {warning}")
+                    }
+                    _ => format!("expected {branch}, found {found}"),
+                };
+                report.warned("Branch checkout", detail);
+            }
+            Err(error) => {
+                let detail = match checkout_warning {
+                    Some(warning) if !warning.is_empty() => {
+                        format!("could not verify {branch}: {error}; checkout failed: {warning}")
+                    }
+                    _ => format!("could not verify {branch}: {error}"),
+                };
+                report.warned("Branch checkout", detail);
+            }
+        }
+    }
+
+    fn current_branch_at_path(worktree_path: &Path) -> Result<String> {
+        let output = Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(worktree_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to verify worktree branch: {}", e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "Failed to verify worktree branch: {}",
+                error.trim()
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn record_terminal_handoff(
         &self,
+        report: &mut SwitchOutcomeReport,
         worktree_path: &Path,
         terminal_mode: crate::terminal::TerminalMode,
         terminal_app: &str,
-    ) -> Result<()> {
-        use crate::terminal::{TerminalManager, TerminalMode};
-
-        let is_current_mode = matches!(terminal_mode, TerminalMode::Current);
-
-        if is_current_mode {
-            println!("🔄 Switched to worktree: {}", worktree_path.display());
-        }
+    ) {
+        use crate::terminal::TerminalManager;
 
         let terminal_manager = TerminalManager;
         match terminal_manager.switch_to_worktree_with_app(
@@ -444,18 +614,30 @@ impl Cli {
             Some(terminal_app),
         ) {
             Ok(()) => {
-                if !is_current_mode {
-                    println!("🔄 Switched to worktree: {}", worktree_path.display());
-                }
+                report.done(
+                    "Terminal handoff",
+                    Self::terminal_handoff_success_detail(terminal_mode),
+                );
             }
             Err(e) => {
                 log::warn!("Terminal switching failed: {}", e);
-                println!("📍 Worktree created at: {}", worktree_path.display());
-                println!("💡 Run: cd '{}'", worktree_path.display());
+                report.warned("Terminal handoff", format!("failed: {e}"));
             }
         }
+    }
 
-        Ok(())
+    fn terminal_handoff_success_detail(
+        terminal_mode: crate::terminal::TerminalMode,
+    ) -> &'static str {
+        use crate::terminal::TerminalMode;
+
+        match terminal_mode {
+            TerminalMode::Tab => "opened tab",
+            TerminalMode::Window => "opened window",
+            TerminalMode::InPlace => "printed cd command",
+            TerminalMode::Echo => "printed manual commands",
+            TerminalMode::Current => "started current-terminal shell",
+        }
     }
 
     fn resolve_switch_branch(
