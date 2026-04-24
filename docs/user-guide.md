@@ -245,7 +245,10 @@ warp switch --terminal window feature-branch
 # Echo commands instead of switching
 warp switch --terminal echo feature-branch
 
-# Stay in current location
+# Start a shell in the current terminal tab
+warp switch --terminal current feature-branch
+
+# Print a cd command for the worktree
 warp switch --terminal inplace feature-branch
 ```
 
@@ -363,7 +366,7 @@ Git-Warp uses a sophisticated configuration system with three layers:
 Located at: `~/.config/git-warp/config.toml`
 
 ```toml
-# Terminal mode: tab, window, inplace, echo
+# Terminal mode: tab, window, current, inplace, echo
 terminal_mode = "tab"
 
 # Use Copy-on-Write when available

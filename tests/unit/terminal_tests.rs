@@ -37,6 +37,10 @@ fn test_terminal_mode_enum() {
     assert_eq!(TerminalMode::Window as u8, 1);
     assert_eq!(TerminalMode::InPlace as u8, 2);
     assert_eq!(TerminalMode::Echo as u8, 3);
+    assert!(matches!(
+        TerminalMode::from_str("current"),
+        Some(TerminalMode::Current)
+    ));
 }
 
 #[cfg(target_os = "macos")]

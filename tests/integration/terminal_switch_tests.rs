@@ -81,6 +81,21 @@ fn create_fake_open(bin_dir: &Path, log_path: &Path) -> PathBuf {
     script_path
 }
 
+fn create_fake_shell(bin_dir: &Path, log_path: &Path) -> PathBuf {
+    let script_path = bin_dir.join("fake-shell");
+    fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\nprintf 'cwd=%s\\nargs=%s\\n' \"$(pwd)\" \"$*\" >> \"{}\"\nexit 0\n",
+            log_path.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    make_executable(&script_path);
+    script_path
+}
+
 fn write_config(home_dir: &Path, app: &str) {
     let config_dir = home_dir
         .join("Library")
@@ -156,6 +171,47 @@ fn test_warp_switch_honors_explicit_warp_terminal_app() {
         "expected Warp URI open call, got open={}, osascript={}",
         open_contents,
         osascript_contents
+    );
+}
+
+#[test]
+fn test_warp_switch_current_starts_shell_in_worktree() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let shell_log_dir = tempdir().unwrap();
+    let shell_log = shell_log_dir.path().join("shell.log");
+
+    write_config(home_dir.path(), "auto");
+    let fake_shell = create_fake_shell(bin_dir.path(), &shell_log);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args([
+            "--terminal",
+            "current",
+            "switch",
+            "--no-cow",
+            "feature/warp-current",
+        ])
+        .current_dir(repo_path)
+        .env("HOME", home_dir.path())
+        .env("SHELL", &fake_shell)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "expected current switch to succeed, stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let shell_contents = fs::read_to_string(&shell_log).unwrap_or_default();
+    assert!(
+        shell_contents.contains("worktrees/feature-warp-current"),
+        "expected fake shell to start in worktree, got {}",
+        shell_contents
     );
 }
 

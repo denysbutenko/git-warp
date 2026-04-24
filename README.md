@@ -139,7 +139,8 @@ warp config --edit
 # Terminal mode options
 warp --terminal tab switch feature/branch     # New tab (default)
 warp --terminal window switch feature/branch  # New window
-warp --terminal inplace switch feature/branch # Current terminal
+warp --terminal current switch feature/branch # Start a shell in this terminal
+warp --terminal inplace switch feature/branch # Print cd command
 warp --terminal echo switch feature/branch    # Just show path
 ```
 
@@ -195,7 +196,7 @@ warp shell-config zsh >> ~/.zshrc
 ### **Configuration File** (`~/.config/git-warp/config.toml`)
 ```toml
 # Terminal behavior
-terminal_mode = "tab"          # tab, window, inplace, echo
+terminal_mode = "tab"          # tab, window, current, inplace, echo
 use_cow = true                 # Enable CoW when available
 auto_confirm = false           # Skip confirmation prompts
 
