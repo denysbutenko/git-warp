@@ -4,10 +4,11 @@ use crate::{
         sort_session_summaries,
     },
     error::Result,
+    git::WorktreeInfo,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, poll},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, poll},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -85,6 +86,40 @@ pub struct DashboardRow {
 pub struct DashboardModel {
     pub rows: Vec<DashboardRow>,
     pub empty_state_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorktreeRuntimeStatus {
+    pub path: PathBuf,
+    pub is_current: bool,
+    pub is_dirty: bool,
+    pub is_occupied: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorktreeSwitchTarget {
+    pub branch: Option<String>,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorktreeSwitchRow {
+    pub branch_label: String,
+    pub path_label: String,
+    pub badges: Vec<String>,
+    pub target: WorktreeSwitchTarget,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorktreeSwitchModel {
+    pub rows: Vec<WorktreeSwitchRow>,
+    pub empty_state_lines: Vec<String>,
+}
+
+impl WorktreeSwitchModel {
+    pub fn target_at(&self, index: usize) -> Option<WorktreeSwitchTarget> {
+        self.rows.get(index).map(|row| row.target.clone())
+    }
 }
 
 pub struct TuiApp {
@@ -282,6 +317,74 @@ impl TuiApp {
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title("Help"));
         f.render_widget(help, chunks[2]);
+    }
+}
+
+pub fn build_worktree_switch_model(
+    worktrees: &[WorktreeInfo],
+    statuses: &[WorktreeRuntimeStatus],
+) -> WorktreeSwitchModel {
+    let rows = worktrees
+        .iter()
+        .map(|worktree| {
+            let status = statuses.iter().find(|status| status.path == worktree.path);
+            let is_detached = worktree.branch.trim().is_empty();
+            let mut badges = Vec::new();
+
+            if worktree.is_primary {
+                badges.push("primary".to_string());
+            }
+            if is_detached {
+                badges.push("detached".to_string());
+            }
+            if status.is_some_and(|status| status.is_current) {
+                badges.push("current".to_string());
+            }
+            if status.is_some_and(|status| status.is_dirty) {
+                badges.push("dirty".to_string());
+            }
+            if status.is_some_and(|status| status.is_occupied) {
+                badges.push("occupied".to_string());
+            }
+
+            WorktreeSwitchRow {
+                branch_label: worktree_branch_label(worktree),
+                path_label: worktree.path.display().to_string(),
+                badges,
+                target: WorktreeSwitchTarget {
+                    branch: (!is_detached).then(|| worktree.branch.clone()),
+                    path: worktree.path.clone(),
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let empty_state_lines = if rows.is_empty() {
+        vec![
+            "No Git worktrees found for this repository.".to_string(),
+            "Run `warp switch <branch>` to create one.".to_string(),
+        ]
+    } else {
+        Vec::new()
+    };
+
+    WorktreeSwitchModel {
+        rows,
+        empty_state_lines,
+    }
+}
+
+fn worktree_branch_label(worktree: &WorktreeInfo) -> String {
+    if worktree.branch.trim().is_empty() {
+        let head = worktree.head.chars().take(8).collect::<String>();
+        let head = if head.is_empty() {
+            "unknown".to_string()
+        } else {
+            head
+        };
+        format!("(detached HEAD: {head})")
+    } else {
+        worktree.branch.clone()
     }
 }
 
@@ -507,6 +610,164 @@ impl AgentsDashboard {
         let mut app = TuiApp::new(AgentDiscovery::new(vec![worktree_path]));
         app.run()
     }
+}
+
+pub struct WorktreeSwitchTui {
+    model: WorktreeSwitchModel,
+}
+
+impl WorktreeSwitchTui {
+    pub fn new(model: WorktreeSwitchModel) -> Self {
+        Self { model }
+    }
+
+    pub fn run(&self) -> Result<Option<WorktreeSwitchTarget>> {
+        if self.model.rows.is_empty() {
+            for line in &self.model.empty_state_lines {
+                println!("{line}");
+            }
+            return Ok(None);
+        }
+
+        let mut terminal_guard = TuiTerminalGuard::enter()?;
+        let backend = CrosstermBackend::new(io::stdout());
+        let mut terminal = RatatuiTerminal::new(backend)?;
+
+        let run_result = self.run_app(&mut terminal);
+        let cleanup_result = terminal_guard.restore();
+        let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
+        drop(terminal);
+
+        match run_result {
+            Err(err) => {
+                let mut follow_on_errors = Vec::new();
+                if let Err(cleanup_err) = cleanup_result {
+                    follow_on_errors.push(cleanup_err);
+                }
+                if let Err(cursor_err) = cursor_result {
+                    follow_on_errors.push(cursor_err);
+                }
+
+                if follow_on_errors.is_empty() {
+                    Err(err)
+                } else {
+                    Err(combine_errors(err, follow_on_errors))
+                }
+            }
+            Ok(target) => {
+                cleanup_result?;
+                cursor_result?;
+                Ok(target)
+            }
+        }
+    }
+
+    fn run_app(
+        &self,
+        terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<Option<WorktreeSwitchTarget>> {
+        let mut selected_index = 0;
+
+        loop {
+            terminal.draw(|f| draw_worktree_switcher(f, &self.model, selected_index))?;
+
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+                    KeyCode::Up => {
+                        selected_index = selected_index.saturating_sub(1);
+                    }
+                    KeyCode::Down => {
+                        selected_index =
+                            (selected_index + 1).min(self.model.rows.len().saturating_sub(1));
+                    }
+                    KeyCode::Enter => return Ok(self.model.target_at(selected_index)),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn draw_worktree_switcher(f: &mut Frame, model: &WorktreeSwitchModel, selected_index: usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(6),
+            Constraint::Length(3),
+        ])
+        .split(f.size());
+
+    let header = Paragraph::new(format!("Warp Worktrees ({})", model.rows.len()))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
+
+    let items = model
+        .rows
+        .iter()
+        .map(|row| {
+            let badges = if row.badges.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", row.badges.join(", "))
+            };
+            ListItem::new(Line::from(format!(
+                "{:<30} {:<28} {}",
+                truncate_label(&row.branch_label, 30),
+                truncate_label(&badges, 28),
+                row.path_label
+            )))
+        })
+        .collect::<Vec<_>>();
+    let list = List::new(items)
+        .block(Block::default().title("Branches").borders(Borders::ALL))
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+    let mut list_state = ListState::default();
+    list_state.select(Some(selected_index));
+    f.render_stateful_widget(list, chunks[1], &mut list_state);
+
+    if let Some(row) = model.rows.get(selected_index) {
+        let branch = row.target.branch.as_deref().unwrap_or("-");
+        let status = if row.badges.is_empty() {
+            "-".to_string()
+        } else {
+            row.badges.join(", ")
+        };
+        let details = Paragraph::new(format!(
+            "Branch: {}\nPath: {}\nStatus: {}",
+            branch,
+            row.target.path.display(),
+            status
+        ))
+        .block(Block::default().title("Details").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White))
+        .wrap(Wrap { trim: false });
+        f.render_widget(details, chunks[2]);
+    }
+
+    let help = Paragraph::new("↑↓: Navigate | Enter: Switch | q/Esc: Quit")
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Help"));
+    f.render_widget(help, chunks[3]);
 }
 
 pub struct CleanupTui;

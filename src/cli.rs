@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -144,10 +144,7 @@ impl Cli {
                     // Dynamic branch command - same as switch
                     self.handle_switch(Some(branch), None, false, false, false)
                 } else {
-                    // No command or branch - show help
-                    let mut cmd = Self::command();
-                    cmd.print_help()?;
-                    Ok(())
+                    self.handle_default_switcher()
                 }
             }
         }
@@ -189,6 +186,112 @@ impl Cli {
         }
     }
 
+    fn handle_default_switcher(&self) -> Result<()> {
+        use crate::git::GitRepository;
+        use crate::process::ProcessManager;
+        use crate::tui::{WorktreeSwitchTui, build_worktree_switch_model};
+
+        info!("Starting default worktree switcher");
+
+        let git_repo =
+            GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let worktrees = git_repo.list_worktrees()?;
+        let statuses =
+            Self::collect_worktree_runtime_statuses(&git_repo, &worktrees, ProcessManager::new());
+        let model = build_worktree_switch_model(&worktrees, &statuses);
+
+        if self.dry_run {
+            Self::print_switcher_preview(&model);
+            return Ok(());
+        }
+
+        let switcher = WorktreeSwitchTui::new(model);
+        match switcher.run()? {
+            Some(target) => self.handle_switcher_target(target),
+            None => {
+                println!("No worktree selected");
+                Ok(())
+            }
+        }
+    }
+
+    fn collect_worktree_runtime_statuses(
+        git_repo: &crate::git::GitRepository,
+        worktrees: &[crate::git::WorktreeInfo],
+        mut process_manager: crate::process::ProcessManager,
+    ) -> Vec<crate::tui::WorktreeRuntimeStatus> {
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| git_repo.root_path().into());
+        let current_dir =
+            std::fs::canonicalize(&current_dir).unwrap_or_else(|_| current_dir.clone());
+        let worktree_paths = worktrees
+            .iter()
+            .map(|worktree| {
+                std::fs::canonicalize(&worktree.path).unwrap_or_else(|_| worktree.path.clone())
+            })
+            .collect::<Vec<_>>();
+        let current_worktree_index = worktree_paths
+            .iter()
+            .enumerate()
+            .filter(|(_, path)| current_dir.starts_with(path))
+            .max_by_key(|(_, path)| path.components().count())
+            .map(|(index, _)| index);
+
+        worktrees
+            .iter()
+            .enumerate()
+            .map(|(index, worktree)| crate::tui::WorktreeRuntimeStatus {
+                path: worktree.path.clone(),
+                is_current: current_worktree_index == Some(index),
+                is_dirty: git_repo
+                    .has_uncommitted_changes(&worktree.path)
+                    .unwrap_or(false),
+                is_occupied: process_manager
+                    .has_processes_in_directory(&worktree.path)
+                    .unwrap_or(false),
+            })
+            .collect()
+    }
+
+    fn print_switcher_preview(model: &crate::tui::WorktreeSwitchModel) {
+        println!(
+            "Would open interactive worktree switcher with {} worktrees:",
+            model.rows.len()
+        );
+
+        for row in &model.rows {
+            let badges = if row.badges.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", row.badges.join(", "))
+            };
+            println!("  - {}{} {}", row.branch_label, badges, row.path_label);
+        }
+    }
+
+    fn handle_switcher_target(&self, target: crate::tui::WorktreeSwitchTarget) -> Result<()> {
+        if let Some(branch) = target.branch.as_deref() {
+            let path = target.path.to_string_lossy().into_owned();
+            self.handle_switch(Some(branch), Some(path.as_str()), false, false, false)
+        } else {
+            self.handle_existing_worktree_jump(&target.path)
+        }
+    }
+
+    fn handle_existing_worktree_jump(&self, worktree_path: &Path) -> Result<()> {
+        use crate::config::ConfigManager;
+        use crate::terminal::TerminalMode;
+
+        let config_manager = ConfigManager::new()?;
+        let config = config_manager.get();
+        let terminal_mode = if let Some(mode_str) = &self.terminal {
+            TerminalMode::from_str(mode_str).unwrap_or(TerminalMode::Tab)
+        } else {
+            TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
+        };
+
+        self.switch_to_worktree_path(worktree_path, terminal_mode, config.terminal.app.as_str())
+    }
+
     fn handle_switch(
         &self,
         branch: Option<&str>,
@@ -202,7 +305,7 @@ impl Cli {
         use crate::git::GitRepository;
         use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
         use crate::rewrite::PathRewriter;
-        use crate::terminal::{TerminalManager, TerminalMode};
+        use crate::terminal::TerminalMode;
 
         // Find the Git repository
         let git_repo =
@@ -308,12 +411,23 @@ impl Cli {
             | PostCreateSetupStatus::SkippedNonPnpmRepo => {}
         }
 
-        // Handle terminal switching
         let terminal_mode = if let Some(mode_str) = &self.terminal {
             TerminalMode::from_str(mode_str).unwrap_or(TerminalMode::Tab)
         } else {
             TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
         };
+
+        self.switch_to_worktree_path(&worktree_path, terminal_mode, config.terminal.app.as_str())
+    }
+
+    fn switch_to_worktree_path(
+        &self,
+        worktree_path: &Path,
+        terminal_mode: crate::terminal::TerminalMode,
+        terminal_app: &str,
+    ) -> Result<()> {
+        use crate::terminal::{TerminalManager, TerminalMode};
+
         let is_current_mode = matches!(terminal_mode, TerminalMode::Current);
 
         if is_current_mode {
@@ -325,7 +439,7 @@ impl Cli {
             &worktree_path,
             terminal_mode,
             None,
-            Some(config.terminal.app.as_str()),
+            Some(terminal_app),
         ) {
             Ok(()) => {
                 if !is_current_mode {
