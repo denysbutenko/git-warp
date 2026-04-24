@@ -204,6 +204,38 @@ fn test_switch_waiting_resolves_branch_from_waiting_agent_session() {
 }
 
 #[test]
+fn test_bare_warp_dry_run_previews_interactive_switcher() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    create_worktree(repo_path, "feature/default-picker");
+
+    let output = warp_command(repo_path).arg("--dry-run").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("Would open interactive worktree switcher"));
+    assert!(stdout.contains("main"));
+    assert!(stdout.contains("feature/default-picker"));
+}
+
+#[test]
+fn test_bare_warp_dry_run_marks_only_nested_worktree_current() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    let worktree_path = create_worktree(repo_path, "feature/default-picker");
+
+    let output = warp_command(&worktree_path)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(!stdout.contains("main [current"));
+    assert!(stdout.contains("feature/default-picker [current"));
+}
+
+#[test]
 fn test_config_edit_creates_config_and_launches_editor() {
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
