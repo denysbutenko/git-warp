@@ -230,7 +230,7 @@ impl Config {
 # This file configures git-warp behavior
 # You can also set these values via environment variables with GIT_WARP_ prefix
 
-# Terminal mode: tab, window, inplace, echo
+# Terminal mode: tab, window, current, inplace, echo
 terminal_mode = "{}"
 
 # Use Copy-on-Write when available

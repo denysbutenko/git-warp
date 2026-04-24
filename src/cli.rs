@@ -26,7 +26,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
-    /// Terminal mode: tab, window, inplace, echo
+    /// Terminal mode: tab, window, current, inplace, echo
     #[arg(long, global = true)]
     pub terminal: Option<String>,
 
@@ -314,6 +314,11 @@ impl Cli {
         } else {
             TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
         };
+        let is_current_mode = matches!(terminal_mode, TerminalMode::Current);
+
+        if is_current_mode {
+            println!("🔄 Switched to worktree: {}", worktree_path.display());
+        }
 
         let terminal_manager = TerminalManager;
         match terminal_manager.switch_to_worktree_with_app(
@@ -323,7 +328,9 @@ impl Cli {
             Some(config.terminal.app.as_str()),
         ) {
             Ok(()) => {
-                println!("🔄 Switched to worktree: {}", worktree_path.display());
+                if !is_current_mode {
+                    println!("🔄 Switched to worktree: {}", worktree_path.display());
+                }
             }
             Err(e) => {
                 log::warn!("Terminal switching failed: {}", e);
@@ -744,7 +751,7 @@ impl Cli {
             println!("  {}", config_manager.config_path().display());
             println!();
             println!("Environment variables (GIT_WARP_ prefix):");
-            println!("  GIT_WARP_TERMINAL_MODE=tab|window|inplace|echo");
+            println!("  GIT_WARP_TERMINAL_MODE=tab|window|current|inplace|echo");
             println!("  GIT_WARP_USE_COW=true|false");
             println!("  GIT_WARP_AUTO_CONFIRM=true|false");
             println!("  GIT_WARP_WORKTREES_PATH=/custom/path");

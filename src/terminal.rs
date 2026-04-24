@@ -2,12 +2,13 @@ use crate::error::{GitWarpError, Result};
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TerminalMode {
     Tab,
     Window,
     InPlace,
     Echo,
+    Current,
 }
 
 impl TerminalMode {
@@ -17,6 +18,7 @@ impl TerminalMode {
             "window" => Some(Self::Window),
             "inplace" => Some(Self::InPlace),
             "echo" => Some(Self::Echo),
+            "current" => Some(Self::Current),
             _ => None,
         }
     }
@@ -283,6 +285,31 @@ fn percent_encode(input: &str) -> String {
     encoded
 }
 
+fn enter_current_shell(path: &Path) -> Result<()> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string());
+
+    println!(
+        "🐚 Starting shell in current terminal at: {}",
+        path.display()
+    );
+
+    let status = Command::new(&shell)
+        .current_dir(path)
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to start current terminal shell: {}", e))?;
+
+    if !status.success() {
+        return Err(
+            anyhow::anyhow!("Current terminal shell exited with status: {}", status).into(),
+        );
+    }
+
+    Ok(())
+}
+
 pub struct TerminalManager;
 
 impl TerminalManager {
@@ -350,14 +377,20 @@ impl TerminalManager {
         session_id: Option<&str>,
         preferred_app: Option<&str>,
     ) -> Result<()> {
-        let terminal = Self::get_terminal(preferred_app)?;
         let path = path.as_ref();
+
+        if matches!(mode, TerminalMode::Current) {
+            return enter_current_shell(path);
+        }
+
+        let terminal = Self::get_terminal(preferred_app)?;
 
         match mode {
             TerminalMode::Tab => terminal.open_tab(path, session_id),
             TerminalMode::Window => terminal.open_window(path, session_id),
             TerminalMode::InPlace => terminal.switch_to_directory(path),
             TerminalMode::Echo => terminal.echo_commands(path),
+            TerminalMode::Current => unreachable!("current mode is handled before terminal lookup"),
         }
     }
 }
