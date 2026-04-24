@@ -88,6 +88,39 @@ fn test_list_worktrees_single() {
         repo_path.canonicalize().unwrap()
     );
     assert!(worktrees[0].is_primary);
+    assert!(worktrees[0].is_current);
+    assert!(!worktrees[0].is_detached);
+}
+
+#[test]
+fn test_list_worktrees_marks_main_primary_and_linked_current() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path().canonicalize().unwrap();
+    let linked_path = repo_path.join("worktrees").join("feature-current");
+
+    std::env::set_current_dir(&repo_path).unwrap();
+    let main_repo = GitRepository::find().unwrap();
+    main_repo
+        .create_worktree_and_branch("feature-current", &linked_path, None)
+        .unwrap();
+
+    std::env::set_current_dir(&linked_path).unwrap();
+    let linked_repo = GitRepository::find().unwrap();
+    let worktrees = linked_repo.list_worktrees().unwrap();
+
+    let main = worktrees
+        .iter()
+        .find(|w| w.path.canonicalize().unwrap() == repo_path)
+        .unwrap();
+    let linked = worktrees
+        .iter()
+        .find(|w| w.path.canonicalize().unwrap() == linked_path)
+        .unwrap();
+
+    assert!(main.is_primary);
+    assert!(!main.is_current);
+    assert!(!linked.is_primary);
+    assert!(linked.is_current);
 }
 
 #[test]

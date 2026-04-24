@@ -179,12 +179,16 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
             branch: "main".to_string(),
             head: "0123456789abcdef".to_string(),
             is_primary: true,
+            is_current: true,
+            is_detached: false,
         },
         WorktreeInfo {
             path: PathBuf::from("/repo/.worktrees/detached"),
             branch: String::new(),
             head: "abcdef0123456789".to_string(),
             is_primary: false,
+            is_current: false,
+            is_detached: true,
         },
     ];
     let statuses = vec![
@@ -218,6 +222,8 @@ fn test_worktree_switch_model_returns_selected_target() {
         branch: "feature/default-picker".to_string(),
         head: "0123456789abcdef".to_string(),
         is_primary: false,
+        is_current: false,
+        is_detached: false,
     }];
 
     let model = build_worktree_switch_model(&worktrees, &[]);

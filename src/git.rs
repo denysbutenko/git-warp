@@ -9,6 +9,8 @@ pub struct WorktreeInfo {
     pub branch: String,
     pub head: String,
     pub is_primary: bool,
+    pub is_current: bool,
+    pub is_detached: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -24,17 +26,6 @@ pub struct BranchStatus {
 pub struct GitRepository {
     repo: Repository,
     repo_path: PathBuf,
-}
-
-fn paths_match(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
 }
 
 fn is_protected_branch(branch: &str, protected_branches: &[String]) -> bool {
@@ -102,6 +93,8 @@ impl GitRepository {
                     branch: String::new(),
                     head: String::new(),
                     is_primary: false,
+                    is_current: false,
+                    is_detached: false,
                 });
             } else if line.starts_with("HEAD ") {
                 if let Some(ref mut wt) = current_worktree {
@@ -118,6 +111,10 @@ impl GitRepository {
                 if let Some(ref mut wt) = current_worktree {
                     wt.is_primary = true;
                 }
+            } else if line == "detached" {
+                if let Some(ref mut wt) = current_worktree {
+                    wt.is_detached = true;
+                }
             }
         }
 
@@ -126,13 +123,24 @@ impl GitRepository {
             worktrees.push(wt);
         }
 
+        let current_root = self
+            .repo_path
+            .canonicalize()
+            .unwrap_or_else(|_| self.repo_path.clone());
+
         if let Some(first_worktree) = worktrees.first_mut() {
             first_worktree.is_primary = true;
         }
 
         for worktree in &mut worktrees {
-            if paths_match(&worktree.path, &self.repo_path) {
-                worktree.is_primary = true;
+            let worktree_path = worktree
+                .path
+                .canonicalize()
+                .unwrap_or_else(|_| worktree.path.clone());
+            worktree.is_current = worktree_path == current_root;
+
+            if worktree.branch.is_empty() {
+                worktree.is_detached = true;
             }
         }
 
