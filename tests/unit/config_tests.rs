@@ -11,6 +11,10 @@ fn test_config_defaults() {
     assert!(config.use_cow);
     assert!(!config.auto_confirm);
     assert_eq!(config.git.default_branch, "main");
+    assert_eq!(
+        config.git.protected_branches,
+        vec!["main", "master", "develop"]
+    );
     assert!(config.git.auto_fetch);
     assert!(config.git.auto_prune);
     assert!(config.process.check_processes);
@@ -38,6 +42,7 @@ fn test_config_with_custom_values() {
         auto_confirm: true,
         git: GitConfig {
             default_branch: "develop".to_string(),
+            protected_branches: vec!["develop".to_string(), "staging".to_string()],
             auto_fetch: false,
             auto_prune: false,
         },
@@ -65,6 +70,7 @@ fn test_config_with_custom_values() {
     assert_eq!(config.terminal_mode, parsed.terminal_mode);
     assert_eq!(config.use_cow, parsed.use_cow);
     assert_eq!(config.git.default_branch, parsed.git.default_branch);
+    assert_eq!(config.git.protected_branches, parsed.git.protected_branches);
     assert!(!parsed.git.auto_fetch);
     assert!(parsed.process.auto_kill);
 }
@@ -113,6 +119,7 @@ fn test_sample_config_generation() {
 
     assert!(sample.contains("terminal_mode"));
     assert!(sample.contains("[git]"));
+    assert!(sample.contains("protected_branches"));
     assert!(sample.contains("[process]"));
     assert!(sample.contains("[terminal]"));
     assert!(sample.contains("[agent]"));

@@ -202,6 +202,7 @@ auto_confirm = false           # Skip confirmation prompts
 
 [git]
 default_branch = "main"        # Default branch for operations
+protected_branches = ["main", "master", "develop"]  # Never removed by cleanup
 auto_fetch = true              # Fetch before branch analysis
 auto_prune = true              # Prune during fetch
 
