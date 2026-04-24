@@ -48,6 +48,10 @@ pub struct GitConfig {
     #[serde(default = "default_main_branch")]
     pub default_branch: String,
 
+    /// Branches that cleanup must never remove
+    #[serde(default = "default_protected_branches")]
+    pub protected_branches: Vec<String>,
+
     /// Whether to auto-fetch before operations
     #[serde(default = "default_true")]
     pub auto_fetch: bool,
@@ -120,6 +124,14 @@ fn default_main_branch() -> String {
     "main".to_string()
 }
 
+fn default_protected_branches() -> Vec<String> {
+    vec![
+        "main".to_string(),
+        "master".to_string(),
+        "develop".to_string(),
+    ]
+}
+
 fn default_kill_timeout() -> u64 {
     5
 }
@@ -156,6 +168,7 @@ impl Default for GitConfig {
     fn default() -> Self {
         Self {
             default_branch: default_main_branch(),
+            protected_branches: default_protected_branches(),
             auto_fetch: true,
             auto_prune: true,
         }
@@ -246,6 +259,9 @@ auto_confirm = {}
 # Default main branch name
 default_branch = "{}"
 
+# Branches cleanup must never remove
+protected_branches = {:?}
+
 # Auto-fetch before operations
 auto_fetch = {}
 
@@ -286,6 +302,7 @@ claude_hooks = {}
             config.use_cow,
             config.auto_confirm,
             config.git.default_branch,
+            config.git.protected_branches,
             config.git.auto_fetch,
             config.git.auto_prune,
             config.process.check_processes,

@@ -382,6 +382,9 @@ auto_confirm = false
 # Default main branch name
 default_branch = "main"
 
+# Branches cleanup must never remove
+protected_branches = ["main", "master", "develop"]
+
 # Auto-fetch before operations
 auto_fetch = true
 

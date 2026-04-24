@@ -474,6 +474,7 @@ impl Cli {
         no_kill: bool,
         interactive: bool,
     ) -> Result<()> {
+        use crate::config::ConfigManager;
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
 
@@ -481,6 +482,8 @@ impl Cli {
 
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let config_manager = ConfigManager::new()?;
+        let protected_branches = config_manager.get().git.protected_branches.clone();
         let mut process_manager = ProcessManager::new();
 
         if self.dry_run {
@@ -495,7 +498,10 @@ impl Cli {
         }
 
         let worktrees = git_repo.list_worktrees()?;
-        let branch_statuses = git_repo.analyze_branches_for_cleanup(&worktrees)?;
+        let branch_statuses = git_repo.analyze_branches_for_cleanup_with_protected_branches(
+            &worktrees,
+            &protected_branches,
+        )?;
 
         if branch_statuses.is_empty() {
             println!("✨ No worktrees to clean up");
@@ -709,6 +715,7 @@ impl Cli {
 
             println!("🔧 Git Settings:");
             println!("  Default branch: {}", config.git.default_branch);
+            println!("  Protected branches: {:?}", config.git.protected_branches);
             println!("  Auto-fetch: {}", config.git.auto_fetch);
             println!("  Auto-prune: {}", config.git.auto_prune);
             println!();
