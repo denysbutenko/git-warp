@@ -133,6 +133,60 @@ fn test_root_help_hides_removed_global_flag() {
 }
 
 #[test]
+fn test_root_help_shows_doctor_command() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("doctor"));
+    assert!(stdout.contains("Check Git-Warp setup and print next steps"));
+}
+
+#[test]
+fn test_doctor_outside_repo_prints_recovery_guidance() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("Git-Warp Doctor"));
+    assert!(stdout.contains("Config file"));
+    assert!(stdout.contains("Git repository"));
+    assert!(stdout.contains("Run this command inside a Git repository"));
+}
+
+#[test]
+fn test_doctor_inside_repo_prints_repo_and_worktree_checks() {
+    let temp_dir = setup_test_repo();
+    let home_dir = tempdir().unwrap();
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("Git-Warp Doctor"));
+    assert!(stdout.contains("Git repository"));
+    assert!(stdout.contains(temp_dir.path().to_string_lossy().as_ref()));
+    assert!(stdout.contains("Worktree base path"));
+    assert!(stdout.contains("Next steps"));
+}
+
+#[test]
 fn test_switch_help_hides_removed_flags_and_allows_selector_without_branch() {
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
         .args(["switch", "--help"])
