@@ -415,6 +415,7 @@ impl Cli {
 
     fn handle_ls(&self, debug: bool) -> Result<()> {
         use crate::git::GitRepository;
+        use crate::process::ProcessManager;
 
         info!("Listing worktrees");
 
@@ -427,6 +428,7 @@ impl Cli {
         }
 
         let worktrees = git_repo.list_worktrees()?;
+        let mut process_manager = ProcessManager::new();
 
         if worktrees.is_empty() {
             println!("📭 No worktrees found");
@@ -438,22 +440,37 @@ impl Cli {
 
         for (i, worktree) in worktrees.iter().enumerate() {
             let status_icon = if worktree.is_primary { "🏠" } else { "🌿" };
-            let branch_display = if worktree.branch.is_empty() {
-                format!("(detached HEAD: {})", &worktree.head[..8])
+            let branch_display = if worktree.is_detached {
+                let short_head: String = worktree.head.chars().take(8).collect();
+                format!("(detached: {})", short_head)
             } else {
                 worktree.branch.clone()
             };
+            let is_dirty = git_repo
+                .has_uncommitted_changes(&worktree.path)
+                .unwrap_or(false);
+            let is_busy = !worktree.is_current
+                && process_manager
+                    .has_processes_in_directory(&worktree.path)
+                    .unwrap_or(false);
+            let labels = Self::worktree_status_labels(worktree, is_dirty, is_busy);
+            let label_display = Self::format_status_labels(&labels);
 
             println!(
-                "{}  {} {}",
+                "{}  {}{} {}",
                 status_icon,
                 branch_display,
+                label_display,
                 worktree.path.display()
             );
 
             if debug {
                 println!("     HEAD: {}", worktree.head);
                 println!("     Primary: {}", worktree.is_primary);
+                println!("     Current: {}", worktree.is_current);
+                println!("     Detached: {}", worktree.is_detached);
+                println!("     Dirty: {}", is_dirty);
+                println!("     Busy: {}", is_busy);
                 if i < worktrees.len() - 1 {
                     println!();
                 }
@@ -464,6 +481,38 @@ impl Cli {
         println!("📊 Total: {} worktrees", worktrees.len());
 
         Ok(())
+    }
+
+    fn worktree_status_labels(
+        worktree: &crate::git::WorktreeInfo,
+        is_dirty: bool,
+        is_busy: bool,
+    ) -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        if worktree.is_primary {
+            labels.push("primary");
+        }
+        if worktree.is_current {
+            labels.push("current");
+        }
+        if is_dirty {
+            labels.push("dirty");
+        }
+        if worktree.is_detached {
+            labels.push("detached");
+        }
+        if is_busy {
+            labels.push("busy");
+        }
+        labels
+    }
+
+    fn format_status_labels(labels: &[&str]) -> String {
+        if labels.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", labels.join(" "))
+        }
     }
 
     fn handle_cleanup(

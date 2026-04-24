@@ -9,7 +9,7 @@ fn setup_test_repo() -> tempfile::TempDir {
 
     // Initialize git repo
     Command::new("git")
-        .args(&["init"])
+        .args(&["init", "-b", "main"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -83,7 +83,44 @@ fn test_list_worktrees_single() {
 
     assert_eq!(worktrees.len(), 1); // Only main worktree
     assert_eq!(worktrees[0].branch, "main");
-    assert_eq!(worktrees[0].path, repo_path);
+    assert_eq!(
+        worktrees[0].path.canonicalize().unwrap(),
+        repo_path.canonicalize().unwrap()
+    );
+    assert!(worktrees[0].is_primary);
+    assert!(worktrees[0].is_current);
+    assert!(!worktrees[0].is_detached);
+}
+
+#[test]
+fn test_list_worktrees_marks_main_primary_and_linked_current() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path().canonicalize().unwrap();
+    let linked_path = repo_path.join("worktrees").join("feature-current");
+
+    std::env::set_current_dir(&repo_path).unwrap();
+    let main_repo = GitRepository::find().unwrap();
+    main_repo
+        .create_worktree_and_branch("feature-current", &linked_path, None)
+        .unwrap();
+
+    std::env::set_current_dir(&linked_path).unwrap();
+    let linked_repo = GitRepository::find().unwrap();
+    let worktrees = linked_repo.list_worktrees().unwrap();
+
+    let main = worktrees
+        .iter()
+        .find(|w| w.path.canonicalize().unwrap() == repo_path)
+        .unwrap();
+    let linked = worktrees
+        .iter()
+        .find(|w| w.path.canonicalize().unwrap() == linked_path)
+        .unwrap();
+
+    assert!(main.is_primary);
+    assert!(!main.is_current);
+    assert!(!linked.is_primary);
+    assert!(linked.is_current);
 }
 
 #[test]
@@ -108,7 +145,10 @@ fn test_create_worktree_and_branch() {
 
     let feature_worktree = worktrees.iter().find(|w| w.branch == "feature-branch");
     assert!(feature_worktree.is_some());
-    assert_eq!(feature_worktree.unwrap().path, worktree_path);
+    assert_eq!(
+        feature_worktree.unwrap().path.canonicalize().unwrap(),
+        worktree_path.canonicalize().unwrap()
+    );
 }
 
 #[test]

@@ -53,6 +53,27 @@ fn create_worktree(repo_path: &Path, branch: &str) -> PathBuf {
     worktree_path
 }
 
+fn create_detached_worktree(repo_path: &Path, name: &str) -> PathBuf {
+    let worktree_path = repo_path.join(".worktrees").join(name);
+    fs::create_dir_all(worktree_path.parent().unwrap()).unwrap();
+
+    let output = Command::new("git")
+        .args(["worktree", "add", "--detach"])
+        .arg(&worktree_path)
+        .arg("HEAD")
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "git worktree add --detach failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    worktree_path
+}
+
 fn write_codex_session(home: &Path, cwd: &Path, session_id: &str, branch: &str, timestamp: &str) {
     let sessions_dir = home.join(".codex").join("sessions");
     fs::create_dir_all(&sessions_dir).unwrap();
@@ -201,6 +222,32 @@ fn test_switch_waiting_resolves_branch_from_waiting_agent_session() {
 
     assert!(output.status.success(), "{stdout}");
     assert!(stdout.contains("Would switch to branch 'agent-waiting'"));
+}
+
+#[test]
+fn test_ls_shows_primary_current_dirty_and_detached_statuses() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    let feature_path = create_worktree(repo_path, "feature-status");
+    let detached_path = create_detached_worktree(repo_path, "detached-status");
+
+    fs::write(feature_path.join("dirty.txt"), "changed\n").unwrap();
+
+    let output = warp_command(&feature_path).args(["ls"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("main [primary"), "{stdout}");
+    assert!(stdout.contains("feature-status [current dirty"), "{stdout}");
+    assert!(stdout.contains("[detached]"), "{stdout}");
+    assert!(
+        stdout.contains(&repo_path.canonicalize().unwrap().display().to_string()),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&detached_path.canonicalize().unwrap().display().to_string()),
+        "{stdout}"
+    );
 }
 
 #[test]

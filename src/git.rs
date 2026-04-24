@@ -8,6 +8,8 @@ pub struct WorktreeInfo {
     pub branch: String,
     pub head: String,
     pub is_primary: bool,
+    pub is_current: bool,
+    pub is_detached: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +86,8 @@ impl GitRepository {
                     branch: String::new(),
                     head: String::new(),
                     is_primary: false,
+                    is_current: false,
+                    is_detached: false,
                 });
             } else if line.starts_with("HEAD ") {
                 if let Some(ref mut wt) = current_worktree {
@@ -100,12 +104,37 @@ impl GitRepository {
                 if let Some(ref mut wt) = current_worktree {
                     wt.is_primary = true;
                 }
+            } else if line == "detached" {
+                if let Some(ref mut wt) = current_worktree {
+                    wt.is_detached = true;
+                }
             }
         }
 
         // Add the last worktree
         if let Some(wt) = current_worktree {
             worktrees.push(wt);
+        }
+
+        let current_root = self
+            .repo_path
+            .canonicalize()
+            .unwrap_or_else(|_| self.repo_path.clone());
+
+        for (index, worktree) in worktrees.iter_mut().enumerate() {
+            if index == 0 {
+                worktree.is_primary = true;
+            }
+
+            let worktree_path = worktree
+                .path
+                .canonicalize()
+                .unwrap_or_else(|_| worktree.path.clone());
+            worktree.is_current = worktree_path == current_root;
+
+            if worktree.branch.is_empty() {
+                worktree.is_detached = true;
+            }
         }
 
         Ok(worktrees)
