@@ -210,6 +210,26 @@ impl SwitchOutcomeReport {
 }
 
 impl Cli {
+    fn not_in_git_repo_error() -> anyhow::Error {
+        anyhow::anyhow!(
+            "Not in a Git repository. Run this command inside a Git repository, or use `cd <repo>` first."
+        )
+    }
+
+    fn create_worktree_with_recovery(
+        git_repo: &crate::git::GitRepository,
+        branch: &str,
+        worktree_path: &Path,
+    ) -> Result<()> {
+        git_repo
+            .create_worktree_and_branch(branch, worktree_path, None)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{error}. Use a different branch name or run `warp ls` to inspect existing worktrees."
+                )
+            })
+    }
+
     pub fn run(&self) -> Result<()> {
         if self.debug {
             unsafe {
@@ -274,8 +294,7 @@ impl Cli {
 
         info!("Starting default worktree switcher");
 
-        let git_repo =
-            GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let worktrees = git_repo.list_worktrees()?;
         let statuses =
             Self::collect_worktree_runtime_statuses(&git_repo, &worktrees, ProcessManager::new());
@@ -401,8 +420,7 @@ impl Cli {
         use crate::terminal::TerminalMode;
 
         // Find the Git repository
-        let git_repo =
-            GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let branch = self.resolve_switch_branch(&git_repo, branch, latest, waiting)?;
 
         info!("Switching to branch: {}", branch);
@@ -450,7 +468,7 @@ impl Cli {
                 println!("⚡ Using Copy-on-Write for instant creation...");
 
                 // Create worktree using traditional method first
-                git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
+                Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
 
                 // If we have existing worktrees, try CoW enhancement
                 let worktrees = git_repo.list_worktrees()?;
@@ -464,7 +482,7 @@ impl Cli {
                     if let Err(e) = cow::clone_directory(&main_worktree.path, &worktree_path) {
                         log::warn!("CoW failed, falling back to traditional method: {}", e);
                         // Recreate using traditional method
-                        git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
+                        Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
                     } else {
                         // Rewrite paths in the CoW copy
                         let rewriter = PathRewriter::new(&main_worktree.path, &worktree_path);
@@ -488,7 +506,7 @@ impl Cli {
                 }
             } else {
                 println!("📦 Using traditional Git worktree creation...");
-                git_repo.create_worktree_and_branch(&branch, &worktree_path, None)?;
+                Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
             }
 
             if worktree_path.exists() {
@@ -569,7 +587,9 @@ impl Cli {
                     Some(warning) if !warning.is_empty() => {
                         format!("expected {branch}, found {found}; checkout failed: {warning}")
                     }
-                    _ => format!("expected {branch}, found {found}"),
+                    _ => format!(
+                        "expected {branch}, found {found}. Use a different --path or run `warp ls` to inspect worktrees."
+                    ),
                 };
                 report.warned("Branch checkout", detail);
             }
@@ -634,7 +654,12 @@ impl Cli {
             }
             Err(e) => {
                 log::warn!("Terminal switching failed: {}", e);
-                report.warned("Terminal handoff", format!("failed: {e}"));
+                report.warned(
+                    "Terminal handoff",
+                    format!(
+                        "failed: {e}. Retry with `--terminal echo` to print manual commands instead."
+                    ),
+                );
             }
         }
     }
@@ -730,8 +755,7 @@ impl Cli {
 
         info!("Listing worktrees");
 
-        let git_repo =
-            GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
 
         if self.dry_run {
             println!("Would list all worktrees");
@@ -840,8 +864,7 @@ impl Cli {
 
         info!("Cleaning up worktrees with mode: {}", mode);
 
-        let git_repo =
-            GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
         let protected_branches = config_manager.get().git.protected_branches.clone();
         let mut process_manager = ProcessManager::new();
@@ -989,6 +1012,9 @@ impl Cli {
                         } else {
                             println!(
                                 "❌ Processes found in worktree, use --kill to terminate them or --force to ignore"
+                            );
+                            println!(
+                                "💡 Run `warp cleanup --mode {mode} --kill` to terminate them, use `--force` to ignore them, or stop the process manually."
                             );
                             failed += 1;
                             continue;
@@ -1179,7 +1205,8 @@ impl Cli {
         };
 
         let cow_check_path = Self::nearest_existing_parent(&worktree_base);
-        match cow::is_cow_supported(&cow_check_path) {
+        let cow_supported = cow::is_cow_supported(&cow_check_path);
+        match &cow_supported {
             Ok(true) => Self::doctor_ok(
                 "Copy-on-Write",
                 format!(
@@ -1200,6 +1227,12 @@ impl Cli {
             "Terminal",
             format!("mode {}, app {}", config.terminal_mode, config.terminal.app),
         );
+
+        if repo.is_none() || !matches!(cow_supported, Ok(true)) {
+            next_steps.push(
+                "Run `warp switch --no-cow <branch>` to skip CoW checks for a switch.".to_string(),
+            );
+        }
 
         let hooks_installed = Self::doctor_hooks_installed();
         if hooks_installed {
@@ -1282,8 +1315,7 @@ impl Cli {
             return Ok(());
         }
 
-        let git_repo =
-            GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a Git repository"))?;
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let dashboard =
             AgentsDashboard::new(AgentDiscovery::new(Self::agent_monitored_paths(&git_repo)?));
         dashboard.run()

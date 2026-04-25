@@ -236,8 +236,35 @@ fn test_warp_switch_reports_terminal_handoff_failure_as_incomplete() {
         "{stdout}"
     );
     assert!(stdout.contains("⚠️  Terminal handoff: failed"), "{stdout}");
+    assert!(stdout.contains("Retry with `--terminal echo`"), "{stdout}");
     assert!(stdout.contains("⚠️  Switch incomplete"), "{stdout}");
     assert!(stdout.contains("💡 Run: cd '"), "{stdout}");
+}
+
+#[test]
+fn test_warp_switch_branch_already_in_use_prints_recovery_guidance() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let worktree_path = repo_path.join("worktrees").join("main-copy");
+
+    write_config(home_dir.path(), "auto");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["switch", "--no-cow", "main", "--path"])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .env("HOME", home_dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("Failed to create worktree"), "{stderr}");
+    assert!(
+        stderr.contains("Use a different branch name or run `warp ls`"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -293,6 +320,10 @@ fn test_warp_switch_reports_existing_worktree_branch_mismatch_as_incomplete() {
     );
     assert!(
         stdout.contains("⚠️  Branch checkout: expected feature/wrong"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Use a different --path or run `warp ls`"),
         "{stdout}"
     );
     assert!(stdout.contains("⚠️  Switch incomplete"), "{stdout}");

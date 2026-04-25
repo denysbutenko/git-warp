@@ -163,6 +163,8 @@ fn test_doctor_outside_repo_prints_recovery_guidance() {
     assert!(stdout.contains("Config file"));
     assert!(stdout.contains("Git repository"));
     assert!(stdout.contains("Run this command inside a Git repository"));
+    assert!(stdout.contains("warp hooks-install --level user --runtime all"));
+    assert!(stdout.contains("warp switch --no-cow <branch>"));
 }
 
 #[test]
@@ -215,6 +217,24 @@ fn test_switch_rejects_multiple_target_selectors() {
 
     assert!(!output.status.success());
     assert!(stderr.contains("exactly one of [BRANCH], --latest, or --waiting"));
+}
+
+#[test]
+fn test_switch_outside_repo_prints_recovery_guidance() {
+    let temp_dir = tempdir().unwrap();
+
+    let output = warp_command(temp_dir.path())
+        .args(["switch", "feature/demo"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("Not in a Git repository"), "{stderr}");
+    assert!(
+        stderr.contains("Run this command inside a Git repository"),
+        "{stderr}"
+    );
 }
 
 #[test]
