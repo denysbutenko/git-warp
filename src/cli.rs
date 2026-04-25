@@ -96,6 +96,9 @@ pub enum Commands {
     /// Live agent monitoring dashboard
     Agents,
 
+    /// Check Git-Warp setup and print next steps
+    Doctor,
+
     /// Install agent hooks
     HooksInstall {
         /// Installation level: user, project, console
@@ -252,6 +255,7 @@ impl Cli {
             } => self.handle_cleanup(mode, *force, *kill, *no_kill, *interactive),
             Commands::Config { show, edit } => self.handle_config(*show, *edit),
             Commands::Agents => self.handle_agents(),
+            Commands::Doctor => self.handle_doctor(),
             Commands::HooksInstall { level, runtime } => {
                 self.handle_hooks_install(level.as_deref(), runtime)
             }
@@ -1112,6 +1116,149 @@ impl Cli {
         }
 
         Ok(())
+    }
+
+    fn handle_doctor(&self) -> Result<()> {
+        use crate::config::ConfigManager;
+        use crate::cow;
+        use crate::git::GitRepository;
+
+        let config_manager = ConfigManager::new()?;
+        let config = config_manager.get();
+        let repo = GitRepository::find().ok();
+        let mut next_steps = Vec::new();
+
+        println!("🩺 Git-Warp Doctor");
+        println!("==================");
+        println!();
+        println!("Checks:");
+
+        if config_manager.config_exists() {
+            Self::doctor_ok(
+                "Config file",
+                format!("found at {}", config_manager.config_path().display()),
+            );
+        } else {
+            Self::doctor_warn(
+                "Config file",
+                format!("missing at {}", config_manager.config_path().display()),
+            );
+            next_steps
+                .push("Run `warp config --edit` to create and review your config.".to_string());
+        }
+
+        let worktree_base = if let Some(repo) = &repo {
+            Self::doctor_ok("Git repository", repo.root_path().display().to_string());
+            let sample_worktree =
+                repo.get_worktree_path_with_base("doctor-check", config.worktrees_path.as_deref());
+            let base = sample_worktree
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| sample_worktree.clone());
+            Self::doctor_info("Worktree base path", base.display().to_string());
+            base
+        } else {
+            Self::doctor_warn("Git repository", "not detected from current directory");
+            next_steps.push(
+                "Run this command inside a Git repository before creating worktrees.".to_string(),
+            );
+            config
+                .worktrees_path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".worktrees"))
+        };
+
+        let cow_check_path = Self::nearest_existing_parent(&worktree_base);
+        match cow::is_cow_supported(&cow_check_path) {
+            Ok(true) => Self::doctor_ok(
+                "Copy-on-Write",
+                format!(
+                    "available on filesystem containing {}",
+                    worktree_base.display()
+                ),
+            ),
+            Ok(false) => Self::doctor_info(
+                "Copy-on-Write",
+                "not available on this filesystem; Git-Warp will use git worktree add",
+            ),
+            Err(error) => {
+                Self::doctor_warn("Copy-on-Write", format!("could not check support: {error}"))
+            }
+        }
+
+        Self::doctor_info(
+            "Terminal",
+            format!("mode {}, app {}", config.terminal_mode, config.terminal.app),
+        );
+
+        let hooks_installed = Self::doctor_hooks_installed();
+        if hooks_installed {
+            Self::doctor_ok("Agent hooks", "git-warp hooks found for Claude or Codex");
+        } else {
+            Self::doctor_warn("Agent hooks", "no user or project git-warp hooks found");
+            next_steps.push(
+                "Run `warp hooks-install --level user --runtime all` to enable live agent monitoring."
+                    .to_string(),
+            );
+        }
+
+        if repo.is_some() && config_manager.config_exists() && hooks_installed {
+            next_steps.push("Run `warp switch <branch>` to create or open a worktree.".to_string());
+        }
+
+        println!();
+        println!("Next steps:");
+        if next_steps.is_empty() {
+            println!("  - No immediate setup steps found.");
+        } else {
+            for step in next_steps {
+                println!("  - {step}");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn doctor_ok(label: &str, detail: impl AsRef<str>) {
+        println!("  ✅ {label}: {}", detail.as_ref());
+    }
+
+    fn doctor_warn(label: &str, detail: impl AsRef<str>) {
+        println!("  ⚠️  {label}: {}", detail.as_ref());
+    }
+
+    fn doctor_info(label: &str, detail: impl AsRef<str>) {
+        println!("  ℹ️  {label}: {}", detail.as_ref());
+    }
+
+    fn nearest_existing_parent(path: &Path) -> PathBuf {
+        let mut candidate = path.to_path_buf();
+        while !candidate.exists() {
+            if !candidate.pop() {
+                return PathBuf::from(".");
+            }
+        }
+        candidate
+    }
+
+    fn doctor_hooks_installed() -> bool {
+        let mut paths = Vec::new();
+
+        if let Some(home) = dirs::home_dir() {
+            paths.push(home.join(".claude").join("settings.json"));
+            paths.push(home.join(".codex").join("hooks.json"));
+        }
+
+        if let Ok(current_dir) = std::env::current_dir() {
+            paths.push(current_dir.join(".claude").join("settings.json"));
+            paths.push(current_dir.join(".codex").join("hooks.json"));
+        }
+
+        paths.into_iter().any(|path| {
+            std::fs::read_to_string(path)
+                .map(|content| content.contains("\"git_warp_hook_id\""))
+                .unwrap_or(false)
+        })
     }
 
     fn handle_agents(&self) -> Result<()> {

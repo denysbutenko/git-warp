@@ -55,6 +55,9 @@ cargo install --path .
 
 # Test installation
 ./target/release/warp --help
+
+# Check setup and next steps
+warp doctor
 ```
 
 ### Claude Code Integration Setup
@@ -75,6 +78,9 @@ warp agents
 ### **Core Worktree Management**
 
 ```bash
+# Check repo, config, CoW, terminal, and hooks setup
+warp doctor
+
 # List all worktrees with status
 warp ls
 
