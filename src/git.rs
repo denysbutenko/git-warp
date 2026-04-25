@@ -403,6 +403,32 @@ impl GitRepository {
         Ok(output.status.success())
     }
 
+    /// List local branches matching a prefix for shell completion
+    pub fn list_local_branches_matching_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to list local branches: {}", e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to list local branches: {}", error).into());
+        }
+
+        let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|branch| branch.starts_with(prefix))
+            .map(str::to_string)
+            .collect();
+        branches.sort();
+        branches.dedup();
+
+        Ok(branches)
+    }
+
     /// Get the current HEAD commit
     pub fn get_head_commit(&self) -> Result<String> {
         use std::process::Command;
