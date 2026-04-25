@@ -4,8 +4,10 @@ use git_warp::agents::{
 };
 use git_warp::git::{BranchStatus, WorktreeInfo};
 use git_warp::tui::{
-    AgentsDashboard, WorktreeRuntimeStatus, build_cleanup_rows, build_dashboard_model,
-    build_worktree_switch_model, next_bulk_selection_state, session_detail_lines,
+    AgentsDashboard, WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows,
+    build_dashboard_model, build_worktree_switch_model,
+    build_worktree_switch_model_with_protected_branches, next_bulk_selection_state,
+    session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -236,7 +238,10 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
 
     assert_eq!(model.rows.len(), 2);
     assert_eq!(model.rows[0].branch_label, "main");
-    assert_eq!(model.rows[0].badges, vec!["primary", "current", "dirty"]);
+    assert_eq!(
+        model.rows[0].badges,
+        vec!["primary", "protected", "current", "dirty"]
+    );
     assert_eq!(model.rows[1].branch_label, "(detached HEAD: abcdef01)");
     assert_eq!(model.rows[1].badges, vec!["detached", "occupied"]);
 }
@@ -363,4 +368,167 @@ fn test_next_bulk_selection_state_selects_all_unless_all_are_selected() {
     assert!(next_bulk_selection_state(&[true, false]));
     assert!(!next_bulk_selection_state(&[true, true]));
     assert!(!next_bulk_selection_state(&[]));
+}
+
+#[test]
+fn test_worktree_switch_model_allows_safe_branch_removal() {
+    let worktree_path = PathBuf::from("/repo/.worktrees/feature");
+    let worktrees = vec![WorktreeInfo {
+        path: worktree_path.clone(),
+        branch: "feature/default-picker".to_string(),
+        head: "0123456789abcdef".to_string(),
+        is_primary: false,
+        is_current: false,
+        is_detached: false,
+    }];
+    let statuses = vec![WorktreeRuntimeStatus {
+        path: worktree_path.clone(),
+        is_current: false,
+        is_dirty: false,
+        is_occupied: false,
+        last_touched: None,
+    }];
+
+    let model = build_worktree_switch_model(&worktrees, &statuses);
+    let removal = model
+        .removal_at(0)
+        .expect("clean branch worktree should be removable");
+
+    assert_eq!(
+        model.rows[0].removal_blockers,
+        Vec::<WorktreeRemovalBlock>::new()
+    );
+    assert_eq!(removal.branch, "feature/default-picker");
+    assert_eq!(removal.path, worktree_path);
+    assert!(model.removal_at(1).is_none());
+}
+
+#[test]
+fn test_worktree_switch_model_blocks_removal_for_risky_rows() {
+    let primary_path = PathBuf::from("/repo");
+    let detached_path = PathBuf::from("/repo/.worktrees/detached");
+    let dirty_path = PathBuf::from("/repo/.worktrees/dirty");
+    let occupied_path = PathBuf::from("/repo/.worktrees/occupied");
+    let worktrees = vec![
+        WorktreeInfo {
+            path: primary_path.clone(),
+            branch: "main".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: true,
+            is_current: true,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: detached_path.clone(),
+            branch: String::new(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: true,
+        },
+        WorktreeInfo {
+            path: dirty_path.clone(),
+            branch: "dirty".to_string(),
+            head: "fedcba9876543210".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: occupied_path.clone(),
+            branch: "occupied".to_string(),
+            head: "9876543210fedcba".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+    ];
+    let statuses = vec![
+        WorktreeRuntimeStatus {
+            path: primary_path,
+            is_current: true,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: None,
+        },
+        WorktreeRuntimeStatus {
+            path: detached_path,
+            is_current: false,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: None,
+        },
+        WorktreeRuntimeStatus {
+            path: dirty_path,
+            is_current: false,
+            is_dirty: true,
+            is_occupied: false,
+            last_touched: None,
+        },
+        WorktreeRuntimeStatus {
+            path: occupied_path,
+            is_current: false,
+            is_dirty: false,
+            is_occupied: true,
+            last_touched: None,
+        },
+    ];
+
+    let model = build_worktree_switch_model(&worktrees, &statuses);
+    let blockers: Vec<_> = model
+        .rows
+        .iter()
+        .map(|row| row.removal_blockers.clone())
+        .collect();
+
+    assert_eq!(
+        blockers,
+        vec![
+            vec![
+                WorktreeRemovalBlock::Primary,
+                WorktreeRemovalBlock::Protected,
+                WorktreeRemovalBlock::Current
+            ],
+            vec![WorktreeRemovalBlock::Detached],
+            vec![WorktreeRemovalBlock::Dirty],
+            vec![WorktreeRemovalBlock::Occupied],
+        ]
+    );
+    assert!(model.removal_at(0).is_none());
+    assert!(model.removal_at(1).is_none());
+    assert!(model.removal_at(2).is_none());
+    assert!(model.removal_at(3).is_none());
+}
+
+#[test]
+fn test_worktree_switch_model_blocks_removal_for_protected_branches() {
+    let worktree_path = PathBuf::from("/repo/.worktrees/develop");
+    let worktrees = vec![WorktreeInfo {
+        path: worktree_path.clone(),
+        branch: "develop".to_string(),
+        head: "0123456789abcdef".to_string(),
+        is_primary: false,
+        is_current: false,
+        is_detached: false,
+    }];
+    let statuses = vec![WorktreeRuntimeStatus {
+        path: worktree_path,
+        is_current: false,
+        is_dirty: false,
+        is_occupied: false,
+        last_touched: None,
+    }];
+
+    let model = build_worktree_switch_model_with_protected_branches(
+        &worktrees,
+        &statuses,
+        &["develop".to_string()],
+    );
+
+    assert_eq!(model.rows[0].badges, vec!["protected"]);
+    assert_eq!(
+        model.rows[0].removal_blockers,
+        vec![WorktreeRemovalBlock::Protected]
+    );
+    assert!(model.removal_at(0).is_none());
 }

@@ -288,17 +288,27 @@ impl Cli {
     }
 
     fn handle_default_switcher(&self) -> Result<()> {
+        use crate::config::ConfigManager;
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
-        use crate::tui::{WorktreeSwitchTui, build_worktree_switch_model};
+        use crate::tui::{
+            WorktreeSwitchAction, WorktreeSwitchTui,
+            build_worktree_switch_model_with_protected_branches,
+        };
 
         info!("Starting default worktree switcher");
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
+        let config_manager = ConfigManager::new()?;
+        let protected_branches = config_manager.get().git.protected_branches.clone();
         let worktrees = git_repo.list_worktrees()?;
         let statuses =
             Self::collect_worktree_runtime_statuses(&git_repo, &worktrees, ProcessManager::new());
-        let model = build_worktree_switch_model(&worktrees, &statuses);
+        let model = build_worktree_switch_model_with_protected_branches(
+            &worktrees,
+            &statuses,
+            &protected_branches,
+        );
 
         if self.dry_run {
             Self::print_switcher_preview(&model);
@@ -307,7 +317,8 @@ impl Cli {
 
         let switcher = WorktreeSwitchTui::new(model);
         match switcher.run()? {
-            Some(target) => self.handle_switcher_target(target),
+            Some(WorktreeSwitchAction::Switch(target)) => self.handle_switcher_target(target),
+            Some(WorktreeSwitchAction::Remove(target)) => self.handle_switcher_remove(target),
             None => {
                 println!("No worktree selected");
                 Ok(())
@@ -376,6 +387,37 @@ impl Cli {
         } else {
             self.handle_existing_worktree_jump(&target.path)
         }
+    }
+
+    fn handle_switcher_remove(&self, target: crate::tui::WorktreeRemovalTarget) -> Result<()> {
+        use crate::git::GitRepository;
+
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
+
+        println!(
+            "Removing worktree for branch '{}': {}",
+            target.branch,
+            target.path.display()
+        );
+        git_repo.remove_worktree(&target.path)?;
+
+        match git_repo.delete_branch(&target.branch, false) {
+            Ok(()) => {
+                println!("Removed worktree and branch: {}", target.branch);
+            }
+            Err(err) => {
+                println!(
+                    "Removed worktree but kept branch '{}': {}",
+                    target.branch, err
+                );
+            }
+        }
+
+        if let Err(err) = git_repo.prune_worktrees() {
+            log::warn!("Failed to prune worktrees: {}", err);
+        }
+
+        Ok(())
     }
 
     fn handle_existing_worktree_jump(&self, worktree_path: &Path) -> Result<()> {
