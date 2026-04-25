@@ -131,6 +131,15 @@ pub enum Commands {
         /// Shell type: bash, zsh, fish
         shell: Option<String>,
     },
+
+    /// Internal shell completion helper
+    #[command(name = "__complete", hide = true)]
+    Complete {
+        /// Completion target
+        target: String,
+        /// Current token prefix
+        prefix: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +293,9 @@ impl Cli {
             }
             Commands::HooksStatus { runtime } => self.handle_hooks_status(runtime),
             Commands::ShellConfig { shell } => self.handle_shell_config(shell.as_deref()),
+            Commands::Complete { target, prefix } => {
+                self.handle_complete(target, prefix.as_deref())
+            }
         }
     }
 
@@ -1428,6 +1440,24 @@ impl Cli {
                     "{}",
                     r#"warp_cd() { eval "$(warp --terminal echo "$@")"; }"#
                 );
+                println!(
+                    "{}",
+                    r#"_warp_completion() {
+    local cur prev commands branches
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    commands="switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config"
+
+    if [[ "$prev" == "switch" ]]; then
+        branches="$(warp __complete branches "$cur" 2>/dev/null)"
+        COMPREPLY=($(compgen -W "$branches" -- "$cur"))
+    elif [[ $COMP_CWORD -eq 1 ]]; then
+        branches="$(warp __complete branches "$cur" 2>/dev/null)"
+        COMPREPLY=($(compgen -W "$commands $branches" -- "$cur"))
+    fi
+}
+complete -F _warp_completion warp"#
+                );
             }
             "zsh" => {
                 println!("# Add to ~/.zshrc");
@@ -1435,12 +1465,39 @@ impl Cli {
                     "{}",
                     r#"warp_cd() { eval "$(warp --terminal echo "$@")"; }"#
                 );
+                println!(
+                    "{}",
+                    r#"_warp_branch_completions() {
+    local -a branches
+    branches=("${(@f)$(warp __complete branches "$PREFIX" 2>/dev/null)}")
+    compadd -- "${branches[@]}"
+}
+
+_warp_completion() {
+    local -a commands
+    commands=(switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config)
+
+    if (( CURRENT == 2 )); then
+        compadd -- "${commands[@]}"
+        _warp_branch_completions
+    elif [[ ${words[2]} == switch && CURRENT == 3 ]]; then
+        _warp_branch_completions
+    fi
+}
+compdef _warp_completion warp"#
+                );
             }
             "fish" => {
                 println!("# Add to ~/.config/fish/config.fish");
                 println!("function warp_cd");
                 println!("    eval (warp --terminal echo $argv)");
                 println!("end");
+                println!(
+                    "{}",
+                    r#"complete -c warp -n '__fish_use_subcommand' -a 'switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config'
+complete -c warp -n '__fish_use_subcommand' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'
+complete -c warp -n '__fish_seen_subcommand_from switch' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'"#
+                );
             }
             other => {
                 return Err(anyhow::anyhow!(
@@ -1449,6 +1506,22 @@ impl Cli {
             }
         }
         Ok(())
+    }
+
+    fn handle_complete(&self, target: &str, prefix: Option<&str>) -> Result<()> {
+        match target {
+            "branches" => {
+                let git_repo =
+                    crate::git::GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
+                for branch in git_repo.list_local_branches_matching_prefix(prefix.unwrap_or(""))? {
+                    println!("{branch}");
+                }
+                Ok(())
+            }
+            other => Err(anyhow::anyhow!(
+                "Unsupported completion target '{other}'. Supported targets: branches"
+            )),
+        }
     }
 
     fn open_in_editor(path: &Path) -> Result<()> {

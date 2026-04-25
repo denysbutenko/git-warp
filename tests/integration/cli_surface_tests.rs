@@ -411,4 +411,59 @@ fn test_shell_config_bash_outputs_reusable_function() {
     assert!(output.status.success());
     assert!(stdout.contains("warp_cd()"));
     assert!(stdout.contains("warp --terminal echo"));
+    assert!(stdout.contains("complete -F _warp_completion warp"));
+    assert!(stdout.contains("warp __complete branches \"$cur\""));
+}
+
+#[test]
+fn test_complete_branches_outputs_local_branches_matching_prefix() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+
+    run_git(repo_path, &["branch", "261-autocomplete"]);
+    run_git(repo_path, &["branch", "261-other"]);
+    run_git(repo_path, &["branch", "feature/261-nested"]);
+
+    let output = warp_command(repo_path)
+        .args(["__complete", "branches", "261"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("261-autocomplete"));
+    assert!(stdout.contains("261-other"));
+    assert!(!stdout.contains("feature/261-nested"));
+    assert!(!stdout.contains("main"));
+}
+
+#[test]
+fn test_shell_config_zsh_outputs_branch_completion_for_root_and_switch() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["shell-config", "zsh"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("warp_cd()"));
+    assert!(stdout.contains("compdef _warp_completion warp"));
+    assert!(stdout.contains("warp __complete branches \"$PREFIX\""));
+    assert!(stdout.contains("CURRENT == 2"));
+    assert!(stdout.contains("${words[2]} == switch && CURRENT == 3"));
+}
+
+#[test]
+fn test_shell_config_fish_outputs_branch_completion_for_root_and_switch() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["shell-config", "fish"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("function warp_cd"));
+    assert!(stdout.contains("__fish_use_subcommand"));
+    assert!(stdout.contains("__fish_seen_subcommand_from switch"));
+    assert!(stdout.contains("warp __complete branches (commandline -ct)"));
 }
