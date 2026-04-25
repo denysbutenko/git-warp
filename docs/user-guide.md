@@ -402,11 +402,14 @@ auto_kill = false
 kill_timeout = 5
 
 [terminal]
-# Terminal app: auto, iterm2, terminal
+# Terminal app: auto, iterm2, terminal, warp
 app = "auto"
 
-# Auto-activate new tabs/windows
+# Auto-activate new macOS terminal tabs/windows
 auto_activate = true
+
+# Commands to run after Git-Warp changes into the worktree
+init_commands = []
 
 [agent]
 # Enable agent monitoring

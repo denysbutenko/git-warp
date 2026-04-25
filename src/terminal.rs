@@ -24,11 +24,36 @@ impl TerminalMode {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TerminalLaunchOptions {
+    pub auto_activate: bool,
+    pub init_commands: Vec<String>,
+}
+
+impl Default for TerminalLaunchOptions {
+    fn default() -> Self {
+        Self {
+            auto_activate: true,
+            init_commands: Vec::new(),
+        }
+    }
+}
+
 pub trait Terminal {
-    fn open_tab(&self, path: &Path, session_id: Option<&str>) -> Result<()>;
-    fn open_window(&self, path: &Path, session_id: Option<&str>) -> Result<()>;
-    fn switch_to_directory(&self, path: &Path) -> Result<()>;
-    fn echo_commands(&self, path: &Path) -> Result<()>;
+    fn open_tab(
+        &self,
+        path: &Path,
+        session_id: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()>;
+    fn open_window(
+        &self,
+        path: &Path,
+        session_id: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()>;
+    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
+    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
     fn is_supported(&self) -> bool;
 }
 
@@ -73,54 +98,68 @@ pub struct ITerm2;
 
 #[cfg(target_os = "macos")]
 impl Terminal for ITerm2 {
-    fn open_tab(&self, path: &Path, _session_id: Option<&str>) -> Result<()> {
+    fn open_tab(
+        &self,
+        path: &Path,
+        _session_id: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()> {
+        let activate = applescript_activate(options);
+        let commands = iterm_write_commands(path, options, "                ");
         let script = format!(
             r#"
 tell application "iTerm"
+{activate}
     tell current window
         create tab with default profile
         tell current tab
             tell current session
-                write text "cd '{}'"
+{commands}
             end tell
         end tell
     end tell
 end tell
 "#,
-            path.display()
         );
 
         self.run_applescript(&script)
     }
 
-    fn open_window(&self, path: &Path, _session_id: Option<&str>) -> Result<()> {
+    fn open_window(
+        &self,
+        path: &Path,
+        _session_id: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()> {
+        let activate = applescript_activate(options);
+        let commands = iterm_write_commands(path, options, "                ");
         let script = format!(
             r#"
 tell application "iTerm"
+{activate}
     create window with default profile
     tell current window
         tell current tab
             tell current session
-                write text "cd '{}'"
+{commands}
             end tell
         end tell
     end tell
 end tell
 "#,
-            path.display()
         );
 
         self.run_applescript(&script)
     }
 
-    fn switch_to_directory(&self, path: &Path) -> Result<()> {
-        println!("cd '{}'", path.display());
+    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
+        print_shell_commands(path, options);
         Ok(())
     }
 
-    fn echo_commands(&self, path: &Path) -> Result<()> {
+    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
         println!("# Navigate to worktree:");
-        println!("cd '{}'", path.display());
+        print_shell_commands(path, options);
         Ok(())
     }
 
@@ -156,42 +195,56 @@ pub struct AppleTerminal;
 
 #[cfg(target_os = "macos")]
 impl Terminal for AppleTerminal {
-    fn open_tab(&self, path: &Path, _session_id: Option<&str>) -> Result<()> {
+    fn open_tab(
+        &self,
+        path: &Path,
+        _session_id: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()> {
+        let activate = applescript_activate(options);
+        let commands = terminal_tab_commands(path, options, "        ");
         let script = format!(
             r#"
 tell application "Terminal"
+{activate}
     tell window 1
-        do script "cd '{}'" in (make new tab)
+{commands}
     end tell
 end tell
 "#,
-            path.display()
         );
 
         self.run_applescript(&script)
     }
 
-    fn open_window(&self, path: &Path, _session_id: Option<&str>) -> Result<()> {
+    fn open_window(
+        &self,
+        path: &Path,
+        _session_id: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()> {
+        let activate = applescript_activate(options);
+        let commands = terminal_window_commands(path, options, "    ");
         let script = format!(
             r#"
 tell application "Terminal"
-    do script "cd '{}'"
+{activate}
+{commands}
 end tell
 "#,
-            path.display()
         );
 
         self.run_applescript(&script)
     }
 
-    fn switch_to_directory(&self, path: &Path) -> Result<()> {
-        println!("cd '{}'", path.display());
+    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
+        print_shell_commands(path, options);
         Ok(())
     }
 
-    fn echo_commands(&self, path: &Path) -> Result<()> {
+    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
         println!("# Navigate to worktree:");
-        println!("cd '{}'", path.display());
+        print_shell_commands(path, options);
         Ok(())
     }
 
@@ -222,22 +275,32 @@ pub struct WarpTerminal;
 
 #[cfg(target_os = "macos")]
 impl Terminal for WarpTerminal {
-    fn open_tab(&self, path: &Path, _session_id: Option<&str>) -> Result<()> {
+    fn open_tab(
+        &self,
+        path: &Path,
+        _session_id: Option<&str>,
+        _options: &TerminalLaunchOptions,
+    ) -> Result<()> {
         self.open_uri("new_tab", path)
     }
 
-    fn open_window(&self, path: &Path, _session_id: Option<&str>) -> Result<()> {
+    fn open_window(
+        &self,
+        path: &Path,
+        _session_id: Option<&str>,
+        _options: &TerminalLaunchOptions,
+    ) -> Result<()> {
         self.open_uri("new_window", path)
     }
 
-    fn switch_to_directory(&self, path: &Path) -> Result<()> {
-        println!("cd '{}'", path.display());
+    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
+        print_shell_commands(path, options);
         Ok(())
     }
 
-    fn echo_commands(&self, path: &Path) -> Result<()> {
+    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
         println!("# Navigate to worktree:");
-        println!("cd '{}'", path.display());
+        print_shell_commands(path, options);
         Ok(())
     }
 
@@ -285,7 +348,97 @@ fn percent_encode(input: &str) -> String {
     encoded
 }
 
-fn enter_current_shell(path: &Path) -> Result<()> {
+fn shell_quote(input: &str) -> String {
+    format!("'{}'", input.replace('\'', "'\\''"))
+}
+
+fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<String> {
+    let mut commands = vec![format!("cd {}", shell_quote(&path.to_string_lossy()))];
+    commands.extend(
+        options
+            .init_commands
+            .iter()
+            .map(|command| command.trim())
+            .filter(|command| !command.is_empty())
+            .map(ToString::to_string),
+    );
+    commands
+}
+
+fn print_shell_commands(path: &Path, options: &TerminalLaunchOptions) {
+    for command in shell_command_sequence(path, options) {
+        println!("{command}");
+    }
+}
+
+fn escape_applescript_string(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_activate(options: &TerminalLaunchOptions) -> &'static str {
+    if options.auto_activate {
+        "    activate"
+    } else {
+        ""
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn iterm_write_commands(path: &Path, options: &TerminalLaunchOptions, indent: &str) -> String {
+    shell_command_sequence(path, options)
+        .into_iter()
+        .map(|command| {
+            format!(
+                "{indent}write text \"{}\"",
+                escape_applescript_string(&command)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(target_os = "macos")]
+fn terminal_tab_commands(path: &Path, options: &TerminalLaunchOptions, indent: &str) -> String {
+    let commands = shell_command_sequence(path, options);
+    let Some((first, rest)) = commands.split_first() else {
+        return String::new();
+    };
+
+    let mut lines = vec![format!(
+        "{indent}do script \"{}\" in (make new tab)",
+        escape_applescript_string(first)
+    )];
+    lines.extend(rest.iter().map(|command| {
+        format!(
+            "{indent}do script \"{}\" in selected tab",
+            escape_applescript_string(command)
+        )
+    }));
+    lines.join("\n")
+}
+
+#[cfg(target_os = "macos")]
+fn terminal_window_commands(path: &Path, options: &TerminalLaunchOptions, indent: &str) -> String {
+    let commands = shell_command_sequence(path, options);
+    let Some((first, rest)) = commands.split_first() else {
+        return String::new();
+    };
+
+    let mut lines = vec![format!(
+        "{indent}do script \"{}\"",
+        escape_applescript_string(first)
+    )];
+    lines.extend(rest.iter().map(|command| {
+        format!(
+            "{indent}do script \"{}\" in selected tab of front window",
+            escape_applescript_string(command)
+        )
+    }));
+    lines.join("\n")
+}
+
+fn enter_current_shell(path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -296,8 +449,16 @@ fn enter_current_shell(path: &Path) -> Result<()> {
         path.display()
     );
 
-    let status = Command::new(&shell)
-        .current_dir(path)
+    let mut command = Command::new(&shell);
+    command.current_dir(path);
+
+    if !options.init_commands.is_empty() {
+        let mut init_script = options.init_commands.join("\n");
+        init_script.push_str(&format!("\nexec {}", shell_quote(&shell)));
+        command.args(["-lc", &init_script]);
+    }
+
+    let status = command
         .status()
         .map_err(|e| anyhow::anyhow!("Failed to start current terminal shell: {}", e))?;
 
@@ -377,19 +538,36 @@ impl TerminalManager {
         session_id: Option<&str>,
         preferred_app: Option<&str>,
     ) -> Result<()> {
+        self.switch_to_worktree_with_options(
+            path,
+            mode,
+            session_id,
+            preferred_app,
+            &TerminalLaunchOptions::default(),
+        )
+    }
+
+    pub fn switch_to_worktree_with_options<P: AsRef<Path>>(
+        &self,
+        path: P,
+        mode: TerminalMode,
+        session_id: Option<&str>,
+        preferred_app: Option<&str>,
+        options: &TerminalLaunchOptions,
+    ) -> Result<()> {
         let path = path.as_ref();
 
         if matches!(mode, TerminalMode::Current) {
-            return enter_current_shell(path);
+            return enter_current_shell(path, options);
         }
 
         let terminal = Self::get_terminal(preferred_app)?;
 
         match mode {
-            TerminalMode::Tab => terminal.open_tab(path, session_id),
-            TerminalMode::Window => terminal.open_window(path, session_id),
-            TerminalMode::InPlace => terminal.switch_to_directory(path),
-            TerminalMode::Echo => terminal.echo_commands(path),
+            TerminalMode::Tab => terminal.open_tab(path, session_id, options),
+            TerminalMode::Window => terminal.open_window(path, session_id, options),
+            TerminalMode::InPlace => terminal.switch_to_directory(path, options),
+            TerminalMode::Echo => terminal.echo_commands(path, options),
             TerminalMode::Current => unreachable!("current mode is handled before terminal lookup"),
         }
     }

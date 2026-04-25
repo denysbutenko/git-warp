@@ -109,22 +109,37 @@ fn create_fake_shell(bin_dir: &Path, log_path: &Path) -> PathBuf {
 }
 
 fn write_config(home_dir: &Path, app: &str) {
+    write_config_with_terminal_options(home_dir, app, "tab", true, &[]);
+}
+
+fn write_config_with_terminal_options(
+    home_dir: &Path,
+    app: &str,
+    terminal_mode: &str,
+    auto_activate: bool,
+    init_commands: &[&str],
+) {
     let config_dir = home_dir
         .join("Library")
         .join("Application Support")
         .join("git-warp");
     fs::create_dir_all(&config_dir).unwrap();
+    let init_commands = init_commands
+        .iter()
+        .map(|command| format!("\"{command}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     fs::write(
         config_dir.join("config.toml"),
         format!(
             r#"
-terminal_mode = "tab"
+terminal_mode = "{terminal_mode}"
 use_cow = false
 
 [terminal]
 app = "{app}"
-auto_activate = true
-init_commands = []
+auto_activate = {auto_activate}
+init_commands = [{init_commands}]
 "#
         ),
     )
@@ -360,5 +375,102 @@ fn test_warp_switch_auto_prefers_current_warp_terminal() {
         "expected Warp URI open call, got open={}, osascript={}",
         open_contents,
         osascript_contents
+    );
+}
+
+#[test]
+fn test_warp_switch_echo_includes_configured_init_commands() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+
+    write_config_with_terminal_options(
+        home_dir.path(),
+        "auto",
+        "echo",
+        true,
+        &["corepack enable", "pnpm install"],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["switch", "--no-cow", "feature/init-commands"])
+        .current_dir(repo_path)
+        .env("HOME", home_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("# Navigate to worktree:"), "{stdout}");
+    assert!(stdout.contains("cd '"), "{stdout}");
+    assert!(stdout.contains("corepack enable"), "{stdout}");
+    assert!(stdout.contains("pnpm install"), "{stdout}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_warp_switch_applescript_activates_when_configured() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let osascript_log_dir = tempdir().unwrap();
+    let osascript_log = osascript_log_dir.path().join("osascript.log");
+
+    write_config_with_terminal_options(home_dir.path(), "terminal", "tab", true, &[]);
+    create_fake_osascript(bin_dir.path(), &osascript_log);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+
+    let output = run_warp_switch(
+        repo_path,
+        "feature/activate-terminal",
+        home_dir.path(),
+        &path_env,
+        "Apple_Terminal",
+    );
+
+    assert!(output.status.success());
+
+    let osascript_contents = fs::read_to_string(&osascript_log).unwrap_or_default();
+    assert!(
+        osascript_contents.contains("\n    activate\n")
+            || osascript_contents.contains("\nactivate\n"),
+        "expected activate command in AppleScript, got {osascript_contents}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_warp_switch_applescript_skips_activation_when_disabled() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let bin_dir = tempdir().unwrap();
+    let osascript_log_dir = tempdir().unwrap();
+    let osascript_log = osascript_log_dir.path().join("osascript.log");
+
+    write_config_with_terminal_options(home_dir.path(), "terminal", "tab", false, &[]);
+    create_fake_osascript(bin_dir.path(), &osascript_log);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+
+    let output = run_warp_switch(
+        repo_path,
+        "feature/no-activate-terminal",
+        home_dir.path(),
+        &path_env,
+        "Apple_Terminal",
+    );
+
+    assert!(output.status.success());
+
+    let osascript_contents = fs::read_to_string(&osascript_log).unwrap_or_default();
+    assert!(
+        !osascript_contents.contains("\n    activate\n")
+            && !osascript_contents.contains("\nactivate\n"),
+        "did not expect activate command in AppleScript, got {osascript_contents}"
     );
 }

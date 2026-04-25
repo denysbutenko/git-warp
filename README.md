@@ -219,7 +219,8 @@ kill_timeout = 5               # Timeout in seconds
 
 [terminal]
 app = "auto"                   # auto, terminal, iterm2, warp
-auto_activate = true           # Activate new terminal windows
+auto_activate = true           # Activate new macOS terminal tabs/windows
+init_commands = []             # Commands to run after cd into a worktree
 
 [agent]
 enabled = true                 # Enable Claude Code integration
@@ -235,6 +236,9 @@ export GIT_WARP_USE_COW=false
 export GIT_WARP_AUTO_CONFIRM=true
 export GIT_WARP_WORKTREES_PATH=/custom/worktrees
 ```
+
+`terminal.init_commands` are emitted after Git-Warp changes into the worktree for
+terminal modes such as `tab`, `window`, `inplace`, and `echo`.
 
 ## 🎨 Design Philosophy
 
