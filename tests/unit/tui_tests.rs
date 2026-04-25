@@ -2,10 +2,10 @@ use chrono::{Local, TimeZone};
 use git_warp::agents::{
     AgentDiscovery, AgentRuntime, AgentSessionSource, AgentSessionState, AgentSessionSummary,
 };
-use git_warp::git::WorktreeInfo;
+use git_warp::git::{BranchStatus, WorktreeInfo};
 use git_warp::tui::{
-    AgentsDashboard, WorktreeRuntimeStatus, build_dashboard_model, build_worktree_switch_model,
-    session_detail_lines,
+    AgentsDashboard, WorktreeRuntimeStatus, build_cleanup_rows, build_dashboard_model,
+    build_worktree_switch_model, next_bulk_selection_state, session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -46,8 +46,8 @@ fn test_build_dashboard_model_empty_state() {
     assert_eq!(
         model.empty_state_lines,
         vec![
-            "No live or recent Claude/Codex sessions found for this repo in the last 7 days."
-                .to_string(),
+            "No agent sessions to show for this repository.".to_string(),
+            "Recent Claude/Codex sessions appear here for 7 days.".to_string(),
             "Hint: run `warp hooks-install --runtime all --level user` to enable live monitoring."
                 .to_string(),
         ]
@@ -140,6 +140,7 @@ fn test_session_detail_lines_include_expected_fields() {
     assert!(lines.iter().any(|line| line == "Session ID: session-123"));
     assert!(lines.iter().any(|line| line == "Runtime: Codex"));
     assert!(lines.iter().any(|line| line == "Branch: feat/agents"));
+    assert!(lines.iter().any(|line| line == "State: working"));
     assert!(lines.iter().any(|line| line == "Presence: live"));
     assert!(
         lines
@@ -166,6 +167,26 @@ fn test_build_dashboard_model_renders_future_timestamps_explicitly() {
 
     assert_eq!(model.rows.len(), 1);
     assert_eq!(model.rows[0].relative_time, "in 5m");
+}
+
+#[test]
+fn test_build_dashboard_model_exposes_plain_state_labels() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![sample_summary(
+        AgentRuntime::Codex,
+        "waiting-session",
+        "/repo/.worktrees/waiting",
+        AgentSessionState::Waiting,
+        11,
+        true,
+        AgentSessionSource::LiveStatus,
+    )];
+
+    let model = build_dashboard_model(&sessions, now);
+
+    assert_eq!(model.rows.len(), 1);
+    assert_eq!(model.rows[0].state_symbol, "!");
+    assert_eq!(model.rows[0].state_label, "waiting");
 }
 
 #[test]
@@ -304,4 +325,42 @@ fn test_worktree_switch_model_returns_selected_target() {
     assert_eq!(target.branch.as_deref(), Some("feature/default-picker"));
     assert_eq!(target.path, PathBuf::from("/repo/.worktrees/feature"));
     assert!(model.target_at(1).is_none());
+}
+
+#[test]
+fn test_build_cleanup_rows_explains_candidate_status_with_text() {
+    let rows = build_cleanup_rows(
+        &[BranchStatus {
+            branch: "feature/old".to_string(),
+            path: PathBuf::from("/repo/.worktrees/feature-old"),
+            has_remote: true,
+            is_merged: true,
+            is_identical: false,
+            has_uncommitted_changes: true,
+        }],
+        &[true],
+    );
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].branch, "feature/old");
+    assert_eq!(rows[0].reason_label, "merged");
+    assert_eq!(rows[0].remote_label, "remote");
+    assert_eq!(rows[0].dirty_label, "dirty");
+    assert!(rows[0].display_line.contains("[x]"));
+    assert!(rows[0].display_line.contains("merged"));
+    assert!(rows[0].display_line.contains("remote"));
+    assert!(rows[0].display_line.contains("dirty"));
+    assert!(
+        rows[0]
+            .display_line
+            .contains("/repo/.worktrees/feature-old")
+    );
+}
+
+#[test]
+fn test_next_bulk_selection_state_selects_all_unless_all_are_selected() {
+    assert!(next_bulk_selection_state(&[false, false]));
+    assert!(next_bulk_selection_state(&[true, false]));
+    assert!(!next_bulk_selection_state(&[true, true]));
+    assert!(!next_bulk_selection_state(&[]));
 }
