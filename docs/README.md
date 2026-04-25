@@ -1,324 +1,76 @@
 # Git-Warp Documentation
 
-**Complete documentation for the high-performance Git worktree manager**
+This directory contains user-facing guides, technical notes, historical planning
+material, and original reference documents for Git-Warp.
 
-Welcome to the Git-Warp documentation! This directory contains comprehensive guides covering everything from basic usage to advanced technical details.
+## Start Here
 
-## 📚 Documentation Overview
+- [User Guide](user-guide.md): installation, daily commands, configuration, and
+  troubleshooting.
+- [Technical Overview](technical-overview.md): architecture, modules, and
+  implementation notes.
+- [Root README](../README.md): short project overview and verified quick start.
 
-### For Users
+## Reference Documents
 
-**[User Guide](user-guide.md)** - *Start Here!*
-- Complete how-to guide for using Git-Warp
-- Quick start tutorial
-- All features explained with examples
-- Configuration and troubleshooting
-- Best practices and workflows
+- [autowt.txt](autowt.txt): UX-focused Python predecessor reference.
+- [coworktree.txt](coworktree.txt): CoW-focused Go predecessor reference.
+- [implement-plan-v1.md](implement-plan-v1.md): early implementation plan.
+- [implement-plan-v2.md](implement-plan-v2.md): later implementation plan.
 
-### For Developers & Contributors
+The implementation plans and predecessor references are historical context. The
+current CLI behavior is best checked with `warp --help`, `warp <command> --help`,
+and the current README/user guide.
 
-**[Technical Overview](technical-overview.md)**
-- Architecture and design decisions
-- Implementation details
-- Performance characteristics
-- Module documentation
-- Testing strategies
+## Common Paths
 
-### Project History
-
-**[Implementation Plans](implement-plan-v1.md) & [Implementation Plans v2](implement-plan-v2.md)**
-- Original project vision and requirements
-- Detailed implementation roadmap
-- Technical specifications
-
-**[Original Project References]()**
-- [`autowt.txt`](autowt.txt) - Python-based UX-focused predecessor
-- [`coworktree.txt`](coworktree.txt) - Go-based performance-focused predecessor
-
----
-
-## 🚀 Quick Start
-
-New to Git-Warp? Start with these essential commands:
+### First Setup
 
 ```bash
-# Create your first worktree (instant with CoW!)
-warp feature/amazing-new-feature
+cargo install --path .
+warp doctor
+warp --help
+```
 
-# List all worktrees
+### Daily Worktree Flow
+
+```bash
+warp switch feature/my-change
 warp ls
-
-# Clean up merged branches safely
-warp cleanup --mode merged
-
-# View configuration
-warp config --show
-```
-
-**→ [Full Quick Start Guide](user-guide.md#quick-start)**
-
----
-
-## 🎯 What Makes Git-Warp Special?
-
-### ⚡ **Instant Performance**
-- **Copy-on-Write**: Create worktrees in milliseconds, not minutes
-- **Smart Caching**: Intelligent reuse of dependencies and build artifacts
-- **Parallel Processing**: Multi-threaded file operations
-
-### 🛡️ **Safety First**
-- **Process Detection**: Never break running services
-- **Dry-Run Mode**: Preview all operations safely
-- **Graceful Recovery**: Intelligent error handling and recovery
-
-### 🤖 **AI Integration**
-- **Claude Code Monitoring**: Live dashboard of AI agent activities
-- **Hook System**: Seamless integration with AI development workflows
-- **Intelligent Suggestions**: AI-powered workflow optimizations
-
-### 🖥️ **Rich Experience**
-- **Terminal Integration**: Automatic tab/window switching (macOS)
-- **Beautiful CLI**: Emoji-enhanced, informative output
-- **Live Dashboards**: Real-time TUI interfaces
-
----
-
-## 📖 Documentation Structure
-
-### User Documentation
-
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| **[User Guide](user-guide.md)** | Complete usage guide | All users |
-| Quick Reference | Command cheatsheet | Daily users |
-| Configuration Reference | All settings explained | Power users |
-| Troubleshooting Guide | Common issues & solutions | All users |
-
-### Technical Documentation  
-
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| **[Technical Overview](technical-overview.md)** | Architecture & implementation | Developers |
-| API Documentation | Internal API reference | Contributors |
-| Performance Guide | Optimization details | DevOps/SRE |
-| Contributing Guide | Development workflow | Contributors |
-
-### Project Documentation
-
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| **[Implementation Plans](implement-plan-v2.md)** | Project roadmap | Project managers |
-| Change Log | Version history | All users |
-| Migration Guide | Upgrade instructions | Existing users |
-
----
-
-## 🔍 Find What You Need
-
-### I want to...
-
-**Learn Git-Warp basics**
-→ [User Guide: Quick Start](user-guide.md#quick-start)
-
-**Understand how CoW works**
-→ [Technical Overview: Copy-on-Write Implementation](technical-overview.md#copy-on-write-implementation)
-
-**Configure Git-Warp for my team**
-→ [User Guide: Configuration](user-guide.md#configuration)
-
-**Troubleshoot an issue**
-→ [User Guide: Troubleshooting](user-guide.md#troubleshooting)
-
-**Contribute to the project**
-→ [Technical Overview: Module Design](technical-overview.md#module-design)
-
-**Understand the architecture**
-→ [Technical Overview: Architecture Overview](technical-overview.md#architecture-overview)
-
-**See performance benchmarks**
-→ [Technical Overview: Performance Benchmarks](technical-overview.md#performance-benchmarks)
-
-**Learn about AI integration**
-→ [User Guide: AI Agent Monitoring](user-guide.md#ai-agent-monitoring)
-
----
-
-## 🎯 Common Use Cases
-
-### Individual Developer
-
-```bash
-# Daily workflow
-warp switch main && git pull
-warp feature/user-authentication
-# Work, commit, push
-warp cleanup --mode merged
-```
-
-**→ [User Guide: Daily Workflow](user-guide.md#daily-workflow)**
-
-### Team Development
-
-```bash
-# Team-safe settings
-export GIT_WARP_AUTO_CONFIRM=false
-export GIT_WARP_TERMINAL_MODE=window
+warp --dry-run cleanup --mode merged
 warp cleanup --interactive
 ```
 
-**→ [User Guide: Team Collaboration](user-guide.md#team-collaboration)**
-
-### Large Monorepos
+### Agent Session Visibility
 
 ```bash
-# Optimized for large repos
-export GIT_WARP_WORKTREES_PATH=/fast-ssd/worktrees
-warp config --show  # Verify settings
+warp hooks-install --level user --runtime all
+warp hooks-status
+warp agents
 ```
 
-**→ [User Guide: Large Monorepos](user-guide.md#large-monorepos)**
+Live agent rows require hooks or local session history that Git-Warp can read.
+Without those inputs, the dashboard opens with an empty state.
 
-### AI-Assisted Development
+## Find What You Need
 
-```bash
-# Monitor Claude Code activities
-warp agents &
-# Work with AI assistance while monitoring
-warp feature/ai-integration
-```
+- Basics: [User Guide: Quick Start](user-guide.md#quick-start)
+- Configuration: [User Guide: Configuration](user-guide.md#configuration)
+- Troubleshooting: [User Guide: Troubleshooting](user-guide.md#troubleshooting)
+- Copy-on-Write internals:
+  [Technical Overview: Copy-on-Write Implementation](technical-overview.md#copy-on-write-implementation)
+- Process safety:
+  [Technical Overview: Process Management](technical-overview.md#process-management)
+- Performance notes:
+  [Technical Overview: Performance Benchmarks](technical-overview.md#performance-benchmarks)
 
-**→ [User Guide: AI Integration](user-guide.md#advanced-usage)**
+## Documentation Maintenance
 
----
+When editing docs:
 
-## 💡 Key Concepts
-
-### Copy-on-Write (CoW)
-
-Git-Warp's secret weapon for instant worktree creation. Instead of copying files, CoW creates instant snapshots using filesystem-level cloning.
-
-**Benefits:**
-- **Speed**: 30-180x faster than traditional methods
-- **Space Efficient**: Shared data until files are modified
-- **Reliability**: Atomic operations prevent corruption
-
-**→ [Technical Deep Dive](technical-overview.md#copy-on-write-implementation)**
-
-### Intelligent Process Management
-
-Git-Warp prevents disasters by detecting and managing processes running in worktrees before cleanup.
-
-**Features:**
-- **Detection**: Find all processes in worktree directories
-- **Graceful Termination**: SIGTERM → SIGKILL progression
-- **User Control**: Interactive confirmation and bypass options
-
-**→ [Implementation Details](technical-overview.md#process-management)**
-
-### Layered Configuration
-
-Sophisticated configuration system with clear precedence rules.
-
-**Layers (highest to lowest priority):**
-1. Command-line arguments
-2. Environment variables (`GIT_WARP_*`)
-3. Configuration file (`~/.config/git-warp/config.toml`)
-4. Built-in defaults
-
-**→ [Configuration Guide](user-guide.md#configuration)**
-
----
-
-## 🚦 Getting Help
-
-### Documentation Issues
-
-- **Missing information?** [Open an issue](https://github.com/denysbutenko/git-warp/issues/new?template=documentation.md)
-- **Found an error?** Submit a PR with the fix
-- **Need clarification?** Start a [discussion](https://github.com/denysbutenko/git-warp/discussions)
-
-### Technical Support
-
-1. **Check the [Troubleshooting Guide](user-guide.md#troubleshooting)**
-2. **Enable debug mode**: `RUST_LOG=debug warp --debug <command>`
-3. **Search [existing issues](https://github.com/denysbutenko/git-warp/issues)**
-4. **Create a new issue** with debug output
-
-### Feature Requests
-
-We love hearing about new use cases! 
-
-1. **Check the [roadmap](implement-plan-v2.md)** 
-2. **Search [existing requests](https://github.com/denysbutenko/git-warp/issues?q=is%3Aissue+label%3Aenhancement)**
-3. **Open a feature request** with your use case
-
----
-
-## 🤝 Contributing to Documentation
-
-Documentation improvements are always welcome!
-
-### Quick Fixes
-- Fix typos, broken links, or unclear instructions
-- Add missing examples or clarifications
-- Improve formatting or structure
-
-### Major Contributions
-- New guides or tutorials
-- Architecture documentation
-- Performance analysis
-- Integration guides
-
-### Documentation Standards
-
-- **Clear and Concise**: Prefer simple, direct language
-- **Example-Driven**: Include working code examples
-- **User-Focused**: Write from the user's perspective
-- **Comprehensive**: Cover edge cases and gotchas
-- **Tested**: Verify all examples work as described
-
----
-
-## 📊 Documentation Stats
-
-| Document | Lines | Words | Last Updated |
-|----------|-------|--------|--------------|
-| User Guide | 850+ | 12,000+ | Latest |
-| Technical Overview | 750+ | 10,000+ | Latest |
-| Implementation Plans | 400+ | 6,000+ | v2.0 |
-| Project References | 300+ | 4,000+ | Historical |
-
-**Total Documentation**: 2,300+ lines, 32,000+ words
-
----
-
-## 🎉 Success Stories
-
-> *"Git-Warp reduced our feature branch setup time from 5 minutes to 3 seconds. Game changer for our team!"*  
-> — Senior Developer, Tech Startup
-
-> *"The CoW technology is incredible. We're working on a 10GB monorepo and worktree creation is instant."*  
-> — DevOps Engineer, Enterprise
-
-> *"The AI integration dashboard helps us understand what Claude is doing across different branches. Brilliant!"*  
-> — ML Engineer, AI Company
-
----
-
-## 🔮 What's Next?
-
-Git-Warp is continuously evolving. Check out our [roadmap](implement-plan-v2.md) to see what's coming:
-
-- **Interactive TUI Interfaces**: Enhanced cleanup and configuration
-- **Plugin System**: Extensible architecture for custom workflows  
-- **Multi-Platform CoW**: Linux overlayfs support
-- **Enhanced AI Integration**: More sophisticated agent monitoring
-- **Team Features**: Shared configuration and policies
-
----
-
-**Ready to transform your Git workflow?**
-
-**→ [Get Started with the User Guide](user-guide.md)**
-
-**Happy warping! 🚀**
+- Prefer examples verified against the current CLI help.
+- Do not link to missing pages or planned guides.
+- Mark historical material as historical so users do not treat old plans as the
+  shipped command surface.
+- Keep setup examples safe: use `warp doctor`, `--dry-run`, and non-destructive
+  commands before cleanup examples.

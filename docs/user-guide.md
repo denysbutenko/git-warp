@@ -1,673 +1,311 @@
 # Git-Warp User Guide
 
-**The Ultimate Git Worktree Manager: Lightning-Fast, AI-Integrated, and Developer-Friendly**
+Git-Warp is a Rust CLI for working with Git worktrees. It focuses on fast
+worktree creation, terminal handoff, safe cleanup, and optional Claude/Codex
+session visibility.
 
 ## Table of Contents
 
-1. [What is Git-Warp?](#what-is-git-warp)
-2. [Why Use Git-Warp?](#why-use-git-warp)
-3. [Installation](#installation)
-4. [Quick Start](#quick-start)
-5. [Core Features](#core-features)
-6. [Advanced Usage](#advanced-usage)
+1. [Installation](#installation)
+2. [Quick Start](#quick-start)
+3. [Switching Worktrees](#switching-worktrees)
+4. [Listing Worktrees](#listing-worktrees)
+5. [Cleanup](#cleanup)
+6. [Agent Session Dashboard](#agent-session-dashboard)
 7. [Configuration](#configuration)
 8. [Troubleshooting](#troubleshooting)
 9. [Best Practices](#best-practices)
-
----
-
-## What is Git-Warp?
-
-Git-Warp is a high-performance Git worktree manager that revolutionizes how developers work with multiple branches simultaneously. Built in Rust for maximum speed and reliability, it combines:
-
-- **⚡ Instant Worktree Creation**: Copy-on-Write (CoW) technology creates worktrees in milliseconds
-- **🤖 AI Integration**: Live monitoring of Claude Code agent activities
-- **🛡️ Process Safety**: Intelligent process detection and management
-- **🖥️ Terminal Integration**: Seamless switching between worktrees in your favorite terminal
-- **⚙️ Rich Configuration**: Powerful, layered configuration system
-
-### The Problem Git-Warp Solves
-
-Traditional Git workflows force developers to choose between:
-- **Stashing/Committing**: Interrupting current work to switch branches
-- **Multiple Repositories**: Managing separate clones (disk space, sync issues)
-- **Manual Worktrees**: Complex `git worktree` commands with cleanup headaches
-
-Git-Warp eliminates these compromises by making worktrees effortless, instant, and intelligent.
-
----
-
-## Why Use Git-Warp?
-
-### 🚀 **Speed That Changes Everything**
-
-```bash
-# Traditional approach (30+ seconds)
-git stash
-git checkout feature-branch
-npm install
-# Work on feature
-git checkout main
-git stash pop
-
-# Git-Warp approach (< 1 second)
-warp feature-branch
-# Instantly ready to work - dependencies already installed!
-```
-
-### 🧠 **Intelligence Built-In**
-
-- **Process Detection**: Never accidentally break running services
-- **Branch Analysis**: Automatic detection of merged/stale branches
-- **Agent Monitoring**: See what Claude Code is doing in real-time
-- **Smart Cleanup**: AI-powered suggestions for worktree maintenance
-
-### 💎 **Developer Experience**
-
-- **Zero Configuration**: Works perfectly out-of-the-box
-- **Rich Feedback**: Beautiful, informative CLI output
-- **Error Prevention**: Dry-run mode for all destructive operations
-- **Terminal Magic**: Automatic tab/window switching
-
----
+10. [Advanced Scenarios](#advanced-scenarios)
 
 ## Installation
 
 ### Prerequisites
 
-- **Rust**: 2024 edition (latest stable)
-- **Git**: Any modern version
-- **macOS**: Required for Copy-on-Write support (APFS filesystem)
+- Rust, latest stable toolchain.
+- Git.
+- macOS/APFS for Copy-on-Write acceleration. Other platforms and filesystems use
+  traditional Git worktree creation.
 
 ### Build from Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/denysbutenko/git-warp
 cd git-warp
-
-# Build optimized binary
 cargo build --release
-
-# The binary will be at target/release/warp
-# Optionally, add to your PATH
-sudo ln -sf $(pwd)/target/release/warp /usr/local/bin/warp
+cargo install --path .
+warp --version
 ```
 
-### Verify Installation
+### Check Setup
 
 ```bash
-warp --version
-# Should output: warp 0.1.0
+warp doctor
 ```
 
----
+`warp doctor` checks repository detection, config path, worktree base path, CoW
+support, terminal mode, and hook setup.
 
 ## Quick Start
 
-### Your First Worktree
+Run these commands from inside a Git repository:
 
 ```bash
-# Navigate to any Git repository
-cd your-project
+# Create or switch to a worktree for a branch
+warp switch feature/amazing-new-feature
 
-# Create and switch to a new feature branch (instant!)
+# Short form
 warp feature/amazing-new-feature
 
-# List all worktrees
+# List worktrees
 warp ls
 
-# Work normally - everything is ready to go!
+# Preview cleanup
+warp --dry-run cleanup --mode merged
+
+# Pick cleanup candidates interactively
+warp cleanup --interactive
 ```
 
-### Essential Commands
+## Switching Worktrees
 
 ```bash
-# Switch to existing branch
-warp switch existing-branch
-
-# Switch to the most recent or waiting agent branch
-warp switch --latest
-warp switch --waiting
-
-# List worktrees with details
-warp ls --debug
-
-# Clean up merged branches
-warp cleanup --mode merged
-
-# View configuration
-warp config --show
-
-# Monitor AI agents (if using Claude Code)
-warp agents
-```
-
----
-
-## Core Features
-
-### 1. Instant Worktree Creation
-
-Git-Warp uses Copy-on-Write technology to create worktrees instantly:
-
-```bash
-# Creates worktree in milliseconds vs. minutes
-warp feature/user-authentication
+# Existing or new branch
+warp switch feature/user-authentication
 
 # Custom path
-warp switch feature/ui-redesign --path /custom/path
+warp switch feature/ui-redesign --path /tmp/ui-redesign
 
-# Force traditional method (skip CoW)
+# Skip Copy-on-Write checks and use normal Git worktree creation
 warp switch testing-branch --no-cow
+
+# Jump to agent-related branches when local session data is available
+warp switch --latest
+warp switch --waiting
 ```
 
-**How it Works**: On APFS filesystems (macOS), Git-Warp clones your repository's file tree instantly using CoW, then intelligently rewrites absolute paths in configuration files.
+Terminal handoff modes:
 
-### 2. Intelligent Worktree Management
+```bash
+warp --terminal tab switch feature-branch
+warp --terminal window switch feature-branch
+warp --terminal current switch feature-branch
+warp --terminal inplace switch feature-branch
+warp --terminal echo switch feature-branch
+```
 
-**List Worktrees**:
+## Listing Worktrees
+
 ```bash
 warp ls
-# Output:
-# 📁 Git Worktrees:
-# 
-# 🏠  main /Users/you/project
-# 🌿  feature-branch /Users/you/project/../worktrees/feature-branch
-# 🌿  hotfix-123 /Users/you/project/../worktrees/hotfix-123
-# 
-# 📊 Total: 3 worktrees
-```
-
-**Advanced Listing**:
-```bash
 warp ls --debug
-# Shows HEAD commits, branch status, and more details
 ```
 
-### 3. Smart Cleanup
+The list output marks useful state such as primary, current, dirty, detached,
+and busy worktrees. `--debug` includes additional details for diagnostics.
 
-Git-Warp analyzes your branches intelligently:
+## Cleanup
+
+Git-Warp analyzes worktrees before removal. Protected branches default to
+`main`, `master`, and `develop`.
 
 ```bash
-# Clean up merged branches
 warp cleanup --mode merged
-
-# Clean up branches without remotes
 warp cleanup --mode remoteless
-
-# Interactive cleanup (TUI interface)
+warp cleanup --mode all
 warp cleanup --interactive
-
-# Dry-run to see what would be cleaned
 warp --dry-run cleanup --mode all
 ```
 
-**Cleanup Modes**:
-- `merged`: Branches merged into main/master
-- `remoteless`: Branches without remote tracking
-- `all`: All non-main worktrees (use with caution!)
-- `interactive`: Choose which worktrees to remove
-
-### 4. Process Safety
-
-Git-Warp prevents disasters by detecting running processes:
+Process and dirty-worktree handling:
 
 ```bash
-# Automatically detects processes in worktrees
-warp cleanup --mode merged
-
-# If processes are found:
-# ⚠️  Found 2 processes in worktree
-#   • PID 1234: npm (CPU: 15.2%, Mem: 45MB)
-#     Working dir: /project/worktrees/feature-branch
-#   • PID 5678: webpack-dev-server (CPU: 8.1%, Mem: 120MB)
-#     Command: node webpack serve --mode development
-
-# Kill processes automatically
+# Terminate blocking processes before removal
 warp cleanup --mode merged --kill
 
-# Force cleanup ignoring processes
+# Ignore safety blocks only when you have checked the candidate
 warp cleanup --mode merged --force
+
+# Override config that would otherwise kill processes
+warp cleanup --mode merged --no-kill
 ```
 
-### 5. Terminal Integration
+Use `--dry-run` first when you are unsure what a cleanup mode will select.
 
-Seamless integration with macOS terminals:
+## Agent Session Dashboard
 
-```bash
-# Open new tab (default)
-warp switch feature-branch
-
-# Open new window
-warp switch --terminal window feature-branch
-
-# Echo commands instead of switching
-warp switch --terminal echo feature-branch
-
-# Start a shell in the current terminal tab
-warp switch --terminal current feature-branch
-
-# Print a cd command for the worktree
-warp switch --terminal inplace feature-branch
-```
-
-### 6. AI Agent Monitoring
-
-Real-time monitoring of Claude Code activities:
+The `agents` command opens a TUI dashboard for live hook records and recent local
+Claude/Codex session history scoped to the current repository and its worktrees.
 
 ```bash
-# Launch live dashboard
+warp hooks-install --level user --runtime all
+warp hooks-status
 warp agents
 ```
 
-**Dashboard Features**:
-- Live agent activity feed
-- CPU and memory usage
-- Activity statistics
-- Interactive navigation (↑↓ keys, r to refresh)
-
----
-
-## Advanced Usage
-
-### Configuration Management
-
-**View Current Settings**:
-```bash
-warp config --show
-# Shows all configuration with current values
-```
-
-**Open the Config File**:
-```bash
-warp config --edit
-# Creates the default config if needed, then opens it in your editor
-```
-
-**Environment Variables** (Override any setting):
-```bash
-export GIT_WARP_TERMINAL_MODE=window
-export GIT_WARP_USE_COW=true
-export GIT_WARP_AUTO_CONFIRM=false
-export GIT_WARP_WORKTREES_PATH=/custom/worktrees
-```
-
-### Dry-Run Mode
-
-Preview all operations safely:
+Use `--level project` to install hooks only for the current project:
 
 ```bash
-# See what would be done
-warp --dry-run switch feature-branch
-warp --dry-run cleanup --mode all
-warp --dry-run --terminal window switch testing
+warp hooks-install --level project --runtime all
 ```
 
-### Branch Naming & Patterns
-
-Git-Warp handles complex branch names gracefully:
-
-```bash
-# Forward slashes (creates nested structure)
-warp feature/user-auth/login-form
-
-# Special characters
-warp "hotfix/issue-#123"
-
-# Automatic sanitization for filesystem paths
-warp "feature branch with spaces"  # → feature-branch-with-spaces
-```
-
-### Custom Worktree Paths
-
-```bash
-# Specific path
-warp switch mybranch --path /tmp/quick-test
-
-# Pattern-based paths (configured)
-# ~/worktrees/project-name/branch-name
-```
-
-### Integration with Development Workflow
-
-**With Package Managers**:
-```bash
-# Dependencies are already installed via CoW!
-warp feature/new-ui
-cd ../worktrees/feature-new-ui
-npm start  # Works immediately
-```
-
-**With Claude Code**:
-```bash
-# Monitor AI agent activity while developing
-warp agents &  # Background monitoring
-warp switch ai-integration
-# Work with Claude Code while monitoring agent activities
-```
-
-**With Docker/Services**:
-```bash
-# Safe service management
-warp cleanup --kill --mode merged  # Stops services in cleaned worktrees
-warp switch main
-docker-compose up  # Start services in main worktree
-```
-
----
+If no hook records or readable session history exists, the dashboard shows an
+empty state with setup guidance.
 
 ## Configuration
 
-Git-Warp uses a sophisticated configuration system with three layers:
+Show the effective config:
 
-### 1. Configuration File
+```bash
+warp config --show
+```
 
-Located at: `~/.config/git-warp/config.toml`
+Create or open the config file in `$VISUAL` or `$EDITOR`:
+
+```bash
+warp config --edit
+```
+
+Default config path:
+
+```text
+~/.config/git-warp/config.toml
+```
+
+Example:
 
 ```toml
-# Terminal mode: tab, window, current, inplace, echo
 terminal_mode = "tab"
-
-# Use Copy-on-Write when available
 use_cow = true
-
-# Auto-confirm destructive operations
 auto_confirm = false
-
-# Custom worktrees directory (optional)
 # worktrees_path = "/custom/path/to/worktrees"
 
 [git]
-# Default main branch name
 default_branch = "main"
-
-# Branches cleanup must never remove
 protected_branches = ["main", "master", "develop"]
-
-# Auto-fetch before operations
 auto_fetch = true
-
-# Auto-prune remote tracking branches
 auto_prune = true
 
 [process]
-# Check for processes before cleanup
 check_processes = true
-
-# Auto-kill processes during cleanup
 auto_kill = false
-
-# Grace period before force killing (seconds)
 kill_timeout = 5
 
 [terminal]
-# Terminal app: auto, iterm2, terminal, warp
 app = "auto"
-
-# Auto-activate new macOS terminal tabs/windows
 auto_activate = true
-
-# Commands to run after Git-Warp changes into the worktree
 init_commands = []
 
 [agent]
-# Enable agent monitoring
 enabled = true
-
-# Refresh rate for agent dashboard (milliseconds)
 refresh_rate = 1000
-
-# Maximum activities to track
 max_activities = 100
-
-# Enable Claude Code hooks integration
 claude_hooks = true
 ```
 
-### 2. Environment Variables
-
-Override any setting with `GIT_WARP_` prefix:
+Environment variables override config file values:
 
 ```bash
-# Terminal behavior
 export GIT_WARP_TERMINAL_MODE=window
-export GIT_WARP_AUTO_CONFIRM=true
-
-# Performance
-export GIT_WARP_USE_COW=false  # Disable CoW
-
-# Paths
+export GIT_WARP_USE_COW=false
+export GIT_WARP_AUTO_CONFIRM=false
 export GIT_WARP_WORKTREES_PATH=/Users/me/dev/worktrees
 ```
 
-### 3. Command-Line Options
-
-Highest priority, overrides everything:
+Command-line options have the highest priority:
 
 ```bash
 warp --terminal window --auto-confirm switch feature-branch
 ```
 
-### Configuration Priority
-
-1. **Command-line options** (highest)
-2. **Environment variables** 
-3. **Configuration file**
-4. **Built-in defaults** (lowest)
-
----
-
 ## Troubleshooting
 
-### Common Issues
+### Not in a Git Repository
 
-**CoW Not Working**:
+Run Git-Warp from inside a Git repository:
+
 ```bash
-# Check filesystem type
-df -T .
-# Should show "apfs" for CoW support
+cd /path/to/repo
+warp doctor
+```
 
-# Force traditional method
+### CoW Is Not Available
+
+Git-Warp falls back to normal Git worktree creation when CoW is unsupported.
+You can skip CoW checks explicitly:
+
+```bash
 warp switch --no-cow branch-name
 ```
 
-**Terminal Integration Issues**:
-```bash
-# Check terminal support
-warp config --show
-# Look for "Terminal Integration" section
+### Terminal Handoff Fails
 
-# Try different terminal mode
+Use `echo` mode to get a plain path without terminal automation:
+
+```bash
 warp --terminal echo switch branch-name
 ```
 
-**Permission Errors**:
+Then manually `cd` into the printed path.
+
+### Cleanup Is Blocked
+
+Preview candidates and inspect blockers:
+
 ```bash
-# Check directory permissions
-ls -la ../worktrees/
-
-# Create worktrees directory manually
-mkdir -p ../worktrees
-```
-
-**Process Detection Issues**:
-```bash
-# Bypass process checks
-warp cleanup --force --mode merged
-
-# Check what processes are detected
 warp --dry-run cleanup --mode merged
+warp ls --debug
 ```
 
-### Debug Mode
+If processes are the blocker, either stop them manually or use `--kill`. Use
+`--force` only when you are intentionally bypassing dirty/process safety.
 
-Enable verbose logging:
+### Config Does Not Open
+
+`warp config --edit` needs `$VISUAL` or `$EDITOR`.
 
 ```bash
-RUST_LOG=debug warp --debug switch feature-branch
-```
-
-### Recovery Operations
-
-**Clean Up Corrupted Worktrees**:
-```bash
-# Remove broken worktree references
-git worktree prune
-
-# List remaining worktrees
-git worktree list
-
-# Manual removal if needed
-rm -rf ../worktrees/broken-branch
-git worktree remove --force broken-branch
-```
-
-**Reset Configuration**:
-```bash
-# Remove config file
-rm ~/.config/git-warp/config.toml
-
-# Recreate and open the default config
+export EDITOR=vim
 warp config --edit
 ```
-
----
 
 ## Best Practices
 
-### 1. Worktree Organization
-
-**Recommended Structure**:
-```
-your-project/
-├── .git/
-├── main-branch-files/
-└── ../worktrees/
-    ├── feature-authentication/
-    ├── hotfix-security-issue/
-    └── experimental-ui/
-```
-
-**Naming Conventions**:
-- Use descriptive, kebab-case names: `feature-user-auth`
-- Include type prefix: `feature/`, `hotfix/`, `experiment/`
-- Keep names short but clear
-
-### 2. Development Workflow
-
-**Daily Workflow**:
-```bash
-# Start of day
-warp switch main
-git pull
-
-# New feature
-warp feature/amazing-feature
-# Work, commit, push
-
-# Code review
-warp switch main
-# Review PRs
-
-# Quick hotfix
-warp hotfix/critical-bug
-# Fix, test, deploy
-
-# End of day cleanup
-warp cleanup --mode merged
-```
-
-**Team Collaboration**:
-- Share branch naming conventions
-- Use consistent worktree organization
-- Document custom configuration settings
-
-### 3. Performance Optimization
-
-**Maximize CoW Benefits**:
-- Keep `node_modules/` and build artifacts in main worktree
-- Use `.gitignore` to exclude large generated files
-- Regularly clean up old worktrees
-
-**Resource Management**:
-- Monitor disk usage: `du -sh ../worktrees/*`
-- Set reasonable limits in configuration
-- Use cleanup commands regularly
-
-### 4. Safety Practices
-
-**Before Destructive Operations**:
-```bash
-# Always dry-run first
-warp --dry-run cleanup --mode all
-
-# Check for uncommitted changes
-warp ls --debug
-
-# Backup important work
-git stash --include-untracked  # In each worktree
-```
-
-**Process Management**:
-- Always check for running processes
-- Use graceful termination (avoid --force unless necessary)
-- Monitor services that might span worktrees
-
-### 5. Integration Tips
-
-**With IDEs**:
-- Configure IDE to handle multiple project roots
-- Use workspace features for multi-worktree development
-- Set up consistent formatting/linting across worktrees
-
-**With CI/CD**:
-- Ensure CI systems understand worktree structure
-- Use relative paths in configuration files
-- Test deployment from different worktrees
-
-**With Docker**:
-- Be careful with volume mounts spanning worktrees
-- Consider worktree-specific docker-compose files
-- Clean up containers when removing worktrees
-
----
+- Run `warp doctor` after installation or config changes.
+- Prefer `warp --dry-run cleanup ...` before destructive cleanup.
+- Keep protected branch config aligned with your repo conventions.
+- Use short branch names that still identify the task.
+- Use `warp --terminal echo switch <branch>` in scripts or automation where
+  opening a terminal tab would be surprising.
 
 ## Advanced Scenarios
 
-### Large Monorepos
+### Large Repositories
+
+Use a stable worktree location on a fast disk:
 
 ```bash
-# Set custom worktree location to faster disk
 export GIT_WARP_WORKTREES_PATH=/fast-ssd/worktrees
-
-# Increase cleanup thresholds
-warp config --edit
-# Adjust max_activities and other limits
+warp switch feature/large-repo-change
 ```
 
-### Multi-Team Development
+### Team Defaults
+
+Share conservative settings through shell profile or onboarding docs:
 
 ```bash
-# Team-specific configuration
-export GIT_WARP_TERMINAL_MODE=window  # For team preference
-export GIT_WARP_AUTO_CONFIRM=false    # Safety for shared environments
-
-# Standardize worktree structure
-export GIT_WARP_WORKTREES_PATH=/teams/shared/worktrees
+export GIT_WARP_AUTO_CONFIRM=false
+export GIT_WARP_TERMINAL_MODE=window
 ```
 
-### Continuous Integration
+### CI or Non-Interactive Scripts
+
+Use terminal output modes that do not launch UI:
 
 ```bash
-# CI-friendly settings
 export GIT_WARP_AUTO_CONFIRM=true
-export GIT_WARP_USE_COW=false  # May not be available in CI
+export GIT_WARP_USE_COW=false
 export GIT_WARP_TERMINAL_MODE=echo
 ```
 
----
-
-Git-Warp transforms Git worktree management from a complex, error-prone process into an effortless, intelligent workflow. Whether you're working on small features or managing large monorepos, Git-Warp's combination of speed, safety, and intelligence makes it an indispensable tool for modern development.
-
-**Happy warping! 🚀**
+Prefer `warp --help` and `warp <command> --help` as the source of truth for the
+current command surface.
