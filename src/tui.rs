@@ -3,6 +3,7 @@ use crate::{
         AgentDiscovery, AgentRuntime, AgentSessionSource, AgentSessionState, AgentSessionSummary,
         sort_session_summaries,
     },
+    config::GitConfig,
     error::Result,
     git::{BranchStatus, WorktreeInfo},
 };
@@ -105,11 +106,34 @@ pub struct WorktreeSwitchTarget {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorktreeRemovalTarget {
+    pub branch: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum WorktreeSwitchAction {
+    Switch(WorktreeSwitchTarget),
+    Remove(WorktreeRemovalTarget),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum WorktreeRemovalBlock {
+    Primary,
+    Protected,
+    Detached,
+    Current,
+    Dirty,
+    Occupied,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WorktreeSwitchRow {
     pub branch_label: String,
     pub path_label: String,
     pub badges: Vec<String>,
     pub target: WorktreeSwitchTarget,
+    pub removal_blockers: Vec<WorktreeRemovalBlock>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -131,6 +155,18 @@ pub struct CleanupRow {
 impl WorktreeSwitchModel {
     pub fn target_at(&self, index: usize) -> Option<WorktreeSwitchTarget> {
         self.rows.get(index).map(|row| row.target.clone())
+    }
+
+    pub fn removal_at(&self, index: usize) -> Option<WorktreeRemovalTarget> {
+        let row = self.rows.get(index)?;
+        if !row.removal_blockers.is_empty() {
+            return None;
+        }
+
+        Some(WorktreeRemovalTarget {
+            branch: row.target.branch.clone()?,
+            path: row.target.path.clone(),
+        })
     }
 }
 
@@ -337,16 +373,33 @@ pub fn build_worktree_switch_model(
     worktrees: &[WorktreeInfo],
     statuses: &[WorktreeRuntimeStatus],
 ) -> WorktreeSwitchModel {
+    build_worktree_switch_model_with_protected_branches(
+        worktrees,
+        statuses,
+        &GitConfig::default().protected_branches,
+    )
+}
+
+pub fn build_worktree_switch_model_with_protected_branches(
+    worktrees: &[WorktreeInfo],
+    statuses: &[WorktreeRuntimeStatus],
+    protected_branches: &[String],
+) -> WorktreeSwitchModel {
     let mut rows = worktrees
         .iter()
         .enumerate()
         .map(|(index, worktree)| {
             let status = statuses.iter().find(|status| status.path == worktree.path);
-            let is_detached = worktree.branch.trim().is_empty();
+            let is_detached = worktree.branch.trim().is_empty() || worktree.is_detached;
+            let is_protected = is_protected_branch(&worktree.branch, protected_branches);
+            let removal_blockers = worktree_removal_blockers(worktree, status, protected_branches);
             let mut badges = Vec::new();
 
             if worktree.is_primary {
                 badges.push("primary".to_string());
+            }
+            if is_protected {
+                badges.push("protected".to_string());
             }
             if is_detached {
                 badges.push("detached".to_string());
@@ -372,6 +425,7 @@ pub fn build_worktree_switch_model(
                         branch: (!is_detached).then(|| worktree.branch.clone()),
                         path: worktree.path.clone(),
                     },
+                    removal_blockers,
                 },
             )
         })
@@ -411,6 +465,61 @@ fn worktree_branch_label(worktree: &WorktreeInfo) -> String {
     } else {
         worktree.branch.clone()
     }
+}
+
+fn worktree_removal_blockers(
+    worktree: &WorktreeInfo,
+    status: Option<&WorktreeRuntimeStatus>,
+    protected_branches: &[String],
+) -> Vec<WorktreeRemovalBlock> {
+    let mut blockers = Vec::new();
+    let is_detached = worktree.branch.trim().is_empty() || worktree.is_detached;
+
+    if worktree.is_primary {
+        blockers.push(WorktreeRemovalBlock::Primary);
+    }
+    if is_protected_branch(&worktree.branch, protected_branches) {
+        blockers.push(WorktreeRemovalBlock::Protected);
+    }
+    if is_detached {
+        blockers.push(WorktreeRemovalBlock::Detached);
+    }
+    if worktree.is_current || status.is_some_and(|status| status.is_current) {
+        blockers.push(WorktreeRemovalBlock::Current);
+    }
+    if status.is_some_and(|status| status.is_dirty) {
+        blockers.push(WorktreeRemovalBlock::Dirty);
+    }
+    if status.is_some_and(|status| status.is_occupied) {
+        blockers.push(WorktreeRemovalBlock::Occupied);
+    }
+
+    blockers
+}
+
+fn is_protected_branch(branch: &str, protected_branches: &[String]) -> bool {
+    protected_branches
+        .iter()
+        .any(|protected_branch| protected_branch.trim() == branch)
+}
+
+fn removal_blocker_label(blocker: WorktreeRemovalBlock) -> &'static str {
+    match blocker {
+        WorktreeRemovalBlock::Primary => "primary",
+        WorktreeRemovalBlock::Protected => "protected",
+        WorktreeRemovalBlock::Detached => "detached",
+        WorktreeRemovalBlock::Current => "current",
+        WorktreeRemovalBlock::Dirty => "dirty",
+        WorktreeRemovalBlock::Occupied => "occupied",
+    }
+}
+
+fn removal_blocker_summary(blockers: &[WorktreeRemovalBlock]) -> String {
+    blockers
+        .iter()
+        .map(|blocker| removal_blocker_label(*blocker))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn build_dashboard_model(
@@ -659,7 +768,7 @@ impl WorktreeSwitchTui {
         Self { model }
     }
 
-    pub fn run(&self) -> Result<Option<WorktreeSwitchTarget>> {
+    pub fn run(&self) -> Result<Option<WorktreeSwitchAction>> {
         if self.model.rows.is_empty() {
             for line in &self.model.empty_state_lines {
                 println!("{line}");
@@ -703,14 +812,39 @@ impl WorktreeSwitchTui {
     fn run_app(
         &self,
         terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
-    ) -> Result<Option<WorktreeSwitchTarget>> {
+    ) -> Result<Option<WorktreeSwitchAction>> {
         let mut selected_index = 0;
+        let mut pending_remove: Option<WorktreeRemovalTarget> = None;
+        let mut notice: Option<String> = None;
 
         loop {
-            terminal.draw(|f| draw_worktree_switcher(f, &self.model, selected_index))?;
+            terminal.draw(|f| {
+                draw_worktree_switcher(
+                    f,
+                    &self.model,
+                    selected_index,
+                    pending_remove.as_ref(),
+                    notice.as_deref(),
+                )
+            })?;
 
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                if let Some(removal) = pending_remove.clone() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                            return Ok(Some(WorktreeSwitchAction::Remove(removal)));
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            pending_remove = None;
+                            notice = Some("Removal cancelled".to_string());
+                        }
+                        KeyCode::Char('q') => return Ok(None),
+                        _ => {}
+                    }
                     continue;
                 }
 
@@ -718,12 +852,36 @@ impl WorktreeSwitchTui {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
                     KeyCode::Up | KeyCode::Char('k') => {
                         selected_index = selected_index.saturating_sub(1);
+                        notice = None;
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         selected_index =
                             (selected_index + 1).min(self.model.rows.len().saturating_sub(1));
+                        notice = None;
                     }
-                    KeyCode::Enter => return Ok(self.model.target_at(selected_index)),
+                    KeyCode::Enter => {
+                        return Ok(self
+                            .model
+                            .target_at(selected_index)
+                            .map(WorktreeSwitchAction::Switch));
+                    }
+                    KeyCode::Char('d') | KeyCode::Delete => {
+                        if let Some(removal) = self.model.removal_at(selected_index) {
+                            notice = Some(format!(
+                                "Remove '{}' and delete its local branch? y/N",
+                                removal.branch
+                            ));
+                            pending_remove = Some(removal);
+                        } else if let Some(row) = self.model.rows.get(selected_index) {
+                            let reason = if row.removal_blockers.is_empty() {
+                                "no local branch".to_string()
+                            } else {
+                                removal_blocker_summary(&row.removal_blockers)
+                            };
+                            notice =
+                                Some(format!("Cannot remove '{}': {}", row.branch_label, reason));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -731,14 +889,20 @@ impl WorktreeSwitchTui {
     }
 }
 
-fn draw_worktree_switcher(f: &mut Frame, model: &WorktreeSwitchModel, selected_index: usize) {
+fn draw_worktree_switcher(
+    f: &mut Frame,
+    model: &WorktreeSwitchModel,
+    selected_index: usize,
+    pending_remove: Option<&WorktreeRemovalTarget>,
+    notice: Option<&str>,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(8),
-            Constraint::Length(6),
+            Constraint::Length(7),
             Constraint::Length(3),
         ])
         .split(f.size());
@@ -789,11 +953,28 @@ fn draw_worktree_switcher(f: &mut Frame, model: &WorktreeSwitchModel, selected_i
         } else {
             row.badges.join(", ")
         };
+        let removal_status = if let Some(removal) = pending_remove {
+            format!("confirm remove {} (y/N)", removal.branch)
+        } else if row.removal_blockers.is_empty() && row.target.branch.is_some() {
+            "available".to_string()
+        } else if row.removal_blockers.is_empty() {
+            "blocked: no local branch".to_string()
+        } else {
+            format!(
+                "blocked: {}",
+                removal_blocker_summary(&row.removal_blockers)
+            )
+        };
+        let notice_line = notice
+            .map(|message| format!("\nNote: {message}"))
+            .unwrap_or_default();
         let details = Paragraph::new(format!(
-            "Branch: {}\nPath: {}\nStatus: {}",
+            "Branch: {}\nPath: {}\nStatus: {}\nRemove: {}{}",
             branch,
             row.target.path.display(),
-            status
+            status,
+            removal_status,
+            notice_line
         ))
         .block(Block::default().title("Details").borders(Borders::ALL))
         .style(Style::default().fg(Color::White))
@@ -801,7 +982,7 @@ fn draw_worktree_switcher(f: &mut Frame, model: &WorktreeSwitchModel, selected_i
         f.render_widget(details, chunks[2]);
     }
 
-    let help = Paragraph::new("↑↓/jk: Navigate | Enter: Switch | q/Esc: Quit")
+    let help = Paragraph::new("↑↓/jk: Navigate | Enter: Switch | d/Del: Remove | q/Esc: Quit")
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Help"));
