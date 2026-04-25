@@ -4,7 +4,7 @@ use crate::{
         sort_session_summaries,
     },
     error::Result,
-    git::WorktreeInfo,
+    git::{BranchStatus, WorktreeInfo},
 };
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use crossterm::{
@@ -76,6 +76,7 @@ impl Drop for TuiTerminalGuard {
 pub struct DashboardRow {
     pub session: AgentSessionSummary,
     pub state_symbol: &'static str,
+    pub state_label: &'static str,
     pub runtime_label: &'static str,
     pub location_label: String,
     pub agent_label: String,
@@ -115,6 +116,16 @@ pub struct WorktreeSwitchRow {
 pub struct WorktreeSwitchModel {
     pub rows: Vec<WorktreeSwitchRow>,
     pub empty_state_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CleanupRow {
+    pub branch: String,
+    pub path_label: String,
+    pub reason_label: &'static str,
+    pub remote_label: &'static str,
+    pub dirty_label: &'static str,
+    pub display_line: String,
 }
 
 impl WorktreeSwitchModel {
@@ -199,12 +210,12 @@ impl TuiApp {
                         KeyCode::Esc => {
                             self.should_quit = true;
                         }
-                        KeyCode::Up => {
+                        KeyCode::Up | KeyCode::Char('k') => {
                             if self.selected_index > 0 {
                                 self.selected_index -= 1;
                             }
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down | KeyCode::Char('j') => {
                             if self.selected_index < self.sessions.len().saturating_sub(1) {
                                 self.selected_index += 1;
                             }
@@ -277,11 +288,12 @@ impl TuiApp {
                 .iter()
                 .map(|row| {
                     let text = format!(
-                        "{} {:<6} {:<18} {:<20} {}",
+                        "{} {:<6} {:<10} {:<18} {:<18} {}",
                         row.state_symbol,
                         row.runtime_label,
+                        truncate_label(row.state_label, 10),
                         truncate_label(&row.location_label, 18),
-                        truncate_label(&row.agent_label, 20),
+                        truncate_label(&row.agent_label, 18),
                         row.relative_time
                     );
                     let style = Style::default().fg(session_state_color(row.session.state));
@@ -312,7 +324,7 @@ impl TuiApp {
         }
 
         // Help
-        let help_text = "↑↓: Navigate | r: Refresh | q/Esc: Quit";
+        let help_text = "↑↓/jk: Navigate | r: Refresh | q/Esc: Quit";
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
@@ -412,6 +424,7 @@ pub fn build_dashboard_model(
         .into_iter()
         .map(|session| DashboardRow {
             state_symbol: session_state_symbol(session.state),
+            state_label: session_state_label(session.state),
             runtime_label: runtime_label(session.runtime),
             location_label: session_location_label(&session),
             agent_label: session.agent_label.clone(),
@@ -422,8 +435,8 @@ pub fn build_dashboard_model(
 
     let empty_state_lines = if rows.is_empty() {
         vec![
-            "No live or recent Claude/Codex sessions found for this repo in the last 7 days."
-                .to_string(),
+            "No agent sessions to show for this repository.".to_string(),
+            "Recent Claude/Codex sessions appear here for 7 days.".to_string(),
             "Hint: run `warp hooks-install --runtime all --level user` to enable live monitoring."
                 .to_string(),
         ]
@@ -447,6 +460,7 @@ pub fn session_detail_lines(session: &AgentSessionSummary) -> Vec<String> {
         ),
         format!("Runtime: {}", runtime_label(session.runtime)),
         format!("Branch: {}", session.branch.as_deref().unwrap_or("-")),
+        format!("State: {}", session_state_label(session.state)),
         format!(
             "Presence: {}",
             if session.is_live { "live" } else { "recent" }
@@ -460,10 +474,21 @@ fn session_state_symbol(state: AgentSessionState) -> &'static str {
     match state {
         AgentSessionState::Working => "●",
         AgentSessionState::Processing => "◔",
-        AgentSessionState::Waiting => "⏳",
+        AgentSessionState::Waiting => "!",
         AgentSessionState::Completed => "✓",
         AgentSessionState::Recent => "○",
         AgentSessionState::Unknown => "?",
+    }
+}
+
+fn session_state_label(state: AgentSessionState) -> &'static str {
+    match state {
+        AgentSessionState::Working => "working",
+        AgentSessionState::Processing => "processing",
+        AgentSessionState::Waiting => "waiting",
+        AgentSessionState::Completed => "complete",
+        AgentSessionState::Recent => "recent",
+        AgentSessionState::Unknown => "unknown",
     }
 }
 
@@ -691,10 +716,10 @@ impl WorktreeSwitchTui {
 
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         selected_index = selected_index.saturating_sub(1);
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         selected_index =
                             (selected_index + 1).min(self.model.rows.len().saturating_sub(1));
                     }
@@ -776,11 +801,68 @@ fn draw_worktree_switcher(f: &mut Frame, model: &WorktreeSwitchModel, selected_i
         f.render_widget(details, chunks[2]);
     }
 
-    let help = Paragraph::new("↑↓: Navigate | Enter: Switch | q/Esc: Quit")
+    let help = Paragraph::new("↑↓/jk: Navigate | Enter: Switch | q/Esc: Quit")
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(help, chunks[3]);
+}
+
+pub fn build_cleanup_rows(statuses: &[BranchStatus], selected: &[bool]) -> Vec<CleanupRow> {
+    statuses
+        .iter()
+        .enumerate()
+        .map(|(index, status)| {
+            let checked = if selected.get(index).copied().unwrap_or(false) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let reason_label = cleanup_reason_label(status);
+            let remote_label = if status.has_remote {
+                "remote"
+            } else {
+                "no remote"
+            };
+            let dirty_label = if status.has_uncommitted_changes {
+                "dirty"
+            } else {
+                "clean"
+            };
+            let path_label = status.path.display().to_string();
+            let display_line = format!(
+                "{checked} {:<28} {:<9} {:<9} {:<5} {}",
+                truncate_label(&status.branch, 28),
+                reason_label,
+                remote_label,
+                dirty_label,
+                path_label
+            );
+
+            CleanupRow {
+                branch: status.branch.clone(),
+                path_label,
+                reason_label,
+                remote_label,
+                dirty_label,
+                display_line,
+            }
+        })
+        .collect()
+}
+
+pub fn next_bulk_selection_state(selected: &[bool]) -> bool {
+    !selected.is_empty() && !selected.iter().all(|is_selected| *is_selected)
+}
+
+fn cleanup_reason_label(status: &BranchStatus) -> &'static str {
+    if status.is_merged {
+        "merged"
+    } else if status.is_identical {
+        "identical"
+    } else {
+        "candidate"
+    }
 }
 
 pub struct CleanupTui;
@@ -850,60 +932,42 @@ impl CleanupTui {
                     .split(f.size());
 
                 // Header
-                let header = Paragraph::new("🧹 Interactive Worktree Cleanup")
+                let header = Paragraph::new(format!(
+                    "Worktree cleanup ({} candidates)",
+                    branch_statuses.len()
+                ))
                     .style(Style::default().fg(Color::Yellow))
                     .alignment(Alignment::Center)
                     .block(Block::default().borders(Borders::ALL));
                 f.render_widget(header, chunks[0]);
 
                 // Branch list
-                let items: Vec<ListItem> = branch_statuses
+                let rows = build_cleanup_rows(&branch_statuses, &selected_branches);
+                let items: Vec<ListItem> = rows
                     .iter()
                     .enumerate()
-                    .map(|(i, status)| {
-                        let checkbox = if selected_branches[i] {
-                            "☑️"
-                        } else {
-                            "☐"
-                        };
-                        let merged_indicator = if status.is_merged { "✅" } else { "🔄" };
+                    .map(|(i, row)| {
                         let style = if i == selected_index {
                             Style::default().bg(Color::Blue).fg(Color::White)
                         } else {
                             Style::default()
                         };
 
-                        ListItem::new(format!(
-                            "{} {} {} - {}{}",
-                            checkbox,
-                            merged_indicator,
-                            status.branch,
-                            if status.has_remote {
-                                "with remote"
-                            } else {
-                                "no remote"
-                            },
-                            if status.has_uncommitted_changes {
-                                " (uncommitted)"
-                            } else {
-                                ""
-                            }
-                        ))
-                        .style(style)
+                        ListItem::new(row.display_line.clone()).style(style)
                     })
                     .collect();
 
                 let list = List::new(items).block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Select branches to clean up (Space to select, Enter to confirm)"),
+                        .title("Space toggles a branch; Enter removes selected branches"),
                 );
                 f.render_widget(list, chunks[1]);
 
                 // Footer with controls
                 let selected_count = selected_branches.iter().filter(|&&x| x).count();
                 let footer_text = format!(
-                    "↑↓: Navigate | Space: Select | Enter: Confirm ({} selected) | q: Quit",
+                    "↑↓/jk: Navigate | Space: Toggle | a: Toggle all | Enter: Confirm ({} selected) | q/Esc: Cancel",
                     selected_count
                 );
                 let footer = Paragraph::new(footer_text)
@@ -917,22 +981,26 @@ impl CleanupTui {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
-                        KeyCode::Char('q') => {
+                        KeyCode::Char('q') | KeyCode::Esc => {
                             should_quit = true;
                             break;
                         }
-                        KeyCode::Up => {
+                        KeyCode::Up | KeyCode::Char('k') => {
                             if selected_index > 0 {
                                 selected_index -= 1;
                             }
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down | KeyCode::Char('j') => {
                             if selected_index < branch_statuses.len() - 1 {
                                 selected_index += 1;
                             }
                         }
                         KeyCode::Char(' ') => {
                             selected_branches[selected_index] = !selected_branches[selected_index];
+                        }
+                        KeyCode::Char('a') => {
+                            let select_all = next_bulk_selection_state(&selected_branches);
+                            selected_branches.fill(select_all);
                         }
                         KeyCode::Enter => {
                             confirmed = true;
@@ -1010,7 +1078,7 @@ mod tests {
             build_dashboard_model(&[], Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap());
 
         assert!(model.rows.is_empty());
-        assert_eq!(model.empty_state_lines.len(), 2);
+        assert_eq!(model.empty_state_lines.len(), 3);
     }
 
     #[test]
