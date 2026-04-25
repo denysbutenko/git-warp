@@ -378,6 +378,7 @@ impl Cli {
             worktree_path,
             terminal_mode,
             config.terminal.app.as_str(),
+            &config.terminal,
         );
         report.finish();
 
@@ -531,6 +532,7 @@ impl Cli {
             &worktree_path,
             terminal_mode,
             config.terminal.app.as_str(),
+            &config.terminal,
         );
         report.finish();
 
@@ -607,15 +609,22 @@ impl Cli {
         worktree_path: &Path,
         terminal_mode: crate::terminal::TerminalMode,
         terminal_app: &str,
+        terminal_config: &crate::config::TerminalConfig,
     ) {
-        use crate::terminal::TerminalManager;
+        use crate::terminal::{TerminalLaunchOptions, TerminalManager};
 
         let terminal_manager = TerminalManager;
-        match terminal_manager.switch_to_worktree_with_app(
+        let launch_options = TerminalLaunchOptions {
+            auto_activate: terminal_config.auto_activate,
+            init_commands: terminal_config.init_commands.clone(),
+        };
+
+        match terminal_manager.switch_to_worktree_with_options(
             &worktree_path,
             terminal_mode,
             None,
             Some(terminal_app),
+            &launch_options,
         ) {
             Ok(()) => {
                 report.done(
@@ -1080,6 +1089,7 @@ impl Cli {
             println!("🖥️  Terminal Integration:");
             println!("  App: {}", config.terminal.app);
             println!("  Auto-activate: {}", config.terminal.auto_activate);
+            println!("  Init commands: {:?}", config.terminal.init_commands);
             println!();
 
             println!("🤖 Agent Settings:");

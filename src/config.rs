@@ -285,6 +285,9 @@ app = "{}"
 # Auto-activate new tabs/windows
 auto_activate = {}
 
+# Commands to run after changing into a worktree
+init_commands = []
+
 [agent]
 # Enable agent monitoring
 enabled = {}
