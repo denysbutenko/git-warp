@@ -24,16 +24,23 @@ available.
 
 ## Install
 
-Quick install with a prebuilt binary. Rust/Cargo is not required:
+One command, no Rust/Cargo required:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+```
+
+Then verify the install:
+
+```bash
 warp --version
 warp doctor
 ```
 
-The installer puts `warp` in `~/.local/bin` by default. Override the location
-with `GIT_WARP_INSTALL_DIR`.
+The installer downloads a prebuilt binary for macOS/Linux and installs `warp` to
+`~/.local/bin`. If your shell cannot find `warp`, add that directory to `PATH`.
+
+More install options: [Install Git-Warp](docs/install.md).
 
 Cargo is still available as a fallback:
 
@@ -206,6 +213,7 @@ cargo run -- --dry-run cleanup --mode merged
 
 ## Documentation
 
+- [Install Git-Warp](docs/install.md)
 - [User Guide](docs/user-guide.md)
 - [Technical Overview](docs/technical-overview.md)
 - [Documentation Index](docs/README.md)

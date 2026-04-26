@@ -7,6 +7,8 @@
 - Prebuilt release binary workflow for macOS and Linux targets.
 - Root `install.sh` now installs prebuilt release binaries by default, with
   Cargo available only as an explicit fallback.
+- Dedicated install documentation with one-command setup, PATH guidance, custom
+  install locations, pinned versions, and supported binary targets.
 
 ## v0.2.0 - 2026-04-26
 

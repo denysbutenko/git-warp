@@ -5,7 +5,9 @@ material, and original reference documents for Git-Warp.
 
 ## Start Here
 
-- [User Guide](user-guide.md): installation, daily commands, configuration, and
+- [Install Git-Warp](install.md): one-command install, PATH setup, and
+  version/install-directory options.
+- [User Guide](user-guide.md): daily commands, configuration, and
   troubleshooting.
 - [Technical Overview](technical-overview.md): architecture, modules, and
   implementation notes.
@@ -31,8 +33,8 @@ and the current README/user guide.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+warp --version
 warp doctor
-warp --help
 ```
 
 ### Daily Worktree Flow

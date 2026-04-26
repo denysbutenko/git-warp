@@ -22,6 +22,7 @@ session visibility.
 ### Prerequisites
 
 - Git.
+- `curl` or `wget` and `tar` for the one-command installer.
 - macOS/APFS for Copy-on-Write acceleration. Other platforms and filesystems use
   traditional Git worktree creation.
 - Rust, latest stable toolchain, only when building from source or using the
@@ -29,16 +30,30 @@ session visibility.
 
 ### Quick Install
 
-Install the latest tagged release with a prebuilt binary:
+Install Git-Warp with one command. Rust/Cargo is not required:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+```
+
+Then verify the install:
+
+```bash
 warp --version
 warp doctor
 ```
 
 The installer detects macOS/Linux and Intel/Apple Silicon architectures. It
-installs to `~/.local/bin` by default:
+installs to `~/.local/bin` by default. If your shell cannot find `warp`, add
+that directory to `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+For more install options, see [Install Git-Warp](install.md).
+
+Install into another writable directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_DIR=/usr/local/bin sh
