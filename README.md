@@ -1,235 +1,159 @@
-# Git-Warp v0.3.0
+# Git-Warp
 
-**High-performance, UX-focused Git worktree manager with Claude Code integration**
+Fast, safety-focused Git worktree management with terminal handoff, cleanup
+helpers, and optional Claude/Codex session visibility.
 
-Git-Warp combines instantaneous Copy-on-Write worktree creation with rich user experience, terminal integration, and AI agent monitoring. Built in Rust for maximum performance and reliability.
+Git-Warp is a Rust CLI for creating, switching, listing, and cleaning Git
+worktrees. On macOS/APFS it can use Copy-on-Write cloning for faster worktree
+creation, and it falls back to normal `git worktree` creation when CoW is not
+available.
 
-## 🚀 What Makes Git-Warp Special
+## What It Does Today
 
-- **⚡ Instant worktree creation** using Copy-on-Write (CoW) on supported filesystems
-- **🤖 AI agent integration** with live Claude Code monitoring and hooks
-- **🖥️ Rich terminal integration** with automatic tab/window switching  
-- **🧹 Interactive cleanup** with intelligent branch analysis
-- **⚙️ Comprehensive configuration** system with multiple layers
-- **🔍 Process management** with safety checks and cleanup
-- **📊 Live dashboards** for real-time agent activity monitoring
+- Creates or switches to branch worktrees with `warp switch <branch>` or the
+  short form `warp <branch>`.
+- Opens the selected worktree in a terminal tab/window, starts a shell in the
+  current terminal, or prints the target path/command.
+- Lists worktrees with primary/current/dirty/detached/busy state.
+- Cleans up eligible worktrees with dry-run, interactive selection, process
+  checks, protected branches, and optional process termination.
+- Checks local setup with `warp doctor`.
+- Installs, removes, and reports Claude/Codex hooks for live session tracking.
+- Shows a TUI dashboard for live hook data and recent local agent sessions.
+- Generates shell completion snippets for Bash, Zsh, and Fish.
 
-## 📋 Current Status: ✅ PRODUCTION READY
+## Install
 
-### **✅ v0.1.0 - Foundation (COMPLETE)**
-- ✅ Complete CLI interface with all commands
-- ✅ Copy-on-Write engine for macOS (APFS)
-- ✅ Full Git operations using gix + CLI hybrid
-- ✅ Path rewriting for environment compatibility
-- ✅ Cross-platform terminal abstraction
-
-### **✅ v0.2.0 - Advanced Features (COMPLETE)** 
-- ✅ **Claude Code Hooks**: Complete integration with agent tracking
-- ✅ **Configuration System**: Layered config (file + env + CLI)
-- ✅ **Terminal Integration**: macOS automation with AppleScript
-- ✅ **Process Management**: Detection, termination, safety checks
-
-### **✅ v0.3.0 - Interactive Experience (COMPLETE)**
-- ✅ **Live Agent Dashboard**: Real-time Claude Code activity monitoring
-- ✅ **Interactive Cleanup**: TUI for worktree selection and management
-- ✅ **Enhanced CLI**: Rich output with emojis and progress indicators
-- ✅ **Safety Features**: Dry-run mode, process detection, confirmations
-
-## 🛠️ Installation & Setup
-
-### Prerequisites
-- **Rust**: 2024 edition (latest stable)
-- **Git**: Modern git installation  
-- **macOS**: For optimal CoW support (APFS filesystem)
-- **Claude Code**: For AI agent integration (optional)
-
-### Quick Install
 ```bash
-# Clone and build
 git clone https://github.com/denysbutenko/git-warp
 cd git-warp
 cargo build --release
-
-# Make it available globally (optional)
 cargo install --path .
+warp --help
+```
 
-# Test installation
-./target/release/warp --help
+Run the setup check before using it in another repository:
 
-# Check setup and next steps
+```bash
 warp doctor
 ```
 
-### Claude Code Integration Setup
-```bash
-# Install hooks for agent monitoring
-warp hooks-install --level user     # For all projects  
-warp hooks-install --level project  # For current project only
+## Quick Start
 
-# Verify integration
-warp hooks-status
-
-# Start monitoring dashboard
-warp agents
-```
-
-## 🎯 Complete Feature Guide
-
-### **Core Worktree Management**
+From inside any Git repository:
 
 ```bash
-# Check repo, config, CoW, terminal, and hooks setup
-warp doctor
+# Create or switch to a branch worktree
+warp switch feature/new-ui
 
-# List all worktrees with status
+# Short form for the same flow
+warp feature/new-ui
+
+# List known worktrees and their state
 warp ls
 
-# Create/switch to worktree (with CoW on APFS)
-warp switch feature/new-feature
-warp feature/new-feature  # Short form
+# Preview cleanup before deleting anything
+warp --dry-run cleanup --mode merged
 
-# Reopen the most recent or waiting agent branch
-warp switch --latest
-warp switch --waiting
-
-# Custom worktree location  
-warp switch --path /custom/location feature/branch
-
-# Force traditional Git worktree (skip CoW)
-warp switch --no-cow feature/branch
-```
-
-### **Intelligent Cleanup**
-
-```bash
-# Interactive cleanup with TUI selection
+# Clean up merged worktrees interactively
 warp cleanup --interactive
-
-# Automatic cleanup by mode
-warp cleanup --mode merged      # Clean merged branches
-warp cleanup --mode remoteless  # Clean branches without remotes  
-warp cleanup --mode all         # Clean all eligible branches
-
-# Force cleanup with process termination
-warp cleanup --mode merged --force --kill
-
-# Safe testing with dry-run
-warp cleanup --mode all --dry-run
 ```
 
-### **Claude Code Integration**
+## Terminal Modes
 
 ```bash
-# Install hooks for automatic agent tracking
-warp hooks-install --level user
+warp --terminal tab switch feature/branch      # new tab
+warp --terminal window switch feature/branch   # new window
+warp --terminal current switch feature/branch  # shell in this terminal
+warp --terminal inplace switch feature/branch  # print a cd command
+warp --terminal echo switch feature/branch     # print the target path
+```
 
-# View integration status
+Configure the macOS terminal app with `terminal.app = "auto"`, `"terminal"`,
+`"iterm2"`, or `"warp"`.
+
+## Cleanup
+
+```bash
+warp cleanup --mode merged
+warp cleanup --mode remoteless
+warp cleanup --mode all
+warp cleanup --interactive
+warp --dry-run cleanup --mode all
+warp cleanup --mode merged --kill
+warp cleanup --mode merged --force
+```
+
+Protected branches default to `main`, `master`, and `develop`. Cleanup also
+checks for dirty worktrees and running processes before removing anything.
+
+## Agent Session Dashboard
+
+The agent dashboard is optional. It shows live hook records when hooks are
+installed, plus recent local Claude/Codex session history for the current
+repository and its worktrees.
+
+```bash
+warp hooks-install --level user --runtime all
 warp hooks-status
-
-# Start live agent monitoring dashboard
 warp agents
-
-# Remove hooks if needed
-warp hooks-remove --level user
 ```
 
-### **Configuration Management**
+Use `--level project` if hooks should be written only for the current project.
+
+## Configuration
+
+Show the effective configuration:
 
 ```bash
-# View current configuration
 warp config --show
-
-# Open the config file in your editor
-warp config --edit
-
-# Terminal mode options
-warp --terminal tab switch feature/branch     # New tab (default)
-warp --terminal window switch feature/branch  # New window
-warp --terminal current switch feature/branch # Start a shell in this terminal
-warp --terminal inplace switch feature/branch # Print cd command
-warp --terminal echo switch feature/branch    # Just show path
 ```
 
-### **Advanced Features**
+Create or open the config file in `$VISUAL` or `$EDITOR`:
 
 ```bash
-# Enable auto-confirmation for scripts
-warp --auto-confirm cleanup --mode merged
-
-# Debug mode for troubleshooting
-warp --debug switch feature/debug-branch
-
-# Shell integration setup
-warp shell-config bash >> ~/.bashrc
-warp shell-config zsh >> ~/.zshrc
+warp config --edit
 ```
 
-## 🏗️ Architecture & Performance
+Default path:
 
-### **Copy-on-Write Engine**
-- **macOS APFS**: Instant filesystem-level CoW cloning
-- **Fallback Mode**: Traditional Git worktree for other filesystems
-- **Path Rewriting**: Parallel processing with `rayon` for environment fixes
-- **Process Safety**: Detects running processes before cleanup
+```text
+~/.config/git-warp/config.toml
+```
 
-### **AI Agent Integration**
-- **Real-time Hooks**: Tracks Claude Code activities via filesystem events
-- **Live Dashboard**: TUI showing agent status, activities, and timing
-- **Cross-session Monitoring**: Works across multiple Claude Code sessions
-- **Project-specific Tracking**: Per-repository status files
+Example:
 
-### **Terminal Automation**
-- **macOS AppleScript**: Automatic terminal tab/window management
-- **Cross-platform**: Abstraction layer for different terminal apps
-- **Smart Detection**: Automatically detects available terminal applications
-
-## 📊 Real-World Performance
-
-### **Benchmark Results** (on MacBook Pro M1, APFS)
-- **CoW Worktree Creation**: ~50ms vs ~2-5s traditional
-- **Large Repository (1000+ files)**: ~100ms vs ~10-30s traditional
-- **Agent Dashboard Refresh**: <10ms response time
-- **Configuration Loading**: ~5ms with full validation
-
-### **Memory & CPU Usage**
-- **Idle Memory**: ~2MB RSS
-- **Active Dashboard**: ~8MB RSS  
-- **CPU Usage**: <1% during normal operations
-- **Startup Time**: ~50ms cold start
-
-## 🔧 Configuration Reference
-
-### **Configuration File** (`~/.config/git-warp/config.toml`)
 ```toml
-# Terminal behavior
-terminal_mode = "tab"          # tab, window, current, inplace, echo
-use_cow = true                 # Enable CoW when available
-auto_confirm = false           # Skip confirmation prompts
+terminal_mode = "tab"
+use_cow = true
+auto_confirm = false
+# worktrees_path = "/Users/me/dev/worktrees"
 
 [git]
-default_branch = "main"        # Default branch for operations
-protected_branches = ["main", "master", "develop"]  # Never removed by cleanup
-auto_fetch = true              # Fetch before branch analysis
-auto_prune = true              # Prune during fetch
+default_branch = "main"
+protected_branches = ["main", "master", "develop"]
+auto_fetch = true
+auto_prune = true
 
 [process]
-check_processes = true         # Check for processes before cleanup
-auto_kill = false              # Automatically terminate processes
-kill_timeout = 5               # Timeout in seconds
+check_processes = true
+auto_kill = false
+kill_timeout = 5
 
 [terminal]
-app = "auto"                   # auto, terminal, iterm2, warp
-auto_activate = true           # Activate new macOS terminal tabs/windows
-init_commands = []             # Commands to run after cd into a worktree
+app = "auto"
+auto_activate = true
+init_commands = []
 
 [agent]
-enabled = true                 # Enable Claude Code integration
-refresh_rate = 1000           # Dashboard refresh rate (ms)
-max_activities = 100          # Max activities to track
-claude_hooks = true           # Enable Claude Code hooks
+enabled = true
+refresh_rate = 1000
+max_activities = 100
+claude_hooks = true
 ```
 
-### **Environment Variables**
+Environment overrides use the `GIT_WARP_` prefix:
+
 ```bash
 export GIT_WARP_TERMINAL_MODE=window
 export GIT_WARP_USE_COW=false
@@ -237,96 +161,50 @@ export GIT_WARP_AUTO_CONFIRM=true
 export GIT_WARP_WORKTREES_PATH=/custom/worktrees
 ```
 
-`terminal.init_commands` are emitted after Git-Warp changes into the worktree for
-terminal modes such as `tab`, `window`, `inplace`, and `echo`.
+`terminal.init_commands` run after Git-Warp changes into the worktree for
+terminal handoff modes that print or send shell commands.
 
-## 🎨 Design Philosophy
+## Shell Integration
 
-### **Performance First**
-- Copy-on-Write operations where possible
-- Parallel processing for file operations
-- Minimal overhead in common workflows
-- Sub-second response times
-
-### **User Experience**  
-- Intuitive commands that "just work"
-- Rich visual feedback with emojis and colors
-- Interactive modes for complex operations
-- Comprehensive dry-run support
-
-### **AI Integration**
-- Seamless Claude Code integration
-- Real-time activity monitoring
-- Cross-session persistence
-- Project-specific tracking
-
-### **Safety & Reliability**
-- Process detection before destructive operations
-- Comprehensive confirmation prompts
-- Git safety checks to prevent data loss
-- Extensive error handling and recovery
-
-## 🤝 Contributing & Development
-
-### **Development Commands**
 ```bash
-# Run with debug logging
-RUST_LOG=debug cargo run -- ls --debug
-
-# Run comprehensive tests
-cargo test --all-targets
-
-# Run performance benchmarks  
-cargo bench
-
-# Check code quality
-cargo clippy --all-targets
-cargo fmt
+warp shell-config bash >> ~/.bashrc
+warp shell-config zsh >> ~/.zshrc
+warp shell-config fish >> ~/.config/fish/config.fish
 ```
 
-### **Testing Real Integration**
+## Development
+
 ```bash
-# Test with actual Git repository
-cargo run -- switch test/integration
-cargo run -- agents  # Start dashboard
-cargo run -- cleanup --interactive
-cargo run -- hooks-status
+cargo fmt --check
+cargo test --test mod cli_surface_tests -- --nocapture
+cargo test --test mod terminal_switch_tests -- --nocapture
+cargo test --test mod tui_tests -- --nocapture
+git diff --check
 ```
 
-## 🚀 What's Next: v0.4.0 Roadmap
+Useful manual checks:
 
-### **Platform Expansion**
-- [ ] **Linux Support**: overlayfs-based CoW implementation
-- [ ] **Windows Support**: Basic worktree management
-- [ ] **CI/CD Integration**: GitHub Actions, GitLab CI support
+```bash
+cargo run -- --help
+cargo run -- doctor
+cargo run -- --dry-run switch docs-check
+cargo run -- --dry-run cleanup --mode merged
+```
 
-### **Advanced Features**
-- [ ] **Multi-repository Management**: Handle multiple repos
-- [ ] **Team Collaboration**: Shared worktree management
-- [ ] **Plugin System**: Custom hook and command plugins
-- [ ] **Performance Analytics**: Detailed timing and usage metrics
+## Documentation
 
-## 📝 License
+- [User Guide](docs/user-guide.md)
+- [Technical Overview](docs/technical-overview.md)
+- [Documentation Index](docs/README.md)
+- [Original autowt reference](docs/autowt.txt)
+- [Original coworktree reference](docs/coworktree.txt)
 
-MIT License - see [LICENSE](LICENSE) file for details.
+## Status
 
-## 🙏 Acknowledgments
+Git-Warp is usable for local worktree workflows, but it is still evolving. Prefer
+`warp doctor`, `--dry-run`, and focused command help (`warp <command> --help`)
+when setting it up on a new machine or repository.
 
-This project successfully combines and enhances concepts from:
-- **autowt**: Advanced UX, agent integration, and terminal automation
-- **coworktree**: High-performance CoW implementation and Git operations
+## License
 
-**Built with ❤️ in Rust 🦀**
-
----
-
-## 🎉 Success Story
-
-Git-Warp has successfully evolved from a concept to a **production-ready tool** that combines the best of both worlds:
-
-✅ **Fast as CoW** - Instant worktree creation on supported filesystems  
-✅ **Smart as AI** - Deep Claude Code integration with real-time monitoring  
-✅ **Rich as TUI** - Interactive dashboards and cleanup interfaces  
-✅ **Safe as Git** - Comprehensive safety checks and process management  
-
-**Ready to revolutionize your Git workflow!** 🚀
+MIT.
