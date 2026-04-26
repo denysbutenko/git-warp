@@ -5,7 +5,7 @@ use git_warp::agents::{
 use git_warp::git::{BranchStatus, WorktreeInfo};
 use git_warp::tui::{
     AgentsDashboard, WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows,
-    build_dashboard_model, build_worktree_switch_model,
+    build_dashboard_model, build_dashboard_model_windowed, build_worktree_switch_model,
     build_worktree_switch_model_with_protected_branches, next_bulk_selection_state,
     session_detail_lines,
 };
@@ -189,6 +189,36 @@ fn test_build_dashboard_model_exposes_plain_state_labels() {
     assert_eq!(model.rows.len(), 1);
     assert_eq!(model.rows[0].state_symbol, "!");
     assert_eq!(model.rows[0].state_label, "waiting");
+}
+
+#[test]
+fn test_build_dashboard_model_windowed_only_formats_visible_rows() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = (0..200)
+        .map(|index| {
+            let mut summary = sample_summary(
+                AgentRuntime::Codex,
+                &format!("session-{index:03}"),
+                &format!("/repo/.worktrees/session-{index:03}"),
+                AgentSessionState::Recent,
+                11,
+                false,
+                AgentSessionSource::SessionStore,
+            );
+            summary.branch = Some(format!("session-{index:03}"));
+            summary
+        })
+        .collect::<Vec<_>>();
+
+    let model = build_dashboard_model_windowed(&sessions, now, 120, 12);
+
+    assert_eq!(model.total_rows, 200);
+    assert_eq!(model.start_index, 114);
+    assert_eq!(model.rows.len(), 12);
+    assert_eq!(
+        model.rows[6].session.session_id.as_deref(),
+        Some("session-120")
+    );
 }
 
 #[test]

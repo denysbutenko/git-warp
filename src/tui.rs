@@ -87,6 +87,8 @@ pub struct DashboardRow {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DashboardModel {
     pub rows: Vec<DashboardRow>,
+    pub total_rows: usize,
+    pub start_index: usize,
     pub empty_state_lines: Vec<String>,
 }
 
@@ -284,7 +286,6 @@ impl TuiApp {
     }
 
     fn draw_agents_dashboard(&self, f: &mut Frame, now: DateTime<Local>) {
-        let model = build_dashboard_model(&self.sessions, now);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -296,7 +297,7 @@ impl TuiApp {
             .split(f.size());
 
         // Header
-        let header = Paragraph::new(format!("Warp Agents ({})", model.rows.len()))
+        let header = Paragraph::new(format!("Warp Agents ({})", self.sessions.len()))
             .style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -306,7 +307,8 @@ impl TuiApp {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
-        if model.rows.is_empty() {
+        if self.sessions.is_empty() {
+            let model = build_dashboard_model(&[], now);
             let empty_state = Paragraph::new(model.empty_state_lines.join("\n\n"))
                 .block(Block::default().title("No Sessions").borders(Borders::ALL))
                 .alignment(Alignment::Center)
@@ -318,6 +320,13 @@ impl TuiApp {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .split(chunks[1]);
+            let visible_capacity = content_chunks[0].height.saturating_sub(2).max(1) as usize;
+            let model = build_dashboard_model_windowed(
+                &self.sessions,
+                now,
+                self.selected_index,
+                visible_capacity,
+            );
 
             let session_items: Vec<ListItem> = model
                 .rows
@@ -346,15 +355,14 @@ impl TuiApp {
                 )
                 .highlight_symbol(">> ");
             let mut list_state = ListState::default();
-            list_state.select(Some(self.selected_index));
+            list_state.select(Some(self.selected_index.saturating_sub(model.start_index)));
             f.render_stateful_widget(sessions_list, content_chunks[0], &mut list_state);
 
-            if let Some(selected_row) = model.rows.get(self.selected_index) {
-                let details =
-                    Paragraph::new(session_detail_lines(&selected_row.session).join("\n"))
-                        .block(Block::default().title("Details").borders(Borders::ALL))
-                        .style(Style::default().fg(Color::White))
-                        .wrap(Wrap { trim: false });
+            if let Some(selected_session) = self.sessions.get(self.selected_index) {
+                let details = Paragraph::new(session_detail_lines(selected_session).join("\n"))
+                    .block(Block::default().title("Details").borders(Borders::ALL))
+                    .style(Style::default().fg(Color::White))
+                    .wrap(Wrap { trim: false });
                 f.render_widget(details, content_chunks[1]);
             }
         }
@@ -528,9 +536,26 @@ pub fn build_dashboard_model(
 ) -> DashboardModel {
     let mut ordered_sessions = sessions.to_vec();
     sort_session_summaries(&mut ordered_sessions);
+    build_dashboard_model_windowed(&ordered_sessions, now, 0, ordered_sessions.len().max(1))
+}
 
-    let rows = ordered_sessions
-        .into_iter()
+pub fn build_dashboard_model_windowed(
+    sessions: &[AgentSessionSummary],
+    now: DateTime<Local>,
+    selected_index: usize,
+    visible_capacity: usize,
+) -> DashboardModel {
+    let total_rows = sessions.len();
+    let visible_capacity = visible_capacity.max(1).min(total_rows.max(1));
+    let selected_index = selected_index.min(total_rows.saturating_sub(1));
+    let start_index = dashboard_window_start(total_rows, selected_index, visible_capacity);
+    let end_index = start_index.saturating_add(visible_capacity).min(total_rows);
+
+    let rows = sessions
+        .get(start_index..end_index)
+        .unwrap_or_default()
+        .iter()
+        .cloned()
         .map(|session| DashboardRow {
             state_symbol: session_state_symbol(session.state),
             state_label: session_state_label(session.state),
@@ -555,8 +580,25 @@ pub fn build_dashboard_model(
 
     DashboardModel {
         rows,
+        total_rows,
+        start_index,
         empty_state_lines,
     }
+}
+
+fn dashboard_window_start(
+    total_rows: usize,
+    selected_index: usize,
+    visible_capacity: usize,
+) -> usize {
+    if total_rows <= visible_capacity {
+        return 0;
+    }
+
+    let half_window = visible_capacity / 2;
+    selected_index
+        .saturating_sub(half_window)
+        .min(total_rows.saturating_sub(visible_capacity))
 }
 
 pub fn session_detail_lines(session: &AgentSessionSummary) -> Vec<String> {
