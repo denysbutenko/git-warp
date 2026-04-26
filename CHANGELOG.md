@@ -4,8 +4,9 @@
 
 ### Added
 
-- Quick install path with `cargo install --git --tag` and a root `install.sh`
-  helper for users installing the latest tagged release.
+- Prebuilt release binary workflow for macOS and Linux targets.
+- Root `install.sh` now installs prebuilt release binaries by default, with
+  Cargo available only as an explicit fallback.
 
 ## v0.2.0 - 2026-04-26
 

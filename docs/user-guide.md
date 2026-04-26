@@ -21,25 +21,33 @@ session visibility.
 
 ### Prerequisites
 
-- Rust, latest stable toolchain.
 - Git.
 - macOS/APFS for Copy-on-Write acceleration. Other platforms and filesystems use
   traditional Git worktree creation.
+- Rust, latest stable toolchain, only when building from source or using the
+  Cargo fallback.
 
 ### Quick Install
 
-Install the latest tagged release directly from GitHub:
+Install the latest tagged release with a prebuilt binary:
 
 ```bash
-cargo install --locked --force --git https://github.com/denysbutenko/git-warp --tag v0.2.0 --bin warp git-warp
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
 warp --version
 warp doctor
 ```
 
-Or use the installer script:
+The installer detects macOS/Linux and Intel/Apple Silicon architectures. It
+installs to `~/.local/bin` by default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_DIR=/usr/local/bin sh
+```
+
+Use Cargo explicitly when you want to build during installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_METHOD=cargo sh
 ```
 
 ### Build from Source

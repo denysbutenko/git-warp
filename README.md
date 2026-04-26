@@ -24,18 +24,21 @@ available.
 
 ## Install
 
-Quick install, if Rust/Cargo is already installed:
+Quick install with a prebuilt binary. Rust/Cargo is not required:
 
 ```bash
-cargo install --locked --force --git https://github.com/denysbutenko/git-warp --tag v0.2.0 --bin warp git-warp
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
 warp --version
 warp doctor
 ```
 
-Or use the installer script:
+The installer puts `warp` in `~/.local/bin` by default. Override the location
+with `GIT_WARP_INSTALL_DIR`.
+
+Cargo is still available as a fallback:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_METHOD=cargo sh
 ```
 
 Build from source when contributing or testing local changes:

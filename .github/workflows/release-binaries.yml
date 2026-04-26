@@ -1,0 +1,68 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload assets for"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build warp
+        run: cargo build --release --locked --bin warp --target ${{ matrix.target }}
+
+      - name: Check version
+        run: ./target/${{ matrix.target }}/release/warp --version
+
+      - name: Package archive
+        run: |
+          archive="git-warp-${RELEASE_TAG}-${{ matrix.target }}.tar.gz"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/warp" dist/warp
+          cp README.md dist/README.md
+          chmod 755 dist/warp
+          tar -czf "$archive" -C dist warp README.md
+          shasum -a 256 "$archive" > "$archive.sha256"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            git-warp-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
+            git-warp-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.sha256
