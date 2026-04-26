@@ -4,6 +4,8 @@
 
 ### Added
 
+- `warp release-check` validates release metadata and runs the maintainer
+  release verification flow before tagging.
 - Prebuilt release binary workflow for macOS and Linux targets.
 - Root `install.sh` now installs prebuilt release binaries by default, with
   Cargo available only as an explicit fallback.

@@ -7,6 +7,7 @@ mod git;
 mod hooks;
 mod post_create;
 mod process;
+mod release;
 mod rewrite;
 mod terminal;
 mod tui;
