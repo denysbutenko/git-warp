@@ -4,12 +4,16 @@ use std::process::Command;
 use tempfile::tempdir;
 
 fn setup_test_repo() -> tempfile::TempDir {
+    setup_test_repo_with_initial_branch("main")
+}
+
+fn setup_test_repo_with_initial_branch(initial_branch: &str) -> tempfile::TempDir {
     let temp_dir = tempdir().unwrap();
     let repo_path = temp_dir.path();
 
     // Initialize git repo
     Command::new("git")
-        .args(&["init", "--initial-branch", "main"])
+        .args(&["init", "--initial-branch", initial_branch])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -323,6 +327,42 @@ fn test_analyze_branches_for_cleanup() {
         assert!(!status.has_uncommitted_changes); // Should be clean
         assert!(!status.has_remote); // No remotes configured
     }
+}
+
+#[test]
+fn test_cleanup_analysis_uses_primary_worktree_branch_when_default_is_not_main() {
+    let temp_dir = setup_test_repo_with_initial_branch("trunk");
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+
+    Command::new("git")
+        .args(&["branch", "feature-done"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let feature_path = repo_path.join("worktrees").join("feature-done");
+    git_repo
+        .create_worktree_and_branch("feature-done", &feature_path, Some("feature-done"))
+        .unwrap();
+
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let branch_statuses = git_repo.analyze_branches_for_cleanup(&worktrees).unwrap();
+    let feature_status = branch_statuses
+        .iter()
+        .find(|status| status.branch == "feature-done")
+        .expect("feature worktree should be analyzed");
+
+    assert!(
+        feature_status.is_merged,
+        "feature branch should be merged into the primary trunk branch"
+    );
+    assert!(
+        feature_status.is_identical,
+        "feature branch should be identical to the primary trunk branch"
+    );
 }
 
 #[test]

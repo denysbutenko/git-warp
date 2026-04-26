@@ -1036,21 +1036,31 @@ pub fn next_bulk_selection_state(selected: &[bool]) -> bool {
     !selected.is_empty() && !selected.iter().all(|is_selected| *is_selected)
 }
 
-fn cleanup_reason_label(status: &BranchStatus) -> &'static str {
+pub fn cleanup_reason_label(status: &BranchStatus) -> &'static str {
     if status.is_merged {
         "merged"
     } else if status.is_identical {
         "identical"
+    } else if !status.has_remote {
+        "no remote"
     } else {
         "candidate"
     }
 }
 
-pub struct CleanupTui;
+pub struct CleanupTui {
+    candidates: Option<Vec<BranchStatus>>,
+}
 
 impl CleanupTui {
     pub fn new() -> Self {
-        Self
+        Self { candidates: None }
+    }
+
+    pub fn with_candidates(candidates: Vec<BranchStatus>) -> Self {
+        Self {
+            candidates: Some(candidates),
+        }
     }
 
     pub fn run(&self) -> Result<Vec<String>> {
@@ -1076,12 +1086,12 @@ impl CleanupTui {
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a git repository"))?;
         let config_manager = ConfigManager::new()?;
-        let protected_branches = config_manager.get().git.protected_branches.clone();
+        let config = config_manager.get().git.clone();
         let worktrees = git_repo.list_worktrees()?;
-        let branch_statuses = git_repo.analyze_branches_for_cleanup_with_protected_branches(
-            &worktrees,
-            &protected_branches,
-        )?;
+        let branch_statuses = match &self.candidates {
+            Some(candidates) => candidates.clone(),
+            None => git_repo.analyze_branches_for_cleanup_with_config(&worktrees, &config)?,
+        };
 
         if branch_statuses.is_empty() {
             println!("✨ No worktrees found that can be cleaned up!");

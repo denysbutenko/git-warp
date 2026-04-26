@@ -19,10 +19,14 @@ fn run_git(repo_path: &Path, args: &[&str]) {
 }
 
 fn setup_test_repo() -> tempfile::TempDir {
+    setup_test_repo_with_initial_branch("main")
+}
+
+fn setup_test_repo_with_initial_branch(initial_branch: &str) -> tempfile::TempDir {
     let temp_dir = tempdir().unwrap();
     let repo_path = temp_dir.path();
 
-    run_git(repo_path, &["init", "-b", "main"]);
+    run_git(repo_path, &["init", "-b", initial_branch]);
     run_git(repo_path, &["config", "user.email", "test@example.com"]);
     run_git(repo_path, &["config", "user.name", "Test User"]);
 
@@ -354,6 +358,34 @@ fn test_bare_warp_dry_run_marks_only_nested_worktree_current() {
     assert!(output.status.success(), "{stdout}");
     assert!(!stdout.contains("main [current"));
     assert!(stdout.contains("feature/default-picker [current"));
+}
+
+#[test]
+fn test_cleanup_uses_primary_branch_as_base_and_prints_candidate_reasons() {
+    let temp_dir = setup_test_repo_with_initial_branch("trunk");
+    let repo_path = temp_dir.path();
+    let worktree_path = create_worktree(repo_path, "feature/merged");
+
+    let output = warp_command(repo_path)
+        .args(["--auto-confirm", "cleanup", "--mode", "merged", "--no-kill"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("feature/merged at"),
+        "candidate branch should be printed: {stdout}"
+    );
+    assert!(
+        stdout.contains("[merged; no remote; clean]"),
+        "candidate reasons should be visible: {stdout}"
+    );
+    assert!(
+        stdout.contains("Removed worktree and branch: feature/merged"),
+        "cleanup should remove the merged worktree and branch: {stdout}"
+    );
+    assert!(!worktree_path.exists());
 }
 
 #[test]

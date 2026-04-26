@@ -920,7 +920,7 @@ impl Cli {
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
-        let protected_branches = config_manager.get().git.protected_branches.clone();
+        let git_config = config_manager.get().git.clone();
         let mut process_manager = ProcessManager::new();
 
         if self.dry_run {
@@ -935,10 +935,8 @@ impl Cli {
         }
 
         let worktrees = git_repo.list_worktrees()?;
-        let branch_statuses = git_repo.analyze_branches_for_cleanup_with_protected_branches(
-            &worktrees,
-            &protected_branches,
-        )?;
+        let branch_statuses =
+            git_repo.analyze_branches_for_cleanup_with_config(&worktrees, &git_config)?;
 
         if branch_statuses.is_empty() {
             println!("✨ No worktrees to clean up");
@@ -946,9 +944,10 @@ impl Cli {
         }
 
         let mut candidates = Vec::new();
+        let mut blocked = Vec::new();
 
         // Filter based on mode
-        for status in &branch_statuses {
+        for status in branch_statuses {
             let should_include = match mode {
                 "all" => true,
                 "merged" => status.is_merged,
@@ -960,9 +959,26 @@ impl Cli {
                 }
             };
 
-            if should_include && (!status.has_uncommitted_changes || force) {
-                candidates.push(status);
+            if should_include {
+                if status.has_uncommitted_changes && !force {
+                    blocked.push(status);
+                } else {
+                    candidates.push(status);
+                }
             }
+        }
+
+        if !blocked.is_empty() {
+            println!("🚧 Skipped cleanup branches:");
+            for branch in &blocked {
+                println!(
+                    "  • {} at {} [{}; dirty; use --force to include]",
+                    branch.branch,
+                    branch.path.display(),
+                    crate::tui::cleanup_reason_label(branch)
+                );
+            }
+            println!();
         }
 
         if candidates.is_empty() {
@@ -973,18 +989,23 @@ impl Cli {
         // Show what would be cleaned up
         println!("🧹 Cleanup candidates:");
         for candidate in &candidates {
-            let uncommitted = if candidate.has_uncommitted_changes {
-                " (⚠️  uncommitted)"
+            let remote = if candidate.has_remote {
+                "remote"
             } else {
-                ""
+                "no remote"
             };
-            let merged = if candidate.is_merged { " [merged]" } else { "" };
+            let dirty = if candidate.has_uncommitted_changes {
+                "dirty"
+            } else {
+                "clean"
+            };
             println!(
-                "  • {} at {}{}{}",
+                "  • {} at {} [{}; {}; {}]",
                 candidate.branch,
                 candidate.path.display(),
-                merged,
-                uncommitted
+                crate::tui::cleanup_reason_label(candidate),
+                remote,
+                dirty
             );
         }
 
@@ -992,7 +1013,7 @@ impl Cli {
             use crate::tui::CleanupTui;
 
             println!("\n🤖 Starting interactive cleanup...");
-            let cleanup_tui = CleanupTui::new();
+            let cleanup_tui = CleanupTui::with_candidates(candidates.clone());
             let selected_branches = cleanup_tui.run()?;
 
             if selected_branches.is_empty() {

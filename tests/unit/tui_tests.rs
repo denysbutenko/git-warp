@@ -363,6 +363,27 @@ fn test_build_cleanup_rows_explains_candidate_status_with_text() {
 }
 
 #[test]
+fn test_build_cleanup_rows_explains_remoteless_candidates() {
+    let rows = build_cleanup_rows(
+        &[BranchStatus {
+            branch: "feature/local-only".to_string(),
+            path: PathBuf::from("/repo/.worktrees/local-only"),
+            has_remote: false,
+            is_merged: false,
+            is_identical: false,
+            has_uncommitted_changes: false,
+        }],
+        &[false],
+    );
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].reason_label, "no remote");
+    assert_eq!(rows[0].remote_label, "no remote");
+    assert_eq!(rows[0].dirty_label, "clean");
+    assert!(rows[0].display_line.contains("no remote"));
+}
+
+#[test]
 fn test_next_bulk_selection_state_selects_all_unless_all_are_selected() {
     assert!(next_bulk_selection_state(&[false, false]));
     assert!(next_bulk_selection_state(&[true, false]));
