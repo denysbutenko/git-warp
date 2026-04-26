@@ -30,7 +30,7 @@ and the current README/user guide.
 ### First Setup
 
 ```bash
-cargo install --path .
+cargo install --locked --force --git https://github.com/denysbutenko/git-warp --tag v0.2.0 --bin warp git-warp
 warp doctor
 warp --help
 ```

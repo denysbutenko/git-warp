@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Quick install path with `cargo install --git --tag` and a root `install.sh`
+  helper for users installing the latest tagged release.
+
 ## v0.2.0 - 2026-04-26
 
 First public Git-Warp release.

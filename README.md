@@ -24,18 +24,28 @@ available.
 
 ## Install
 
+Quick install, if Rust/Cargo is already installed:
+
+```bash
+cargo install --locked --force --git https://github.com/denysbutenko/git-warp --tag v0.2.0 --bin warp git-warp
+warp --version
+warp doctor
+```
+
+Or use the installer script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+```
+
+Build from source when contributing or testing local changes:
+
 ```bash
 git clone https://github.com/denysbutenko/git-warp
 cd git-warp
 cargo build --release
 cargo install --path .
 warp --help
-```
-
-Run the setup check before using it in another repository:
-
-```bash
-warp doctor
 ```
 
 ## Quick Start

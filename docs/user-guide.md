@@ -26,7 +26,25 @@ session visibility.
 - macOS/APFS for Copy-on-Write acceleration. Other platforms and filesystems use
   traditional Git worktree creation.
 
+### Quick Install
+
+Install the latest tagged release directly from GitHub:
+
+```bash
+cargo install --locked --force --git https://github.com/denysbutenko/git-warp --tag v0.2.0 --bin warp git-warp
+warp --version
+warp doctor
+```
+
+Or use the installer script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
+```
+
 ### Build from Source
+
+Use this path when contributing or testing local changes:
 
 ```bash
 git clone https://github.com/denysbutenko/git-warp
