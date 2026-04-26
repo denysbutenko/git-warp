@@ -99,6 +99,16 @@ pub enum Commands {
     /// Check Git-Warp setup and print next steps
     Doctor,
 
+    /// Validate release metadata and smoke checks
+    ReleaseCheck {
+        /// Expected release version, for example v0.3.0
+        #[arg(long)]
+        version: Option<String>,
+        /// Only validate version, changelog, release notes, install docs, and install script
+        #[arg(long)]
+        metadata_only: bool,
+    },
+
     /// Install agent hooks
     HooksInstall {
         /// Installation level: user, project, console
@@ -285,6 +295,13 @@ impl Cli {
             Commands::Config { show, edit } => self.handle_config(*show, *edit),
             Commands::Agents => self.handle_agents(),
             Commands::Doctor => self.handle_doctor(),
+            Commands::ReleaseCheck {
+                version,
+                metadata_only,
+            } => crate::release::run_release_check(crate::release::ReleaseCheckOptions {
+                version: version.clone(),
+                metadata_only: *metadata_only,
+            }),
             Commands::HooksInstall { level, runtime } => {
                 self.handle_hooks_install(level.as_deref(), runtime)
             }

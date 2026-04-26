@@ -7,6 +7,8 @@ material, and original reference documents for Git-Warp.
 
 - [Install Git-Warp](install.md): one-command install, PATH setup, and
   version/install-directory options.
+- [Release Check](release-check.md): release metadata validation and pre-tag
+  smoke checks.
 - [User Guide](user-guide.md): daily commands, configuration, and
   troubleshooting.
 - [Technical Overview](technical-overview.md): architecture, modules, and

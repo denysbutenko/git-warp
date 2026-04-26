@@ -202,6 +202,12 @@ cargo test --test mod tui_tests -- --nocapture
 git diff --check
 ```
 
+Before tagging a release, run the release validation flow:
+
+```bash
+warp release-check --version v0.3.0
+```
+
 Useful manual checks:
 
 ```bash
@@ -214,6 +220,7 @@ cargo run -- --dry-run cleanup --mode merged
 ## Documentation
 
 - [Install Git-Warp](docs/install.md)
+- [Release Check](docs/release-check.md)
 - [User Guide](docs/user-guide.md)
 - [Technical Overview](docs/technical-overview.md)
 - [Documentation Index](docs/README.md)

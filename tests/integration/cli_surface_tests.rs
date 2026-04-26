@@ -150,6 +150,66 @@ fn test_root_help_shows_doctor_command() {
 }
 
 #[test]
+fn test_root_help_shows_release_check_command() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("release-check"));
+    assert!(stdout.contains("Validate release metadata and smoke checks"));
+}
+
+#[test]
+fn test_release_check_metadata_only_accepts_current_release_metadata() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args([
+            "release-check",
+            "--metadata-only",
+            "--version",
+            concat!("v", env!("CARGO_PKG_VERSION")),
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("Release metadata checks passed"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["release-check", "--metadata-only", "--version", "v0.3.0"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stdout}");
+    assert!(
+        stderr.contains("Cargo.toml package version is 0.2.0, expected 0.3.0"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("docs/releases/v0.3.0.md is missing"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn test_doctor_outside_repo_prints_recovery_guidance() {
     let temp_dir = tempdir().unwrap();
     let home_dir = tempdir().unwrap();
