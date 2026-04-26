@@ -1,6 +1,6 @@
 [package]
 name = "git-warp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Git-Warp Contributors"]
 description = "High-performance, UX-focused Git worktree manager combining CoW speed with advanced features"

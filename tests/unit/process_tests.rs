@@ -316,12 +316,13 @@ fn test_graceful_vs_force_termination() {
 #[cfg(unix)]
 #[test]
 fn test_signal_handling() {
-    use std::os::unix::process::ExitStatusExt;
-
     // Start a process that handles SIGTERM
     let script_content = r#"#!/bin/bash
-trap 'echo "Received SIGTERM"; exit 0' TERM
-sleep 30
+child_pid=""
+trap 'test -n "$child_pid" && kill "$child_pid" 2>/dev/null; exit 0' TERM
+sleep 30 &
+child_pid=$!
+wait "$child_pid"
 "#;
 
     let temp_dir = tempdir().unwrap();

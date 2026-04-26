@@ -9,6 +9,7 @@ use tempfile::tempdir;
 
 #[test]
 fn test_complete_worktree_creation_workflow() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repository();
     let repo_path = temp_dir.path();
 
@@ -73,6 +74,7 @@ fn test_complete_worktree_creation_workflow() {
 
 #[test]
 fn test_cow_worktree_creation_with_dependencies() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repository_with_dependencies();
     let repo_path = temp_dir.path();
 
@@ -126,6 +128,7 @@ fn test_cow_worktree_creation_with_dependencies() {
 
 #[test]
 fn test_process_detection_and_cleanup_workflow() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repository();
     let repo_path = temp_dir.path();
 
@@ -192,6 +195,7 @@ sleep 30
     // Clean up the process
     child.kill().unwrap();
     child.wait().unwrap();
+    fs::remove_file(&script_path).unwrap();
 
     // Now cleanup should succeed
     let cleanup_result = git_repo.remove_worktree(&worktree_path);
@@ -202,6 +206,7 @@ sleep 30
 
 #[test]
 fn test_configuration_layering_workflow() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = tempdir().unwrap();
 
     // Create config file
@@ -247,6 +252,7 @@ auto_fetch = false
 
 #[test]
 fn test_branch_analysis_and_cleanup_workflow() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repository();
     let repo_path = temp_dir.path();
 
@@ -341,6 +347,7 @@ fn test_branch_analysis_and_cleanup_workflow() {
 
 #[test]
 fn test_error_recovery_workflow() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repository();
     let repo_path = temp_dir.path();
 

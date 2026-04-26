@@ -51,6 +51,7 @@ fn setup_test_repo_with_initial_branch(initial_branch: &str) -> tempfile::TempDi
 
 #[test]
 fn test_git_repository_find() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
 
@@ -69,6 +70,7 @@ fn test_git_repository_find() {
 
 #[test]
 fn test_git_repository_not_found() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = tempdir().unwrap();
     std::env::set_current_dir(temp_dir.path()).unwrap();
 
@@ -78,6 +80,7 @@ fn test_git_repository_not_found() {
 
 #[test]
 fn test_list_worktrees_single() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -98,6 +101,7 @@ fn test_list_worktrees_single() {
 
 #[test]
 fn test_list_worktrees_marks_main_primary_and_linked_current() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path().canonicalize().unwrap();
     let linked_path = repo_path.join("worktrees").join("feature-current");
@@ -129,6 +133,7 @@ fn test_list_worktrees_marks_main_primary_and_linked_current() {
 
 #[test]
 fn test_cleanup_analysis_excludes_protected_branches() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -159,6 +164,7 @@ fn test_cleanup_analysis_excludes_protected_branches() {
 
 #[test]
 fn test_cleanup_analysis_excludes_custom_protected_branches() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -201,6 +207,7 @@ fn test_cleanup_analysis_excludes_custom_protected_branches() {
 
 #[test]
 fn test_create_worktree_and_branch() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     let worktree_path = repo_path.join("worktrees").join("feature-branch");
@@ -229,6 +236,7 @@ fn test_create_worktree_and_branch() {
 
 #[test]
 fn test_remove_worktree() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     let worktree_path = repo_path.join("worktrees").join("temp-branch");
@@ -259,6 +267,7 @@ fn test_remove_worktree() {
 
 #[test]
 fn test_fetch_branches() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -272,6 +281,7 @@ fn test_fetch_branches() {
 
 #[test]
 fn test_analyze_branches_for_cleanup() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -331,6 +341,7 @@ fn test_analyze_branches_for_cleanup() {
 
 #[test]
 fn test_cleanup_analysis_uses_primary_worktree_branch_when_default_is_not_main() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo_with_initial_branch("trunk");
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -367,6 +378,7 @@ fn test_cleanup_analysis_uses_primary_worktree_branch_when_default_is_not_main()
 
 #[test]
 fn test_delete_branch() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -402,6 +414,7 @@ fn test_delete_branch() {
 
 #[test]
 fn test_uncommitted_changes_detection() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -441,6 +454,7 @@ fn test_uncommitted_changes_detection() {
 
 #[test]
 fn test_branch_merge_detection() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -518,6 +532,7 @@ fn test_branch_merge_detection() {
 
 #[test]
 fn test_worktree_path_generation() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();
@@ -537,6 +552,7 @@ fn test_worktree_path_generation() {
 
 #[test]
 fn test_worktree_path_generation_with_relative_base() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
     std::env::set_current_dir(repo_path).unwrap();

@@ -7,6 +7,7 @@ use tempfile::tempdir;
 
 #[test]
 fn test_cow_clone_with_git_worktree_registration() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_git_repository();
     let repo_path = temp_dir.path();
 
@@ -105,6 +106,7 @@ fn test_cow_clone_with_git_worktree_registration() {
 
 #[test]
 fn test_cow_with_path_rewriting() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_git_repository_with_configs();
     let repo_path = temp_dir.path();
     let clone_path = temp_dir.path().parent().unwrap().join("clone");
@@ -159,6 +161,7 @@ fn test_cow_with_path_rewriting() {
 
 #[test]
 fn test_cow_preserves_git_history() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_git_repository_with_history();
     let repo_path = temp_dir.path();
     let clone_path = temp_dir.path().parent().unwrap().join("history_clone");
@@ -232,6 +235,7 @@ fn test_cow_preserves_git_history() {
 
 #[test]
 fn test_cow_with_large_dependencies() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_repository_with_large_deps();
     let repo_path = temp_dir.path();
     let clone_path = temp_dir.path().parent().unwrap().join("deps_clone");
@@ -303,6 +307,7 @@ fn test_cow_with_large_dependencies() {
 
 #[test]
 fn test_cow_filesystem_detection() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     // Test filesystem detection accuracy
     let current_dir = std::env::current_dir().unwrap();
 
@@ -351,6 +356,7 @@ fn test_cow_filesystem_detection() {
 
 #[test]
 fn test_cow_error_recovery() {
+    let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = tempdir().unwrap();
 
     // Test 1: Source doesn't exist

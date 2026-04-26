@@ -1,7 +1,7 @@
 use crate::error::{GitWarpError, Result};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use sysinfo::{Pid, Process, ProcessRefreshKind, System};
+use sysinfo::{ProcessRefreshKind, System};
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
@@ -45,10 +45,13 @@ impl ProcessManager {
         &mut self,
         path: P,
     ) -> Result<Vec<ProcessInfo>> {
-        let target_path = path
-            .as_ref()
-            .canonicalize()
-            .unwrap_or_else(|_| path.as_ref().to_path_buf());
+        let requested_path = path.as_ref();
+        let target_path =
+            requested_path
+                .canonicalize()
+                .map_err(|_| GitWarpError::WorktreeNotFound {
+                    path: requested_path.display().to_string(),
+                })?;
 
         self.refresh();
         let mut processes = Vec::new();

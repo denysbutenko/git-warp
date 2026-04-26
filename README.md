@@ -196,6 +196,8 @@ cargo run -- --dry-run cleanup --mode merged
 - [User Guide](docs/user-guide.md)
 - [Technical Overview](docs/technical-overview.md)
 - [Documentation Index](docs/README.md)
+- [Changelog](CHANGELOG.md)
+- [Release Notes](docs/releases/v0.2.0.md)
 - [Original autowt reference](docs/autowt.txt)
 - [Original coworktree reference](docs/coworktree.txt)
 

@@ -133,9 +133,9 @@ SOURCE_DIR = "{}"
             let build_content = fs::read_to_string(build_dir.join("build.conf")).unwrap();
             assert!(build_content.contains(&dst_dir.to_string_lossy().to_string()));
 
-            // Check non-gitignored file was NOT rewritten
+            // Regular text files are rewritten too; gitignored paths must not be skipped.
             let main_content = fs::read_to_string(dst_dir.join("config.yaml")).unwrap();
-            assert!(main_content.contains(&src_dir.to_string_lossy().to_string()));
+            assert!(main_content.contains(&dst_dir.to_string_lossy().to_string()));
 
             println!("Gitignore-aware path rewriting successful");
         }

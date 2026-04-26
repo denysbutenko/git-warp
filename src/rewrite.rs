@@ -1,5 +1,5 @@
 use crate::error::Result;
-use ignore::{DirEntry, WalkBuilder};
+use ignore::WalkBuilder;
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -88,13 +88,14 @@ impl PathRewriter {
         content.contains('\0') ||
         // Check for very high ratio of non-printable characters
         {
-            let total = content.len();
+            let total = content.chars().count();
             if total == 0 {
                 return false;
             }
 
-            let printable = content.chars()
-                .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+            let printable = content
+                .chars()
+                .filter(|c| !c.is_control() || c.is_whitespace())
                 .count();
 
             let printable_ratio = printable as f64 / total as f64;

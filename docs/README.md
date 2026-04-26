@@ -9,6 +9,9 @@ material, and original reference documents for Git-Warp.
   troubleshooting.
 - [Technical Overview](technical-overview.md): architecture, modules, and
   implementation notes.
+- [Changelog](../CHANGELOG.md): release notes and verification commands.
+- [Release Notes](releases/v0.2.0.md): pasteable notes for the `v0.2.0`
+  GitHub release.
 - [Root README](../README.md): short project overview and verified quick start.
 
 ## Reference Documents
