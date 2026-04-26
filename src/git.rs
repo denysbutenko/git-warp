@@ -271,10 +271,8 @@ impl GitRepository {
         &self,
         worktrees: &[WorktreeInfo],
     ) -> Result<Vec<BranchStatus>> {
-        self.analyze_branches_for_cleanup_with_protected_branches(
-            worktrees,
-            &GitConfig::default().protected_branches,
-        )
+        let config = GitConfig::default();
+        self.analyze_branches_for_cleanup_with_config(worktrees, &config)
     }
 
     /// Analyze branches for cleanup using an explicit protected branch list
@@ -283,13 +281,67 @@ impl GitRepository {
         worktrees: &[WorktreeInfo],
         protected_branches: &[String],
     ) -> Result<Vec<BranchStatus>> {
+        self.analyze_branches_for_cleanup_with_options(
+            worktrees,
+            protected_branches,
+            &GitConfig::default().default_branch,
+        )
+    }
+
+    /// Analyze branches for cleanup using full git configuration
+    pub fn analyze_branches_for_cleanup_with_config(
+        &self,
+        worktrees: &[WorktreeInfo],
+        config: &GitConfig,
+    ) -> Result<Vec<BranchStatus>> {
+        self.analyze_branches_for_cleanup_with_options(
+            worktrees,
+            &config.protected_branches,
+            &config.default_branch,
+        )
+    }
+
+    /// Resolve the branch cleanup compares candidates against
+    pub fn cleanup_base_branch(
+        &self,
+        worktrees: &[WorktreeInfo],
+        configured_default_branch: &str,
+    ) -> Result<String> {
+        if let Some(remote_default) = self.remote_default_branch()? {
+            return Ok(remote_default);
+        }
+
+        if let Some(primary_branch) = worktrees
+            .iter()
+            .find(|worktree| worktree.is_primary && !worktree.branch.trim().is_empty())
+            .map(|worktree| worktree.branch.clone())
+        {
+            return Ok(primary_branch);
+        }
+
+        let configured_default_branch = configured_default_branch.trim();
+        if !configured_default_branch.is_empty() {
+            return Ok(configured_default_branch.to_string());
+        }
+
+        self.get_main_branch()
+    }
+
+    fn analyze_branches_for_cleanup_with_options(
+        &self,
+        worktrees: &[WorktreeInfo],
+        protected_branches: &[String],
+        configured_default_branch: &str,
+    ) -> Result<Vec<BranchStatus>> {
         use std::process::Command;
 
         let mut branch_statuses = Vec::new();
+        let cleanup_base_branch = self.cleanup_base_branch(worktrees, configured_default_branch)?;
 
         for worktree in worktrees {
             if worktree.is_primary
                 || worktree.branch.is_empty()
+                || worktree.branch == cleanup_base_branch
                 || is_protected_branch(&worktree.branch, protected_branches)
             {
                 continue;
@@ -309,34 +361,18 @@ impl GitRepository {
                 output.status.success() && !output.stdout.is_empty()
             };
 
-            // Check if branch is merged to a protected base branch
-            let is_merged = {
-                let mut merged = false;
+            // Check if branch is merged to the repo's actual cleanup base branch
+            let is_merged = Command::new("git")
+                .args(["merge-base", "--is-ancestor", branch, &cleanup_base_branch])
+                .current_dir(&self.repo_path)
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false);
 
-                for main_branch in protected_branches {
-                    if branch == main_branch {
-                        continue;
-                    }
-
-                    let output = Command::new("git")
-                        .args(&["merge-base", "--is-ancestor", branch, main_branch])
-                        .current_dir(&self.repo_path)
-                        .output();
-
-                    if let Ok(output) = output {
-                        if output.status.success() {
-                            merged = true;
-                            break;
-                        }
-                    }
-                }
-                merged
-            };
-
-            // Check if branch is identical to main
+            // Check if branch is identical to the repo's actual cleanup base branch
             let is_identical = {
                 let output = Command::new("git")
-                    .args(&["diff", "--quiet", "main", branch])
+                    .args(["diff", "--quiet", &cleanup_base_branch, branch])
                     .current_dir(&self.repo_path)
                     .output();
 
@@ -364,6 +400,26 @@ impl GitRepository {
         }
 
         Ok(branch_statuses)
+    }
+
+    fn remote_default_branch(&self) -> Result<Option<String>> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to inspect remote default branch: {}", e))?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let branch_ref = String::from_utf8_lossy(&output.stdout);
+        Ok(branch_ref
+            .trim()
+            .strip_prefix("refs/remotes/origin/")
+            .map(str::to_string))
     }
 
     /// Fetch from remote
