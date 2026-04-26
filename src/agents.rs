@@ -3,8 +3,11 @@ use chrono::{DateTime, Duration, Local};
 use ignore::WalkBuilder;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+
+const DEFAULT_HISTORY_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AgentRuntime {
@@ -45,6 +48,14 @@ pub struct AgentSessionSummary {
 #[derive(Debug, Clone)]
 pub struct AgentDiscovery {
     monitored_paths: Vec<PathBuf>,
+    max_history_sessions: usize,
+}
+
+#[derive(Debug, Clone)]
+struct SessionFileCandidate {
+    runtime: AgentRuntime,
+    path: PathBuf,
+    modified: DateTime<Local>,
 }
 
 fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
@@ -125,7 +136,11 @@ fn session_key(session: &AgentSessionSummary) -> AgentSessionKey {
     }
 }
 
-fn jsonl_files_under(root: &Path) -> Vec<PathBuf> {
+fn session_file_candidates_under(
+    root: &Path,
+    runtime: AgentRuntime,
+    cutoff: DateTime<Local>,
+) -> Vec<SessionFileCandidate> {
     WalkBuilder::new(root)
         .hidden(false)
         .ignore(false)
@@ -142,18 +157,37 @@ fn jsonl_files_under(root: &Path) -> Vec<PathBuf> {
             if entry.path().extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
                 return None;
             }
-            Some(entry.path().to_path_buf())
+
+            let modified = fs::metadata(entry.path())
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .map(DateTime::<Local>::from)?;
+            if modified < cutoff {
+                return None;
+            }
+
+            Some(SessionFileCandidate {
+                runtime,
+                path: entry.path().to_path_buf(),
+                modified,
+            })
         })
         .collect()
 }
 
-fn load_session_file_lines(path: &Path) -> Option<String> {
-    fs::read_to_string(path).ok()
-}
-
 impl AgentDiscovery {
     pub fn new(monitored_paths: Vec<PathBuf>) -> Self {
-        Self { monitored_paths }
+        Self::with_max_history_sessions(monitored_paths, DEFAULT_HISTORY_LIMIT)
+    }
+
+    pub fn with_max_history_sessions(
+        monitored_paths: Vec<PathBuf>,
+        max_history_sessions: usize,
+    ) -> Self {
+        Self {
+            monitored_paths,
+            max_history_sessions: max_history_sessions.max(1),
+        }
     }
 
     pub fn keep_session(&self, session: &AgentSessionSummary, now: DateTime<Local>) -> bool {
@@ -190,58 +224,50 @@ impl AgentDiscovery {
         Ok(sessions)
     }
 
-    pub fn load_codex_sessions(&self) -> Result<Vec<AgentSessionSummary>> {
-        let Some(home_dir) = dirs::home_dir() else {
-            return Ok(Vec::new());
-        };
-        let sessions_root = home_dir.join(".codex").join("sessions");
-
-        let mut sessions = Vec::new();
-        for file_path in jsonl_files_under(&sessions_root) {
-            let Some(content) = load_session_file_lines(&file_path) else {
-                continue;
-            };
-            if let Some(summary) = parse_codex_session_file(&content) {
-                sessions.push(summary);
-            }
-        }
-
-        Ok(sessions)
-    }
-
-    pub fn load_claude_sessions(&self) -> Result<Vec<AgentSessionSummary>> {
-        let Some(home_dir) = dirs::home_dir() else {
-            return Ok(Vec::new());
-        };
-        let sessions_root = home_dir.join(".claude").join("projects");
-
-        let mut sessions = Vec::new();
-        for file_path in jsonl_files_under(&sessions_root) {
-            let Some(content) = load_session_file_lines(&file_path) else {
-                continue;
-            };
-            sessions.extend(content.lines().filter_map(parse_claude_session_event_line));
-        }
-
-        Ok(sessions)
-    }
-
     fn load_recent_history_sessions(
         &self,
         now: DateTime<Local>,
     ) -> Result<Vec<AgentSessionSummary>> {
-        let mut sessions = Vec::new();
+        let Some(home_dir) = dirs::home_dir() else {
+            return Ok(Vec::new());
+        };
 
-        sessions.extend(
-            self.load_codex_sessions()?
-                .into_iter()
-                .filter(|session| self.keep_session(session, now)),
-        );
-        sessions.extend(
-            self.load_claude_sessions()?
-                .into_iter()
-                .filter(|session| self.keep_session(session, now)),
-        );
+        let cutoff = now - Duration::days(7);
+        let mut candidates = Vec::new();
+        candidates.extend(session_file_candidates_under(
+            &home_dir.join(".codex").join("sessions"),
+            AgentRuntime::Codex,
+            cutoff,
+        ));
+        candidates.extend(session_file_candidates_under(
+            &home_dir.join(".claude").join("projects"),
+            AgentRuntime::Claude,
+            cutoff,
+        ));
+        candidates.sort_by(|a, b| {
+            b.modified
+                .cmp(&a.modified)
+                .then_with(|| b.path.cmp(&a.path))
+        });
+
+        let mut sessions = Vec::new();
+        for candidate in candidates {
+            let summary = match candidate.runtime {
+                AgentRuntime::Codex => {
+                    parse_codex_session_file_at_path(&candidate.path, candidate.modified)
+                }
+                AgentRuntime::Claude => {
+                    parse_claude_session_file_at_path(&candidate.path, candidate.modified)
+                }
+            };
+
+            if let Some(session) = summary.filter(|session| self.keep_session(session, now)) {
+                sessions.push(session);
+                if sessions.len() >= self.max_history_sessions {
+                    break;
+                }
+            }
+        }
 
         Ok(sessions)
     }
@@ -301,6 +327,9 @@ pub fn parse_live_status_file(
 
 pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> {
     let value: Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(|v| v.as_str()) != Some("session_meta") {
+        return None;
+    }
     let payload = value.get("payload")?;
     let cwd = payload.get("cwd")?.as_str()?;
     let nickname = payload.get("agent_nickname").and_then(|v| v.as_str());
@@ -341,38 +370,83 @@ pub fn parse_codex_session_meta_line(line: &str) -> Option<AgentSessionSummary> 
     })
 }
 
-fn parse_codex_session_file(content: &str) -> Option<AgentSessionSummary> {
+fn parse_codex_session_file_at_path(
+    path: &Path,
+    fallback_last_activity: DateTime<Local>,
+) -> Option<AgentSessionSummary> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
     let mut session = None;
-    let mut newest_event_timestamp = None;
 
-    for line in content.lines() {
-        let value: Value = match serde_json::from_str(line) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-
-        if let Some(timestamp) = value
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .and_then(parse_timestamp)
-        {
-            newest_event_timestamp = Some(match newest_event_timestamp {
-                Some(current) if current >= timestamp => current,
-                _ => timestamp,
-            });
-        }
-
-        if value.get("type").and_then(|v| v.as_str()) == Some("session_meta") {
-            session = parse_codex_session_meta_line(line);
+    for line in reader.lines().map_while(|line| line.ok()) {
+        if let Some(summary) = parse_codex_session_meta_line(&line) {
+            session = Some(summary);
+            break;
         }
     }
 
     let mut session = session?;
-    if let Some(timestamp) = newest_event_timestamp {
-        session.last_activity = timestamp;
+    session.last_activity = last_jsonl_timestamp(path).unwrap_or(fallback_last_activity);
+    Some(session)
+}
+
+fn parse_claude_session_file_at_path(
+    path: &Path,
+    fallback_last_activity: DateTime<Local>,
+) -> Option<AgentSessionSummary> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut session = None;
+
+    for line in reader.lines().map_while(|line| line.ok()) {
+        if let Some(summary) = parse_claude_session_event_line(&line) {
+            session = Some(summary);
+            break;
+        }
     }
 
+    let mut session = session?;
+    session.last_activity = last_jsonl_timestamp(path).unwrap_or(fallback_last_activity);
     Some(session)
+}
+
+fn last_jsonl_timestamp(path: &Path) -> Option<DateTime<Local>> {
+    let line = last_non_empty_line(path)?;
+    let value: Value = serde_json::from_str(&line).ok()?;
+    value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(parse_timestamp)
+}
+
+fn last_non_empty_line(path: &Path) -> Option<String> {
+    const CHUNK_SIZE: u64 = 8 * 1024;
+    const MAX_TAIL_BYTES: usize = 64 * 1024;
+
+    let mut file = File::open(path).ok()?;
+    let mut cursor = file.seek(SeekFrom::End(0)).ok()?;
+    let mut bytes = Vec::new();
+
+    while cursor > 0 && bytes.len() < MAX_TAIL_BYTES {
+        let read_size = CHUNK_SIZE.min(cursor) as usize;
+        cursor -= read_size as u64;
+        file.seek(SeekFrom::Start(cursor)).ok()?;
+
+        let mut chunk = vec![0; read_size];
+        file.read_exact(&mut chunk).ok()?;
+        chunk.extend_from_slice(&bytes);
+        bytes = chunk;
+
+        if bytes.iter().filter(|byte| **byte == b'\n').count() >= 2 {
+            break;
+        }
+    }
+
+    let text = String::from_utf8_lossy(&bytes);
+    text.lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_string)
 }
 
 pub fn merge_session_summaries(items: Vec<AgentSessionSummary>) -> Vec<AgentSessionSummary> {

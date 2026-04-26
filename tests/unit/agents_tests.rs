@@ -481,3 +481,35 @@ fn test_discover_keeps_live_row_even_when_older_than_cutoff() {
     assert_eq!(session.session_id.as_deref(), None);
     assert_eq!(session.agent_label, "Codex");
 }
+
+#[test]
+fn test_discover_caps_recent_history_to_default_max_activities() {
+    let _guard = home_guard();
+    let temp_home = tempfile::tempdir().unwrap();
+    let repo_root = tempfile::tempdir().unwrap();
+    let worktree_root = repo_root.path().join(".worktrees").join("agents");
+    let codex_sessions = temp_home.path().join(".codex").join("sessions");
+
+    fs::create_dir_all(&codex_sessions).unwrap();
+
+    for index in 0..220 {
+        fs::write(
+            codex_sessions.join(format!("session-{index:03}.jsonl")),
+            format!(
+                r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-{index:03}","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"agents-{index:03}"}}}}}}
+{{"timestamp":"2026-04-22T10:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
+                worktree_root.display()
+            ),
+        )
+        .unwrap();
+    }
+
+    let _home_override = HomeOverride::set(&temp_home.path().to_path_buf());
+
+    let discovery =
+        AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = discovery.discover(now).unwrap();
+
+    assert_eq!(sessions.len(), 100);
+}

@@ -752,9 +752,14 @@ impl Cli {
         }
 
         use crate::agents::{AgentDiscovery, AgentSessionState};
+        use crate::config::ConfigManager;
         use chrono::Local;
 
-        let discovery = AgentDiscovery::new(Self::agent_monitored_paths(git_repo)?);
+        let config_manager = ConfigManager::new()?;
+        let discovery = AgentDiscovery::with_max_history_sessions(
+            Self::agent_monitored_paths(git_repo)?,
+            config_manager.get().agent.max_activities,
+        );
         let sessions = discovery.discover(Local::now())?;
 
         let branch = if waiting {
@@ -1381,6 +1386,7 @@ impl Cli {
 
     fn handle_agents(&self) -> Result<()> {
         use crate::agents::AgentDiscovery;
+        use crate::config::ConfigManager;
         use crate::git::GitRepository;
         use crate::tui::AgentsDashboard;
 
@@ -1391,8 +1397,11 @@ impl Cli {
         }
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
-        let dashboard =
-            AgentsDashboard::new(AgentDiscovery::new(Self::agent_monitored_paths(&git_repo)?));
+        let config_manager = ConfigManager::new()?;
+        let dashboard = AgentsDashboard::new(AgentDiscovery::with_max_history_sessions(
+            Self::agent_monitored_paths(&git_repo)?,
+            config_manager.get().agent.max_activities,
+        ));
         dashboard.run()
     }
 
