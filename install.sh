@@ -19,8 +19,39 @@ fail() {
   exit 1
 }
 
+supported_targets() {
+  cat >&2 <<'EOF'
+Supported prebuilt targets:
+  - macOS Apple Silicon: aarch64-apple-darwin
+  - macOS Intel: x86_64-apple-darwin
+  - Linux arm64: aarch64-unknown-linux-gnu
+  - Linux x64: x86_64-unknown-linux-gnu
+EOF
+}
+
+cargo_fallback_hint() {
+  cat >&2 <<EOF
+If you have Rust and Cargo installed, retry with:
+  curl -fsSL ${repo_url}/raw/main/install.sh | GIT_WARP_INSTALL_METHOD=cargo sh
+EOF
+}
+
+fail_unsupported_target() {
+  echo "error: unsupported $1: $2" >&2
+  supported_targets
+  cargo_fallback_hint
+  exit 1
+}
+
+fail_download() {
+  echo "error: failed to download $1" >&2
+  echo "The release asset may not exist yet for this platform or version." >&2
+  cargo_fallback_hint
+  exit 1
+}
+
 need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || fail "$1 is required"
+  command -v "$1" >/dev/null 2>&1 || fail "$1 is required for Git-Warp installation"
 }
 
 download() {
@@ -28,11 +59,13 @@ download() {
   output="$2"
 
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$output"
+    curl -fsSL "$url" -o "$output" || fail_download "$url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q "$url" -O "$output"
+    wget -q "$url" -O "$output" || fail_download "$url"
   else
-    fail "curl or wget is required to download Git-Warp"
+    echo "error: curl or wget is required to download Git-Warp release assets" >&2
+    cargo_fallback_hint
+    exit 1
   fi
 }
 
@@ -43,13 +76,13 @@ target_triple() {
   case "$os" in
     Darwin) os_part="apple-darwin" ;;
     Linux) os_part="unknown-linux-gnu" ;;
-    *) fail "unsupported operating system: $os" ;;
+    *) fail_unsupported_target "operating system" "$os" ;;
   esac
 
   case "$arch" in
     arm64 | aarch64) arch_part="aarch64" ;;
     x86_64 | amd64) arch_part="x86_64" ;;
-    *) fail "unsupported CPU architecture: $arch" ;;
+    *) fail_unsupported_target "CPU architecture" "$arch" ;;
   esac
 
   printf '%s-%s\n' "$arch_part" "$os_part"
@@ -70,10 +103,13 @@ install_from_binary() {
   echo "Downloading Git-Warp ${version} for ${target}"
   download "$url" "$archive"
 
-  tar -xzf "$archive" -C "$tmp_dir"
+  tar -xzf "$archive" -C "$tmp_dir" || fail "failed to extract ${archive}; the download may be incomplete or corrupt"
 
   if [ ! -f "${tmp_dir}/warp" ]; then
-    fail "release archive did not contain a warp binary"
+    echo "error: release archive did not contain a warp binary" >&2
+    echo "Check that ${asset} is the expected Git-Warp release asset." >&2
+    cargo_fallback_hint
+    exit 1
   fi
 
   mkdir -p "$install_dir"
@@ -94,13 +130,17 @@ install_from_cargo() {
 
   set -- "$@" git-warp
 
-  "$@"
+  "$@" || {
+    echo "error: Cargo install failed for Git-Warp ${version}." >&2
+    echo "Check the Cargo output above, then retry after fixing the reported build or network issue." >&2
+    exit 1
+  }
 }
 
 case "$method" in
   binary) install_from_binary ;;
   cargo) install_from_cargo ;;
-  *) fail "unsupported install method: $method" ;;
+  *) fail "unsupported install method: ${method}; use 'binary' or 'cargo'" ;;
 esac
 
 echo
@@ -115,7 +155,11 @@ fi
 
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
-  *) echo "Add ${install_dir} to PATH if your shell cannot find 'warp'." ;;
+  *)
+    echo "Add ${install_dir} to PATH so your shell can find 'warp':"
+    echo "  export PATH=\"${install_dir}:\$PATH\""
+    echo "Open a new terminal or run 'warp doctor' after updating PATH."
+    ;;
 esac
 
 echo "Run 'warp doctor' to check your setup."
