@@ -449,6 +449,17 @@ impl Cli {
         Ok(())
     }
 
+    fn existing_worktree_path_for_branch(
+        git_repo: &crate::git::GitRepository,
+        branch: &str,
+    ) -> Result<Option<PathBuf>> {
+        Ok(git_repo
+            .list_worktrees()?
+            .into_iter()
+            .find(|worktree| worktree.branch == branch)
+            .map(|worktree| worktree.path))
+    }
+
     fn handle_existing_worktree_jump(&self, worktree_path: &Path) -> Result<()> {
         use crate::config::ConfigManager;
         use crate::terminal::TerminalMode;
@@ -502,6 +513,10 @@ impl Cli {
         // Determine worktree path
         let worktree_path = if let Some(path) = path {
             PathBuf::from(path)
+        } else if let Some(existing_path) =
+            Self::existing_worktree_path_for_branch(&git_repo, &branch)?
+        {
+            existing_path
         } else {
             git_repo.get_worktree_path_with_base(&branch, config.worktrees_path.as_deref())
         };
@@ -512,7 +527,9 @@ impl Cli {
                 branch,
                 worktree_path.display()
             );
-            if !no_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false) {
+            if worktree_path.exists() {
+                println!("Would reuse existing worktree");
+            } else if !no_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false) {
                 println!("Would use Copy-on-Write for fast worktree creation");
             } else {
                 println!("Would use traditional Git worktree creation");
