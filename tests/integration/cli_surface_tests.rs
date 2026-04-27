@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::tempdir;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn run_git(repo_path: &Path, args: &[&str]) {
     let output = Command::new("git")
         .args(args)
@@ -121,6 +124,244 @@ fn expected_config_path(home: &Path) -> PathBuf {
     } else {
         home.join(".config").join("git-warp").join("config.toml")
     }
+}
+
+#[cfg(unix)]
+fn write_executable(path: &Path, content: &str) {
+    fs::write(path, content).unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn install_script_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("install.sh")
+}
+
+#[cfg(unix)]
+fn installer_command(path_dir: &Path, home_dir: &Path) -> Command {
+    let mut command = Command::new("/bin/sh");
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    command
+        .arg(install_script_path())
+        .env("HOME", home_dir)
+        .env("PATH", format!("{}:{original_path}", path_dir.display()))
+        .env("GIT_WARP_VERSION", "v9.9.9");
+    command
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_explains_unsupported_platform() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Plan9
+else
+  echo sparc
+fi
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("unsupported operating system: Plan9"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Supported prebuilt targets:"), "{stderr}");
+    assert!(stderr.contains("GIT_WARP_INSTALL_METHOD=cargo"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_explains_unsupported_architecture() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Darwin
+else
+  echo powerpc
+fi
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("unsupported CPU architecture: powerpc"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Supported prebuilt targets:"), "{stderr}");
+    assert!(stderr.contains("GIT_WARP_INSTALL_METHOD=cargo"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_explains_failed_binary_download() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Darwin
+else
+  echo arm64
+fi
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("curl"),
+        r#"#!/bin/sh
+echo "not found" >&2
+exit 22
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .env("GIT_WARP_DOWNLOAD_BASE", "https://example.invalid/releases")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "failed to download https://example.invalid/releases/git-warp-v9.9.9-aarch64-apple-darwin.tar.gz"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("The release asset may not exist yet for this platform or version."),
+        "{stderr}"
+    );
+    assert!(stderr.contains("GIT_WARP_INSTALL_METHOD=cargo"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_explains_cargo_fallback_failure() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("cargo"),
+        r#"#!/bin/sh
+echo "cargo exploded" >&2
+exit 101
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .env("GIT_WARP_INSTALL_METHOD", "cargo")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("cargo exploded"), "{stderr}");
+    assert!(
+        stderr.contains("Cargo install failed for Git-Warp v9.9.9."),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_prints_actionable_path_guidance() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Linux
+else
+  echo x86_64
+fi
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("curl"),
+        r#"#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+printf fake > "$output"
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("tar"),
+        r#"#!/bin/sh
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-C" ]; then
+    shift
+    dest="$1"
+  fi
+  shift
+done
+cat > "$dest/warp" <<'SCRIPT'
+#!/bin/sh
+echo warp 9.9.9
+SCRIPT
+chmod 755 "$dest/warp"
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("warp 9.9.9"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "Add {} to PATH so your shell can find 'warp':",
+            install_dir.path().display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "export PATH=\"{}:$PATH\"",
+            install_dir.path().display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Open a new terminal or run 'warp doctor' after updating PATH."),
+        "{stdout}"
+    );
 }
 
 #[test]
