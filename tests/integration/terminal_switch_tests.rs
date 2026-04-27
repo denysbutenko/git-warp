@@ -268,6 +268,57 @@ fn test_warp_switch_branch_already_in_use_prints_recovery_guidance() {
 }
 
 #[test]
+fn test_dynamic_branch_reuses_existing_worktree_for_branch() {
+    let repo_dir = setup_git_repo();
+    let repo_path = repo_dir.path();
+    let home_dir = tempdir().unwrap();
+    let worktree_path = repo_path
+        .join("external-worktrees")
+        .join("feature-existing");
+
+    write_config_with_terminal_options(home_dir.path(), "auto", "echo", true, &[]);
+
+    let create_output = Command::new("git")
+        .args(["worktree", "add", "-b", "feature/existing"])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(
+        create_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&create_output.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["--terminal", "echo", "feature/existing"])
+        .current_dir(repo_path)
+        .env("HOME", home_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let expected_path = worktree_path.canonicalize().unwrap();
+
+    assert!(output.status.success(), "stdout={stdout}\nstderr={stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "📁 Worktree already exists at: {}",
+            expected_path.display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("↪️  Worktree creation: already existed"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("✅ Branch checkout: feature/existing"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn test_warp_switch_reports_existing_worktree_branch_mismatch_as_incomplete() {
     let repo_dir = setup_git_repo();
     let repo_path = repo_dir.path();
