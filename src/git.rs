@@ -520,11 +520,23 @@ impl GitRepository {
 
         let base_path = match worktrees_path {
             Some(path) if path.is_absolute() => path.to_path_buf(),
-            Some(path) => self.repo_path.join(path),
-            None => self.repo_path.join("../worktrees"),
+            Some(path) => self.primary_worktree_root().join(path),
+            None => self.primary_worktree_root().join("../worktrees"),
         };
 
         base_path.join(sanitized_branch)
+    }
+
+    fn primary_worktree_root(&self) -> PathBuf {
+        self.list_worktrees()
+            .ok()
+            .and_then(|worktrees| {
+                worktrees
+                    .into_iter()
+                    .find(|worktree| worktree.is_primary)
+                    .map(|worktree| worktree.path)
+            })
+            .unwrap_or_else(|| self.repo_path.clone())
     }
 
     /// Get the main branch name (main or master)
