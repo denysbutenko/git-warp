@@ -565,3 +565,29 @@ fn test_worktree_path_generation_with_relative_base() {
 
     assert!(worktree_path.ends_with(".worktrees/feature-with-custom-base"));
 }
+
+#[test]
+fn test_relative_worktrees_path_generation_uses_primary_root_from_linked_worktree() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path().canonicalize().unwrap();
+    let linked_path = repo_path.join(".worktrees").join("feature-current");
+
+    std::env::set_current_dir(&repo_path).unwrap();
+    let main_repo = GitRepository::find().unwrap();
+    main_repo
+        .create_worktree_and_branch("feature-current", &linked_path, None)
+        .unwrap();
+
+    std::env::set_current_dir(&linked_path).unwrap();
+    let linked_repo = GitRepository::find().unwrap();
+    let worktree_path = linked_repo.get_worktree_path_with_base(
+        "feature/from-linked",
+        Some(std::path::Path::new(".worktrees")),
+    );
+
+    assert_eq!(
+        worktree_path,
+        repo_path.join(".worktrees").join("feature-from-linked")
+    );
+}
