@@ -348,6 +348,9 @@ impl Cli {
         match switcher.run()? {
             Some(WorktreeSwitchAction::Switch(target)) => self.handle_switcher_target(target),
             Some(WorktreeSwitchAction::Remove(target)) => self.handle_switcher_remove(target),
+            Some(WorktreeSwitchAction::RemoveMany(batch)) => {
+                self.handle_switcher_batch_remove(batch)
+            }
             None => {
                 println!("No worktree selected");
                 Ok(())
@@ -445,6 +448,87 @@ impl Cli {
         if let Err(err) = git_repo.prune_worktrees() {
             log::warn!("Failed to prune worktrees: {}", err);
         }
+
+        Ok(())
+    }
+
+    fn handle_switcher_batch_remove(&self, batch: crate::tui::WorktreeBatchRemoval) -> Result<()> {
+        use crate::git::GitRepository;
+
+        let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
+
+        println!(
+            "Batch removing {} selected worktree{}",
+            batch.targets.len(),
+            if batch.targets.len() == 1 { "" } else { "s" }
+        );
+
+        if !batch.skipped.is_empty() {
+            println!(
+                "Skipped {} worktree{}:",
+                batch.skipped.len(),
+                if batch.skipped.len() == 1 { "" } else { "s" }
+            );
+            for skipped in &batch.skipped {
+                println!(
+                    "  - {} {} ({})",
+                    skipped.branch_label,
+                    skipped.path.display(),
+                    skipped.reason
+                );
+            }
+        }
+
+        if batch.targets.is_empty() {
+            println!(
+                "Batch removal complete: 0 removed, {} skipped, 0 failed",
+                batch.skipped.len()
+            );
+            return Ok(());
+        }
+
+        let mut removed = 0;
+        let mut failed = 0;
+
+        for target in batch.targets {
+            println!(
+                "Removing worktree for branch '{}': {}",
+                target.branch,
+                target.path.display()
+            );
+
+            match git_repo.remove_worktree(&target.path) {
+                Ok(()) => {
+                    removed += 1;
+                    match git_repo.delete_branch(&target.branch, false) {
+                        Ok(()) => {
+                            println!("Removed worktree and branch: {}", target.branch);
+                        }
+                        Err(err) => {
+                            println!(
+                                "Removed worktree but kept branch '{}': {}",
+                                target.branch, err
+                            );
+                        }
+                    }
+                }
+                Err(err) => {
+                    failed += 1;
+                    println!("Failed to remove worktree '{}': {}", target.branch, err);
+                }
+            }
+        }
+
+        if let Err(err) = git_repo.prune_worktrees() {
+            log::warn!("Failed to prune worktrees: {}", err);
+        }
+
+        println!(
+            "Batch removal complete: {} removed, {} skipped, {} failed",
+            removed,
+            batch.skipped.len(),
+            failed
+        );
 
         Ok(())
     }

@@ -6,8 +6,8 @@ use git_warp::git::{BranchStatus, WorktreeInfo};
 use git_warp::tui::{
     AgentsDashboard, WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows,
     build_dashboard_model, build_dashboard_model_windowed, build_worktree_switch_model,
-    build_worktree_switch_model_with_protected_branches, next_bulk_selection_state,
-    session_detail_lines,
+    build_worktree_switch_model_with_protected_branches, build_worktree_switch_rows,
+    next_bulk_selection_state, session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -582,4 +582,108 @@ fn test_worktree_switch_model_blocks_removal_for_protected_branches() {
         vec![WorktreeRemovalBlock::Protected]
     );
     assert!(model.removal_at(0).is_none());
+}
+
+#[test]
+fn test_worktree_switch_model_builds_batch_removal_plan_with_skips() {
+    let safe_path = PathBuf::from("/repo/.worktrees/safe");
+    let dirty_path = PathBuf::from("/repo/.worktrees/dirty");
+    let primary_path = PathBuf::from("/repo");
+    let worktrees = vec![
+        WorktreeInfo {
+            path: safe_path.clone(),
+            branch: "safe".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: dirty_path.clone(),
+            branch: "dirty".to_string(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: primary_path.clone(),
+            branch: "main".to_string(),
+            head: "fedcba9876543210".to_string(),
+            is_primary: true,
+            is_current: true,
+            is_detached: false,
+        },
+    ];
+    let statuses = vec![
+        WorktreeRuntimeStatus {
+            path: safe_path.clone(),
+            is_current: false,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: None,
+        },
+        WorktreeRuntimeStatus {
+            path: dirty_path.clone(),
+            is_current: false,
+            is_dirty: true,
+            is_occupied: false,
+            last_touched: None,
+        },
+        WorktreeRuntimeStatus {
+            path: primary_path.clone(),
+            is_current: true,
+            is_dirty: false,
+            is_occupied: false,
+            last_touched: None,
+        },
+    ];
+
+    let model = build_worktree_switch_model(&worktrees, &statuses);
+    let batch = model
+        .batch_removal_at(&[0, 1, 2, 2, 99])
+        .expect("selected rows should build a batch plan");
+
+    assert_eq!(batch.targets.len(), 1);
+    assert_eq!(batch.targets[0].branch, "safe");
+    assert_eq!(batch.targets[0].path, safe_path);
+    assert_eq!(batch.skipped.len(), 2);
+    assert_eq!(batch.skipped[0].branch_label, "dirty");
+    assert_eq!(batch.skipped[0].path, dirty_path);
+    assert_eq!(batch.skipped[0].reason, "dirty");
+    assert_eq!(batch.skipped[1].branch_label, "main");
+    assert_eq!(batch.skipped[1].path, primary_path);
+    assert_eq!(batch.skipped[1].reason, "primary, protected, current");
+    assert!(model.batch_removal_at(&[]).is_none());
+}
+
+#[test]
+fn test_build_worktree_switch_rows_marks_selected_entries() {
+    let worktrees = vec![
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/one"),
+            branch: "one".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/two"),
+            branch: "two".to_string(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+    ];
+
+    let model = build_worktree_switch_model(&worktrees, &[]);
+    let rows = build_worktree_switch_rows(&model, &[1]);
+
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].display_line.starts_with("[ ]"));
+    assert!(rows[1].display_line.starts_with("[x]"));
+    assert!(rows[1].display_line.contains("two"));
+    assert!(rows[1].display_line.contains("/repo/.worktrees/two"));
 }
