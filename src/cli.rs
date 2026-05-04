@@ -152,6 +152,12 @@ pub enum Commands {
     },
 }
 
+struct DoctorInstallEntry {
+    path: PathBuf,
+    active: bool,
+    version: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SwitchStepStatus {
     Done,
@@ -1443,6 +1449,8 @@ impl Cli {
             );
         }
 
+        Self::report_doctor_install(&mut next_steps);
+
         if repo.is_some() && config_manager.config_exists() && hooks_installed {
             next_steps.push("Run `warp switch <branch>` to create or open a worktree.".to_string());
         }
@@ -1480,6 +1488,148 @@ impl Cli {
             }
         }
         candidate
+    }
+
+    fn report_doctor_install(next_steps: &mut Vec<String>) {
+        let installs = Self::doctor_install_candidates();
+        if installs.is_empty() {
+            Self::doctor_warn(
+                "Install",
+                "no warp binary found in PATH or known install dirs",
+            );
+            next_steps.push(
+                "Reinstall with `curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh`."
+                    .to_string(),
+            );
+            return;
+        }
+
+        let active_index = installs.iter().position(|entry| entry.active);
+        let detail = installs
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let marker = if Some(i) == active_index {
+                    " (active)"
+                } else {
+                    ""
+                };
+                let version = entry
+                    .version
+                    .as_deref()
+                    .map(|v| format!(" [{v}]"))
+                    .unwrap_or_default();
+                format!("{}{}{}", entry.path.display(), marker, version)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let unique_paths: std::collections::BTreeSet<_> =
+            installs.iter().map(|entry| entry.path.clone()).collect();
+
+        if unique_paths.len() > 1 {
+            Self::doctor_warn(
+                "Install",
+                format!("multiple warp binaries detected: {detail}"),
+            );
+            next_steps.push(
+                "Resolve install conflicts: keep one warp binary on PATH, or run the matching uninstaller (`uninstall.sh` or `cargo uninstall git-warp`)."
+                    .to_string(),
+            );
+        } else {
+            Self::doctor_ok("Install", detail);
+        }
+    }
+
+    fn doctor_install_candidates() -> Vec<DoctorInstallEntry> {
+        let mut paths = Vec::new();
+
+        if let Some(active) = Self::resolve_warp_on_path() {
+            paths.push((active, true));
+        }
+
+        for dir in Self::doctor_install_probe_dirs() {
+            let candidate = dir.join("warp");
+            if candidate.is_file() {
+                paths.push((candidate, false));
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut entries = Vec::new();
+        for (path, active) in paths {
+            let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if !seen.insert(canonical.clone()) {
+                if active {
+                    if let Some(existing) = entries
+                        .iter_mut()
+                        .find(|e: &&mut DoctorInstallEntry| e.path == path)
+                    {
+                        existing.active = true;
+                    }
+                }
+                continue;
+            }
+            entries.push(DoctorInstallEntry {
+                version: Self::probe_warp_version(&path),
+                path,
+                active,
+            });
+        }
+        entries
+    }
+
+    fn doctor_install_probe_dirs() -> Vec<PathBuf> {
+        if let Some(override_value) = std::env::var_os("GIT_WARP_DOCTOR_PROBE_DIRS") {
+            return std::env::split_paths(&override_value).collect();
+        }
+        let mut dirs = Vec::new();
+        if let Some(home) = dirs::home_dir() {
+            dirs.push(home.join(".local").join("bin"));
+            dirs.push(home.join(".cargo").join("bin"));
+        }
+        dirs.push(PathBuf::from("/usr/local/bin"));
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs
+    }
+
+    fn resolve_warp_on_path() -> Option<PathBuf> {
+        let path = std::env::var_os("PATH")?;
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join("warp");
+            if candidate.is_file() && Self::is_executable(&candidate) {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    #[cfg(unix)]
+    fn is_executable(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    fn is_executable(path: &Path) -> bool {
+        path.is_file()
+    }
+
+    fn probe_warp_version(path: &Path) -> Option<String> {
+        let output = Command::new(path)
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        let line = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?
+            .to_string();
+        Some(line)
     }
 
     fn doctor_hooks_installed() -> bool {

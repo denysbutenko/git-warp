@@ -40,7 +40,7 @@ warp doctor
 The installer downloads a prebuilt binary for macOS/Linux and installs `warp` to
 `~/.local/bin`. If your shell cannot find `warp`, add that directory to `PATH`.
 
-More install options: [Install Git-Warp](docs/install.md).
+More install options, including upgrade and uninstall flows: [Install Git-Warp](docs/install.md).
 
 Cargo is still available as a fallback:
 

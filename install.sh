@@ -54,6 +54,55 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "$1 is required for Git-Warp installation"
 }
 
+candidate_install_dirs() {
+  printf '%s\n' \
+    "${install_dir}" \
+    "${HOME}/.local/bin" \
+    "${HOME}/.cargo/bin" \
+    "/usr/local/bin" \
+    "/opt/homebrew/bin"
+}
+
+list_existing_warp_binaries() {
+  printed=""
+  candidate_install_dirs | awk 'NF && !seen[$0]++' | while IFS= read -r dir; do
+    binary="${dir}/warp"
+    [ -x "$binary" ] || continue
+    case ":$printed:" in
+      *":$binary:"*) continue ;;
+    esac
+    printed="${printed}:${binary}"
+    version_line="$("$binary" --version 2>/dev/null | head -n1)"
+    if [ -n "$version_line" ]; then
+      printf '  - %s (%s)\n' "$binary" "$version_line"
+    else
+      printf '  - %s\n' "$binary"
+    fi
+  done
+}
+
+report_existing_installs() {
+  existing="$(list_existing_warp_binaries)"
+  if [ -n "$existing" ]; then
+    echo "Existing Git-Warp installs detected:"
+    printf '%s\n' "$existing"
+    echo "The installer will replace ${install_dir}/warp; other locations are left as-is."
+    echo "Run 'curl -fsSL ${repo_url}/raw/main/uninstall.sh | sh' to remove the default install,"
+    echo "or 'cargo uninstall git-warp' to remove a Cargo install."
+    echo
+  fi
+}
+
+report_active_warp_shadowing() {
+  active="$(command -v warp 2>/dev/null || true)"
+  installed="${install_dir}/warp"
+  [ -n "$active" ] || return 0
+  [ "$active" = "$installed" ] && return 0
+  echo
+  echo "Note: 'warp' on PATH resolves to ${active}, not the binary just installed at ${installed}."
+  echo "Reorder PATH to put ${install_dir} first, or remove the older binary at ${active}."
+}
+
 download() {
   url="$1"
   output="$2"
@@ -137,6 +186,8 @@ install_from_cargo() {
   }
 }
 
+report_existing_installs
+
 case "$method" in
   binary) install_from_binary ;;
   cargo) install_from_cargo ;;
@@ -161,5 +212,7 @@ case ":${PATH}:" in
     echo "Open a new terminal or run 'warp doctor' after updating PATH."
     ;;
 esac
+
+report_active_warp_shadowing
 
 echo "Run 'warp doctor' to check your setup."
