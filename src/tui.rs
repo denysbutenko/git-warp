@@ -465,6 +465,15 @@ pub fn build_worktree_switch_model_with_protected_branches(
     statuses: &[WorktreeRuntimeStatus],
     protected_branches: &[String],
 ) -> WorktreeSwitchModel {
+    build_worktree_switch_model_with_metadata(worktrees, statuses, protected_branches, &[])
+}
+
+pub fn build_worktree_switch_model_with_metadata(
+    worktrees: &[WorktreeInfo],
+    statuses: &[WorktreeRuntimeStatus],
+    protected_branches: &[String],
+    local_only_branches: &[String],
+) -> WorktreeSwitchModel {
     let mut rows = worktrees
         .iter()
         .enumerate()
@@ -472,6 +481,11 @@ pub fn build_worktree_switch_model_with_protected_branches(
             let status = statuses.iter().find(|status| status.path == worktree.path);
             let is_detached = worktree.branch.trim().is_empty() || worktree.is_detached;
             let is_protected = is_protected_branch(&worktree.branch, protected_branches);
+            let is_local_only = !is_detached
+                && !worktree.branch.is_empty()
+                && local_only_branches
+                    .iter()
+                    .any(|name| name == &worktree.branch);
             let removal_blockers = worktree_removal_blockers(worktree, status, protected_branches);
             let mut badges = Vec::new();
 
@@ -483,6 +497,9 @@ pub fn build_worktree_switch_model_with_protected_branches(
             }
             if is_detached {
                 badges.push("detached".to_string());
+            }
+            if is_local_only {
+                badges.push("local-only".to_string());
             }
             if status.is_some_and(|status| status.is_current) {
                 badges.push("current".to_string());
@@ -521,7 +538,8 @@ pub fn build_worktree_switch_model_with_protected_branches(
     let empty_state_lines = if rows.is_empty() {
         vec![
             "No Git worktrees found for this repository.".to_string(),
-            "Run `warp switch <branch>` to create one.".to_string(),
+            "Run `warp switch <branch>` to create one (local or remote branches both work)."
+                .to_string(),
         ]
     } else {
         Vec::new()

@@ -58,6 +58,19 @@ pub struct CleanupAnalysis {
     pub base_branch: String,
 }
 
+/// Where the branch for `warp switch <branch>` comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchSource {
+    /// Branch is already checked out in another worktree, which will be reused.
+    ExistingWorktree { path: PathBuf },
+    /// Local branch exists, no worktree yet.
+    LocalBranch,
+    /// Branch only exists on the remote; a local tracking branch will be created.
+    RemoteBranch { remote_ref: String },
+    /// Neither local nor remote branch exists; a brand new branch will be created from HEAD.
+    NewBranch,
+}
+
 pub struct GitRepository {
     repo: Repository,
     repo_path: PathBuf,
@@ -205,6 +218,163 @@ impl GitRepository {
         Ok(worktrees)
     }
 
+    /// Classify how a branch should be materialized for `warp switch`.
+    pub fn classify_branch_source(
+        &self,
+        branch_name: &str,
+        worktrees: &[WorktreeInfo],
+    ) -> Result<BranchSource> {
+        if let Some(existing) = worktrees.iter().find(|wt| wt.branch == branch_name) {
+            return Ok(BranchSource::ExistingWorktree {
+                path: existing.path.clone(),
+            });
+        }
+        if self.branch_exists(branch_name)? {
+            return Ok(BranchSource::LocalBranch);
+        }
+        if let Some(remote_ref) = self.find_remote_branch_ref(branch_name)? {
+            return Ok(BranchSource::RemoteBranch { remote_ref });
+        }
+        Ok(BranchSource::NewBranch)
+    }
+
+    /// Locate the first remote that carries `branch_name`, returning the short ref
+    /// (e.g. `origin/feature`). `origin` is preferred when present.
+    pub fn find_remote_branch_ref(&self, branch_name: &str) -> Result<Option<String>> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["for-each-ref", "--format=%(refname:short)", "refs/remotes"])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to list remote branches: {}", e))?;
+
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to list remote branches: {}", error).into());
+        }
+
+        let mut origin_match: Option<String> = None;
+        let mut other_match: Option<String> = None;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.ends_with("/HEAD") {
+                continue;
+            }
+            let Some((remote, branch)) = trimmed.split_once('/') else {
+                continue;
+            };
+            if branch != branch_name {
+                continue;
+            }
+            if remote == "origin" {
+                origin_match = Some(trimmed.to_string());
+                break;
+            }
+            if other_match.is_none() {
+                other_match = Some(trimmed.to_string());
+            }
+        }
+
+        Ok(origin_match.or(other_match))
+    }
+
+    /// Return true if a remote tracks a branch with this name on any remote.
+    pub fn remote_branch_exists(&self, branch_name: &str) -> Result<bool> {
+        Ok(self.find_remote_branch_ref(branch_name)?.is_some())
+    }
+
+    /// Return true if at least one remote is configured for this repository.
+    pub fn has_remotes(&self) -> Result<bool> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["remote"])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to list remotes: {}", e))?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| !line.trim().is_empty()))
+    }
+
+    /// Create a new worktree and branch using a precomputed `BranchSource` classification.
+    pub fn create_worktree_for_source<P: AsRef<Path>>(
+        &self,
+        branch_name: &str,
+        worktree_path: P,
+        source: &BranchSource,
+    ) -> Result<()> {
+        use std::process::Command;
+
+        let worktree_path = worktree_path.as_ref();
+
+        match source {
+            BranchSource::ExistingWorktree { .. } => Err(anyhow::anyhow!(
+                "Cannot create worktree for branch '{branch_name}': it is already checked out in another worktree"
+            )
+            .into()),
+            BranchSource::LocalBranch => {
+                let output = Command::new("git")
+                    .args(["worktree", "add"])
+                    .arg(worktree_path)
+                    .arg(branch_name)
+                    .current_dir(&self.repo_path)
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("Failed to create worktree: {}", e))?;
+
+                if !output.status.success() {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow::anyhow!("Failed to create worktree: {}", error).into());
+                }
+                Ok(())
+            }
+            BranchSource::RemoteBranch { remote_ref } => {
+                let output = Command::new("git")
+                    .args(["worktree", "add", "-b", branch_name])
+                    .arg(worktree_path)
+                    .arg(remote_ref)
+                    .current_dir(&self.repo_path)
+                    .output()
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to create worktree from remote branch: {}", e)
+                    })?;
+
+                if !output.status.success() {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow::anyhow!(
+                        "Failed to create worktree from remote branch '{remote_ref}': {}",
+                        error
+                    )
+                    .into());
+                }
+                Ok(())
+            }
+            BranchSource::NewBranch => {
+                let output = Command::new("git")
+                    .args(["worktree", "add", "-b", branch_name])
+                    .arg(worktree_path)
+                    .arg("HEAD")
+                    .current_dir(&self.repo_path)
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("Failed to create worktree and branch: {}", e))?;
+
+                if !output.status.success() {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    return Err(
+                        anyhow::anyhow!("Failed to create worktree and branch: {}", error).into(),
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Create a new worktree and branch
     pub fn create_worktree_and_branch<P: AsRef<Path>>(
         &self,
@@ -232,6 +402,26 @@ impl GitRepository {
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 return Err(anyhow::anyhow!("Failed to create worktree: {}", error).into());
+            }
+        } else if let Some(remote_ref) = self.find_remote_branch_ref(branch_name)? {
+            // Track remote branch as new local branch
+            let mut cmd = Command::new("git");
+            cmd.args(["worktree", "add", "-b", branch_name])
+                .arg(worktree_path)
+                .arg(&remote_ref)
+                .current_dir(&self.repo_path);
+
+            let output = cmd.output().map_err(|e| {
+                anyhow::anyhow!("Failed to create worktree from remote branch: {}", e)
+            })?;
+
+            if !output.status.success() {
+                let error = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow::anyhow!(
+                    "Failed to create worktree from remote branch '{remote_ref}': {}",
+                    error
+                )
+                .into());
             }
         } else {
             // Create new branch and worktree

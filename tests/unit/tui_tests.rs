@@ -6,8 +6,9 @@ use git_warp::git::{BranchStatus, WorktreeInfo};
 use git_warp::tui::{
     AgentsDashboard, WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows,
     build_dashboard_model, build_dashboard_model_windowed, build_worktree_switch_model,
-    build_worktree_switch_model_with_protected_branches, build_worktree_switch_rows,
-    cleanup_reason_label_for_mode, next_bulk_selection_state, session_detail_lines,
+    build_worktree_switch_model_with_metadata, build_worktree_switch_model_with_protected_branches,
+    build_worktree_switch_rows, cleanup_reason_label_for_mode, next_bulk_selection_state,
+    session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -274,6 +275,52 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
     );
     assert_eq!(model.rows[1].branch_label, "(detached HEAD: abcdef01)");
     assert_eq!(model.rows[1].badges, vec!["detached", "occupied"]);
+}
+
+#[test]
+fn test_build_worktree_switch_model_marks_local_only_branches() {
+    let worktrees = vec![
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/tracked"),
+            branch: "tracked".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/local-only"),
+            branch: "local-only".to_string(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+    ];
+    let statuses = vec![];
+    let local_only_branches = vec!["local-only".to_string()];
+
+    let model =
+        build_worktree_switch_model_with_metadata(&worktrees, &statuses, &[], &local_only_branches);
+
+    let tracked_row = model
+        .rows
+        .iter()
+        .find(|row| row.branch_label == "tracked")
+        .expect("tracked row");
+    assert!(!tracked_row.badges.iter().any(|badge| badge == "local-only"));
+
+    let local_only_row = model
+        .rows
+        .iter()
+        .find(|row| row.branch_label == "local-only")
+        .expect("local-only row");
+    assert!(
+        local_only_row
+            .badges
+            .iter()
+            .any(|badge| badge == "local-only")
+    );
 }
 
 #[test]

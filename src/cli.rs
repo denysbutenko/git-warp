@@ -260,18 +260,57 @@ impl Cli {
         )
     }
 
-    fn create_worktree_with_recovery(
+    fn create_worktree_for_source_with_recovery(
         git_repo: &crate::git::GitRepository,
         branch: &str,
         worktree_path: &Path,
+        source: &crate::git::BranchSource,
     ) -> Result<()> {
         git_repo
-            .create_worktree_and_branch(branch, worktree_path, None)
+            .create_worktree_for_source(branch, worktree_path, source)
             .map_err(|error| {
                 anyhow::anyhow!(
                     "{error}. Use a different branch name or run `warp ls` to inspect existing worktrees."
                 )
             })
+    }
+
+    fn source_announcement(branch: &str, source: &crate::git::BranchSource) -> String {
+        match source {
+            crate::git::BranchSource::ExistingWorktree { path } => format!(
+                "🔁 Reusing existing worktree for branch '{}' at {}",
+                branch,
+                path.display()
+            ),
+            crate::git::BranchSource::LocalBranch => {
+                format!("🌱 Creating worktree for local branch '{}'", branch)
+            }
+            crate::git::BranchSource::RemoteBranch { remote_ref } => format!(
+                "🌐 Creating worktree from remote branch '{}' (new local '{}' tracking it)",
+                remote_ref, branch
+            ),
+            crate::git::BranchSource::NewBranch => {
+                format!("✨ Creating new branch '{}' from HEAD", branch)
+            }
+        }
+    }
+
+    fn dry_run_source_label(branch: &str, source: &crate::git::BranchSource) -> String {
+        match source {
+            crate::git::BranchSource::ExistingWorktree { path } => {
+                format!("Source: existing worktree at {}", path.display())
+            }
+            crate::git::BranchSource::LocalBranch => {
+                format!("Source: local branch '{}'", branch)
+            }
+            crate::git::BranchSource::RemoteBranch { remote_ref } => format!(
+                "Source: remote branch '{}' (would create local '{}' tracking it)",
+                remote_ref, branch
+            ),
+            crate::git::BranchSource::NewBranch => {
+                format!("Source: new branch '{}' from HEAD", branch)
+            }
+        }
     }
 
     pub fn run(&self) -> Result<()> {
@@ -346,8 +385,7 @@ impl Cli {
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
         use crate::tui::{
-            WorktreeSwitchAction, WorktreeSwitchTui,
-            build_worktree_switch_model_with_protected_branches,
+            WorktreeSwitchAction, WorktreeSwitchTui, build_worktree_switch_model_with_metadata,
         };
 
         info!("Starting default worktree switcher");
@@ -358,10 +396,12 @@ impl Cli {
         let worktrees = git_repo.list_worktrees()?;
         let statuses =
             Self::collect_worktree_runtime_statuses(&git_repo, &worktrees, ProcessManager::new());
-        let model = build_worktree_switch_model_with_protected_branches(
+        let local_only_branches = Self::collect_local_only_branches(&git_repo, &worktrees);
+        let model = build_worktree_switch_model_with_metadata(
             &worktrees,
             &statuses,
             &protected_branches,
+            &local_only_branches,
         );
 
         if self.dry_run {
@@ -381,6 +421,23 @@ impl Cli {
                 Ok(())
             }
         }
+    }
+
+    fn collect_local_only_branches(
+        git_repo: &crate::git::GitRepository,
+        worktrees: &[crate::git::WorktreeInfo],
+    ) -> Vec<String> {
+        if !git_repo.has_remotes().unwrap_or(false) {
+            return Vec::new();
+        }
+        worktrees
+            .iter()
+            .filter(|wt| !wt.branch.trim().is_empty() && !wt.is_detached)
+            .filter_map(|wt| match git_repo.remote_branch_exists(&wt.branch) {
+                Ok(false) => Some(wt.branch.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     fn collect_worktree_runtime_statuses(
@@ -560,17 +617,6 @@ impl Cli {
         Ok(())
     }
 
-    fn existing_worktree_path_for_branch(
-        git_repo: &crate::git::GitRepository,
-        branch: &str,
-    ) -> Result<Option<PathBuf>> {
-        Ok(git_repo
-            .list_worktrees()?
-            .into_iter()
-            .find(|worktree| worktree.branch == branch)
-            .map(|worktree| worktree.path))
-    }
-
     fn handle_existing_worktree_jump(&self, worktree_path: &Path) -> Result<()> {
         use crate::config::ConfigManager;
         use crate::terminal::TerminalMode;
@@ -621,13 +667,18 @@ impl Cli {
         let config_manager = ConfigManager::new()?;
         let config = config_manager.get();
 
+        let worktrees_for_classification = git_repo.list_worktrees()?;
+        let branch_source =
+            git_repo.classify_branch_source(&branch, &worktrees_for_classification)?;
+
         // Determine worktree path
         let worktree_path = if let Some(path) = path {
             PathBuf::from(path)
-        } else if let Some(existing_path) =
-            Self::existing_worktree_path_for_branch(&git_repo, &branch)?
+        } else if let crate::git::BranchSource::ExistingWorktree {
+            path: existing_path,
+        } = &branch_source
         {
-            existing_path
+            existing_path.clone()
         } else {
             git_repo.get_worktree_path_with_base(&branch, config.worktrees_path.as_deref())
         };
@@ -638,6 +689,7 @@ impl Cli {
                 branch,
                 worktree_path.display()
             );
+            println!("{}", Self::dry_run_source_label(&branch, &branch_source));
             if worktree_path.exists() {
                 println!("Would reuse existing worktree");
             } else if !no_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false) {
@@ -657,7 +709,7 @@ impl Cli {
             println!("📁 Worktree already exists at: {}", worktree_path.display());
             report.skipped("Worktree creation", "already existed");
         } else {
-            println!("🚀 Creating worktree for branch '{}'", branch);
+            println!("{}", Self::source_announcement(&branch, &branch_source));
 
             // Choose creation method based on CoW support and user preference
             let use_cow =
@@ -667,7 +719,12 @@ impl Cli {
                 println!("⚡ Using Copy-on-Write for instant creation...");
 
                 // Create worktree using traditional method first
-                Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
+                Self::create_worktree_for_source_with_recovery(
+                    &git_repo,
+                    &branch,
+                    &worktree_path,
+                    &branch_source,
+                )?;
 
                 // If we have existing worktrees, try CoW enhancement
                 let worktrees = git_repo.list_worktrees()?;
@@ -681,7 +738,12 @@ impl Cli {
                     if let Err(e) = cow::clone_directory(&main_worktree.path, &worktree_path) {
                         log::warn!("CoW failed, falling back to traditional method: {}", e);
                         // Recreate using traditional method
-                        Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
+                        Self::create_worktree_for_source_with_recovery(
+                            &git_repo,
+                            &branch,
+                            &worktree_path,
+                            &branch_source,
+                        )?;
                     } else {
                         // Rewrite paths in the CoW copy
                         let rewriter = PathRewriter::new(&main_worktree.path, &worktree_path);
@@ -705,7 +767,12 @@ impl Cli {
                 }
             } else {
                 println!("📦 Using traditional Git worktree creation...");
-                Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
+                Self::create_worktree_for_source_with_recovery(
+                    &git_repo,
+                    &branch,
+                    &worktree_path,
+                    &branch_source,
+                )?;
             }
 
             if worktree_path.exists() {
