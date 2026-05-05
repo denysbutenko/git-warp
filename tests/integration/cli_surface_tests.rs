@@ -800,3 +800,355 @@ fn test_shell_config_fish_outputs_branch_completion_for_root_and_switch() {
     assert!(stdout.contains("__fish_seen_subcommand_from switch"));
     assert!(stdout.contains("warp __complete branches (commandline -ct)"));
 }
+
+#[cfg(unix)]
+fn uninstall_script_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("uninstall.sh")
+}
+
+#[cfg(unix)]
+fn write_fake_warp_binary(path: &Path, version_label: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write_executable(path, &format!("#!/bin/sh\necho \"{version_label}\"\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_lists_existing_installs_before_replacing() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+
+    write_fake_warp_binary(&install_dir.path().join("warp"), "warp 0.1.0");
+    write_fake_warp_binary(
+        &home_dir.path().join(".cargo").join("bin").join("warp"),
+        "warp 0.1.0-cargo",
+    );
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Linux
+else
+  echo x86_64
+fi
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("curl"),
+        r#"#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+printf fake > "$output"
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("tar"),
+        r#"#!/bin/sh
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-C" ]; then
+    shift
+    dest="$1"
+  fi
+  shift
+done
+cat > "$dest/warp" <<'SCRIPT'
+#!/bin/sh
+echo "warp 9.9.9"
+SCRIPT
+chmod 755 "$dest/warp"
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("Existing Git-Warp installs detected:"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{}/warp", install_dir.path().display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{}/.cargo/bin/warp", home_dir.path().display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("uninstall.sh"), "{stdout}");
+    assert!(stdout.contains("cargo uninstall git-warp"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_warns_when_active_warp_shadows_new_install() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+    let shadow_dir = tempdir().unwrap();
+
+    write_fake_warp_binary(&shadow_dir.path().join("warp"), "warp 0.0.1-old");
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Linux
+else
+  echo x86_64
+fi
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("curl"),
+        r#"#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+printf fake > "$output"
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("tar"),
+        r#"#!/bin/sh
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-C" ]; then
+    shift
+    dest="$1"
+  fi
+  shift
+done
+cat > "$dest/warp" <<'SCRIPT'
+#!/bin/sh
+echo "warp 9.9.9"
+SCRIPT
+chmod 755 "$dest/warp"
+"#,
+    );
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let output = Command::new("/bin/sh")
+        .arg(install_script_path())
+        .env("HOME", home_dir.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}:{original_path}",
+                shadow_dir.path().display(),
+                fake_bin.path().display()
+            ),
+        )
+        .env("GIT_WARP_VERSION", "v9.9.9")
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "Note: 'warp' on PATH resolves to {}/warp",
+            shadow_dir.path().display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{}/warp", install_dir.path().display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Reorder PATH"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_uninstaller_removes_default_install_and_lists_others() {
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+    let cargo_bin = home_dir.path().join(".cargo").join("bin");
+
+    write_fake_warp_binary(&install_dir.path().join("warp"), "warp 9.9.9");
+    write_fake_warp_binary(&cargo_bin.join("warp"), "warp 9.9.9-cargo");
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let output = Command::new("/bin/sh")
+        .arg(uninstall_script_path())
+        .env("HOME", home_dir.path())
+        .env("PATH", format!("{}:{original_path}", cargo_bin.display()))
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!("Removed {}/warp", install_dir.path().display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Other Git-Warp installs detected"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{}/warp", cargo_bin.display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("cargo uninstall git-warp"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "'warp' is still on PATH at {}/warp",
+            cargo_bin.display()
+        )),
+        "{stdout}"
+    );
+    assert!(!install_dir.path().join("warp").exists());
+    assert!(cargo_bin.join("warp").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_uninstaller_dry_run_keeps_default_install() {
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+    let target = install_dir.path().join("warp");
+
+    write_fake_warp_binary(&target, "warp 9.9.9");
+
+    let output = Command::new("/bin/sh")
+        .arg(uninstall_script_path())
+        .arg("--dry-run")
+        .env("HOME", home_dir.path())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!("Would remove {}", target.display())),
+        "{stdout}"
+    );
+    assert!(target.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_uninstaller_reports_when_no_default_install_exists() {
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+
+    let output = Command::new("/bin/sh")
+        .arg(uninstall_script_path())
+        .env("HOME", home_dir.path())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "No Git-Warp binary found at {}/warp",
+            install_dir.path().display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_install_check_warns_on_multiple_warp_binaries() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let probe_a = tempdir().unwrap();
+    let probe_b = tempdir().unwrap();
+
+    write_fake_warp_binary(&probe_a.path().join("warp"), "warp 0.1.0");
+    write_fake_warp_binary(&probe_b.path().join("warp"), "warp 0.2.0");
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", probe_a.path())
+        .env(
+            "GIT_WARP_DOCTOR_PROBE_DIRS",
+            format!("{}:{}", probe_a.path().display(), probe_b.path().display()),
+        )
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Install:"), "{stdout}");
+    assert!(
+        stdout.contains("multiple warp binaries detected"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{}/warp (active)", probe_a.path().display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{}/warp", probe_b.path().display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Resolve install conflicts"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_install_check_passes_with_single_active_binary() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let probe = tempdir().unwrap();
+
+    write_fake_warp_binary(&probe.path().join("warp"), "warp 0.3.0");
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", probe.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", probe.path())
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Install:"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("{}/warp (active)", probe.path().display())),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("multiple warp binaries detected"),
+        "{stdout}"
+    );
+}
