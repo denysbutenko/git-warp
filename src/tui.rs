@@ -1284,6 +1284,18 @@ pub fn cleanup_reason_label(status: &BranchStatus) -> &'static str {
     }
 }
 
+/// Same as [`cleanup_reason_label`] but disambiguates the generic `candidate`
+/// fallback when a branch is included only because the caller passed
+/// `--mode all` or `--mode interactive`.
+pub fn cleanup_reason_label_for_mode(status: &BranchStatus, mode: &str) -> &'static str {
+    let base = cleanup_reason_label(status);
+    if base == "candidate" && matches!(mode, "all" | "interactive") {
+        "all-mode"
+    } else {
+        base
+    }
+}
+
 pub struct CleanupTui {
     candidates: Option<Vec<BranchStatus>>,
 }
