@@ -88,7 +88,7 @@ fn test_cow_clone_with_git_worktree_registration() {
             }
 
             // Cleanup
-            git_repo.remove_worktree(&worktree_path).ok();
+            git_repo.remove_worktree(&worktree_path, false).ok();
         }
         Err(e) => {
             println!("CoW clone failed (expected on non-APFS): {}", e);
@@ -99,7 +99,7 @@ fn test_cow_clone_with_git_worktree_registration() {
 
             println!("Fallback to regular worktree successful");
 
-            git_repo.remove_worktree(&worktree_path).unwrap();
+            git_repo.remove_worktree(&worktree_path, false).unwrap();
         }
     }
 }

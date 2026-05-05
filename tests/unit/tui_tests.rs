@@ -577,7 +577,14 @@ fn test_worktree_switch_model_blocks_removal_for_risky_rows() {
     );
     assert!(model.removal_at(0).is_none());
     assert!(model.removal_at(1).is_none());
-    assert!(model.removal_at(2).is_none());
+    let dirty_target = model
+        .removal_at(2)
+        .expect("dirty worktree should be force-removable");
+    assert_eq!(dirty_target.branch, "dirty");
+    assert!(
+        dirty_target.force,
+        "dirty worktree must request force removal"
+    );
     assert!(model.removal_at(3).is_none());
 }
 
@@ -674,16 +681,20 @@ fn test_worktree_switch_model_builds_batch_removal_plan_with_skips() {
         .batch_removal_at(&[0, 1, 2, 2, 99])
         .expect("selected rows should build a batch plan");
 
-    assert_eq!(batch.targets.len(), 1);
+    assert_eq!(batch.targets.len(), 2);
     assert_eq!(batch.targets[0].branch, "safe");
     assert_eq!(batch.targets[0].path, safe_path);
-    assert_eq!(batch.skipped.len(), 2);
-    assert_eq!(batch.skipped[0].branch_label, "dirty");
-    assert_eq!(batch.skipped[0].path, dirty_path);
-    assert_eq!(batch.skipped[0].reason, "dirty");
-    assert_eq!(batch.skipped[1].branch_label, "main");
-    assert_eq!(batch.skipped[1].path, primary_path);
-    assert_eq!(batch.skipped[1].reason, "primary, protected, current");
+    assert!(!batch.targets[0].force);
+    assert_eq!(batch.targets[1].branch, "dirty");
+    assert_eq!(batch.targets[1].path, dirty_path);
+    assert!(
+        batch.targets[1].force,
+        "dirty worktree must be queued with force"
+    );
+    assert_eq!(batch.skipped.len(), 1);
+    assert_eq!(batch.skipped[0].branch_label, "main");
+    assert_eq!(batch.skipped[0].path, primary_path);
+    assert_eq!(batch.skipped[0].reason, "primary, protected, current");
     assert!(model.batch_removal_at(&[]).is_none());
 }
 

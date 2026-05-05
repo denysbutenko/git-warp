@@ -262,17 +262,21 @@ impl GitRepository {
         Ok(())
     }
 
-    /// Remove a worktree
-    pub fn remove_worktree<P: AsRef<Path>>(&self, worktree_path: P) -> Result<()> {
+    /// Remove a worktree. Pass `force = true` to override git's refusal when
+    /// the worktree has uncommitted changes or is locked.
+    pub fn remove_worktree<P: AsRef<Path>>(&self, worktree_path: P, force: bool) -> Result<()> {
         use std::process::Command;
 
         let worktree_path = worktree_path.as_ref();
 
-        // Remove the worktree using git
-        let output = Command::new("git")
-            .args(&["worktree", "remove"])
-            .arg(worktree_path)
-            .current_dir(&self.repo_path)
+        let mut cmd = Command::new("git");
+        cmd.args(&["worktree", "remove"]);
+        if force {
+            cmd.arg("--force");
+        }
+        cmd.arg(worktree_path).current_dir(&self.repo_path);
+
+        let output = cmd
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to remove worktree: {}", e))?;
 

@@ -439,13 +439,14 @@ impl Cli {
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
 
         println!(
-            "Removing worktree for branch '{}': {}",
+            "Removing worktree for branch '{}'{}: {}",
             target.branch,
+            if target.force { " (force, dirty)" } else { "" },
             target.path.display()
         );
-        git_repo.remove_worktree(&target.path)?;
+        git_repo.remove_worktree(&target.path, target.force)?;
 
-        match git_repo.delete_branch(&target.branch, false) {
+        match git_repo.delete_branch(&target.branch, target.force) {
             Ok(()) => {
                 println!("Removed worktree and branch: {}", target.branch);
             }
@@ -504,15 +505,16 @@ impl Cli {
 
         for target in batch.targets {
             println!(
-                "Removing worktree for branch '{}': {}",
+                "Removing worktree for branch '{}'{}: {}",
                 target.branch,
+                if target.force { " (force, dirty)" } else { "" },
                 target.path.display()
             );
 
-            match git_repo.remove_worktree(&target.path) {
+            match git_repo.remove_worktree(&target.path, target.force) {
                 Ok(()) => {
                     removed += 1;
-                    match git_repo.delete_branch(&target.branch, false) {
+                    match git_repo.delete_branch(&target.branch, target.force) {
                         Ok(()) => {
                             println!("Removed worktree and branch: {}", target.branch);
                         }
@@ -1391,7 +1393,7 @@ impl Cli {
             }
 
             // Remove worktree
-            match git_repo.remove_worktree(&candidate.path) {
+            match git_repo.remove_worktree(&candidate.path, force) {
                 Ok(()) => {
                     // Try to delete the branch if it's safe
                     if candidate.is_merged || force {

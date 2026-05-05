@@ -319,7 +319,7 @@ fn test_remove_worktree() {
     assert!(worktree_path.exists());
 
     // Remove it
-    let result = git_repo.remove_worktree(&worktree_path);
+    let result = git_repo.remove_worktree(&worktree_path, false);
     assert!(result.is_ok());
 
     // Verify it's gone
