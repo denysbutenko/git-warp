@@ -1248,3 +1248,201 @@ fn test_doctor_install_check_passes_with_single_active_binary() {
         "{stdout}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_shell_check_warns_when_install_dir_not_in_path() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let other_dir = tempdir().unwrap();
+
+    let install_dir = home_dir.path().join(".local").join("bin");
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", other_dir.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", other_dir.path())
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Default install path"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("{} is not in PATH", install_dir.display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("export PATH=\"{}:$PATH\"", install_dir.display())),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_shell_check_passes_when_install_dir_in_path() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = home_dir.path().join(".local").join("bin");
+    fs::create_dir_all(&install_dir).unwrap();
+    write_fake_warp_binary(&install_dir.join("warp"), "warp 0.4.0");
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", &install_dir)
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", &install_dir)
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Shell PATH"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("active warp at {}/warp", install_dir.display())),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("is not in PATH"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_shell_check_warns_when_path_shadows_install_dir() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = home_dir.path().join(".local").join("bin");
+    fs::create_dir_all(&install_dir).unwrap();
+    write_fake_warp_binary(&install_dir.join("warp"), "warp 0.4.0");
+
+    let other_dir = tempdir().unwrap();
+    write_fake_warp_binary(&other_dir.path().join("warp"), "warp 0.1.0");
+
+    let path_value = format!("{}:{}", other_dir.path().display(), install_dir.display());
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", &path_value)
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", &path_value)
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Default install path"), "{stdout}");
+    assert!(
+        stdout.contains("a different warp resolves first at"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "Reorder PATH to put `{}` before `{}`",
+            install_dir.display(),
+            other_dir.path().display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_shell_check_warns_when_shell_rc_lacks_warp_cd() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let probe = tempdir().unwrap();
+    write_fake_warp_binary(&probe.path().join("warp"), "warp 0.4.0");
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", probe.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", probe.path())
+        .env("SHELL", "/bin/zsh")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Shell integration"), "{stdout}");
+    let zshrc = home_dir.path().join(".zshrc");
+    assert!(
+        stdout.contains(&format!("warp_cd helper not found in {}", zshrc.display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "Run `warp shell-config zsh` and append the output to {}",
+            zshrc.display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_shell_check_passes_when_shell_rc_has_warp_cd() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let probe = tempdir().unwrap();
+    write_fake_warp_binary(&probe.path().join("warp"), "warp 0.4.0");
+    let zshrc = home_dir.path().join(".zshrc");
+    fs::write(
+        &zshrc,
+        "# user config\nwarp_cd() { eval \"$(warp --terminal echo \"$@\")\"; }\n",
+    )
+    .unwrap();
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", probe.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", probe.path())
+        .env("SHELL", "/bin/zsh")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!("warp_cd helper detected in {}", zshrc.display())),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("warp_cd helper not found"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_shell_check_handles_unknown_shell() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let probe = tempdir().unwrap();
+    write_fake_warp_binary(&probe.path().join("warp"), "warp 0.4.0");
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", probe.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", probe.path())
+        .env("SHELL", "/usr/bin/tcsh")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("unsupported shell `/usr/bin/tcsh`"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("supported: bash, zsh, fish"), "{stdout}");
+}
