@@ -11,16 +11,24 @@ available.
 ## What It Does Today
 
 - Creates or switches to branch worktrees with `warp switch <branch>` or the
-  short form `warp <branch>`.
+  short form `warp <branch>`, classifying the target as existing worktree,
+  local branch, remote branch, or new branch.
 - Opens the selected worktree in a terminal tab/window, starts a shell in the
   current terminal, or prints the target path/command.
-- Lists worktrees with primary/current/dirty/detached/busy state.
+- Lists worktrees with primary/current/dirty/detached/busy state, ordered for
+  fast scanning in busy repositories.
+- Bare `warp` opens an interactive switcher with multi-select and batch removal.
 - Cleans up eligible worktrees with dry-run, interactive selection, process
-  checks, protected branches, and optional process termination.
-- Checks local setup with `warp doctor`.
-- Installs, removes, and reports Claude/Codex hooks for live session tracking.
+  checks, protected branches, optional process termination, and per-worktree
+  eligibility reasons.
+- Checks local setup with `warp doctor`, including detection of multiple `warp`
+  binaries on `PATH`.
+- Installs, removes, and reports Claude/Codex hooks with per-runtime and
+  per-scope `Complete` / `Partial` / `Missing` / `Conflicting` diagnostics and
+  the exact repair command.
 - Shows a TUI dashboard for live hook data and recent local agent sessions.
 - Generates shell completion snippets for Bash, Zsh, and Fish.
+- Validates release metadata before tagging with `warp release-check`.
 
 ## Install
 
@@ -225,7 +233,8 @@ cargo run -- --dry-run cleanup --mode merged
 - [Technical Overview](docs/technical-overview.md)
 - [Documentation Index](docs/README.md)
 - [Changelog](CHANGELOG.md)
-- [Release Notes](docs/releases/v0.2.0.md)
+- [Release Notes (v0.3.0)](docs/releases/v0.3.0.md)
+- [Release Notes (v0.2.0)](docs/releases/v0.2.0.md)
 - [Original autowt reference](docs/autowt.txt)
 - [Original coworktree reference](docs/coworktree.txt)
 
