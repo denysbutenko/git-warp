@@ -1,5 +1,5 @@
 use git_warp::config::GitConfig;
-use git_warp::git::{CleanupSkipReason, GitRepository};
+use git_warp::git::{BranchSource, CleanupSkipReason, GitRepository};
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
@@ -656,4 +656,186 @@ fn test_relative_worktrees_path_generation_uses_primary_root_from_linked_worktre
         worktree_path,
         repo_path.join(".worktrees").join("feature-from-linked")
     );
+}
+
+fn setup_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {
+    let upstream = tempdir().unwrap();
+    Command::new("git")
+        .args(["init", "--bare", "--initial-branch", "main"])
+        .current_dir(upstream.path())
+        .output()
+        .unwrap();
+
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    Command::new("git")
+        .args(["remote", "add", "origin"])
+        .arg(upstream.path())
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["push", "-u", "origin", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    (temp_dir, upstream)
+}
+
+#[test]
+fn test_classify_branch_source_existing_worktree() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+    let worktree_path = repo_path.join(".worktrees").join("feature-existing");
+    git_repo
+        .create_worktree_and_branch("feature-existing", &worktree_path, None)
+        .unwrap();
+
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let source = git_repo
+        .classify_branch_source("feature-existing", &worktrees)
+        .unwrap();
+
+    match source {
+        BranchSource::ExistingWorktree { path } => {
+            assert_eq!(
+                path.canonicalize().unwrap(),
+                worktree_path.canonicalize().unwrap()
+            );
+        }
+        other => panic!("expected ExistingWorktree, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_classify_branch_source_local_branch() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    Command::new("git")
+        .args(["branch", "feature-local"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let source = git_repo
+        .classify_branch_source("feature-local", &worktrees)
+        .unwrap();
+
+    assert_eq!(source, BranchSource::LocalBranch);
+}
+
+#[test]
+fn test_classify_branch_source_remote_branch() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let (temp_dir, _upstream) = setup_repo_with_origin();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    Command::new("git")
+        .args(["branch", "feature-remote"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["push", "origin", "feature-remote"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["branch", "-D", "feature-remote"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let source = git_repo
+        .classify_branch_source("feature-remote", &worktrees)
+        .unwrap();
+
+    assert_eq!(
+        source,
+        BranchSource::RemoteBranch {
+            remote_ref: "origin/feature-remote".to_string()
+        }
+    );
+}
+
+#[test]
+fn test_classify_branch_source_new_branch() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let source = git_repo
+        .classify_branch_source("brand-new", &worktrees)
+        .unwrap();
+
+    assert_eq!(source, BranchSource::NewBranch);
+}
+
+#[test]
+fn test_create_worktree_for_remote_branch_creates_local_tracking() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let (temp_dir, _upstream) = setup_repo_with_origin();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    Command::new("git")
+        .args(["branch", "feature-track"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["push", "origin", "feature-track"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["branch", "-D", "feature-track"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+    let worktree_path = repo_path.join(".worktrees").join("feature-track");
+    let source = BranchSource::RemoteBranch {
+        remote_ref: "origin/feature-track".to_string(),
+    };
+    git_repo
+        .create_worktree_for_source("feature-track", &worktree_path, &source)
+        .unwrap();
+
+    assert!(worktree_path.exists());
+    let head_branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    let head_branch = String::from_utf8_lossy(&head_branch.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(head_branch, "feature-track");
 }
