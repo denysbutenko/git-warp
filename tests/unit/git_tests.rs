@@ -1,4 +1,5 @@
-use git_warp::git::GitRepository;
+use git_warp::config::GitConfig;
+use git_warp::git::{CleanupSkipReason, GitRepository};
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
@@ -202,6 +203,71 @@ fn test_cleanup_analysis_excludes_custom_protected_branches() {
         branch_statuses
             .iter()
             .any(|status| status.branch == "feature")
+    );
+}
+
+#[test]
+fn test_cleanup_analysis_reports_skipped_with_reasons() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+
+    // Protected branch worktree (default protected list contains "develop").
+    Command::new("git")
+        .args(&["branch", "develop"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let develop_path = repo_path.join("worktrees").join("develop");
+    git_repo
+        .create_worktree_and_branch("develop", &develop_path, Some("develop"))
+        .unwrap();
+
+    // Eligible feature branch.
+    let feature_path = repo_path.join("worktrees").join("feature");
+    git_repo
+        .create_worktree_and_branch("feature", &feature_path, None)
+        .unwrap();
+
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let analysis = git_repo
+        .analyze_worktrees_for_cleanup_with_config(&worktrees, &GitConfig::default())
+        .unwrap();
+
+    assert_eq!(analysis.base_branch, "main");
+
+    let primary_skip = analysis
+        .skipped
+        .iter()
+        .find(|skip| skip.reason == CleanupSkipReason::PrimaryWorktree)
+        .expect("primary worktree should be reported as skipped");
+    assert_eq!(primary_skip.branch_label, "main");
+
+    assert!(
+        analysis
+            .skipped
+            .iter()
+            .any(|skip| skip.reason == CleanupSkipReason::ProtectedBranch
+                && skip.branch_label == "develop"),
+        "develop should be reported as protected: {:?}",
+        analysis.skipped
+    );
+
+    assert!(
+        analysis
+            .candidates
+            .iter()
+            .any(|status| status.branch == "feature"),
+        "feature branch should remain a candidate"
+    );
+    assert!(
+        analysis
+            .candidates
+            .iter()
+            .all(|status| status.branch != "main" && status.branch != "develop")
     );
 }
 

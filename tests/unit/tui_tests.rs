@@ -7,7 +7,7 @@ use git_warp::tui::{
     AgentsDashboard, WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows,
     build_dashboard_model, build_dashboard_model_windowed, build_worktree_switch_model,
     build_worktree_switch_model_with_protected_branches, build_worktree_switch_rows,
-    next_bulk_selection_state, session_detail_lines,
+    cleanup_reason_label_for_mode, next_bulk_selection_state, session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -411,6 +411,36 @@ fn test_build_cleanup_rows_explains_remoteless_candidates() {
     assert_eq!(rows[0].remote_label, "no remote");
     assert_eq!(rows[0].dirty_label, "clean");
     assert!(rows[0].display_line.contains("no remote"));
+}
+
+#[test]
+fn test_cleanup_reason_label_for_mode_disambiguates_all_mode_fallback() {
+    let plain_candidate = BranchStatus {
+        branch: "feature/active".to_string(),
+        path: PathBuf::from("/repo/.worktrees/active"),
+        has_remote: true,
+        is_merged: false,
+        is_identical: false,
+        has_uncommitted_changes: false,
+    };
+    assert_eq!(
+        cleanup_reason_label_for_mode(&plain_candidate, "all"),
+        "all-mode"
+    );
+    assert_eq!(
+        cleanup_reason_label_for_mode(&plain_candidate, "interactive"),
+        "all-mode"
+    );
+    assert_eq!(
+        cleanup_reason_label_for_mode(&plain_candidate, "merged"),
+        "candidate"
+    );
+
+    let merged = BranchStatus {
+        is_merged: true,
+        ..plain_candidate.clone()
+    };
+    assert_eq!(cleanup_reason_label_for_mode(&merged, "all"), "merged");
 }
 
 #[test]

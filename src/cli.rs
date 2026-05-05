@@ -1041,54 +1041,95 @@ impl Cli {
 
         info!("Cleaning up worktrees with mode: {}", mode);
 
+        if !matches!(mode, "all" | "merged" | "remoteless" | "interactive") {
+            println!("❌ Unknown cleanup mode: {}", mode);
+            return Ok(());
+        }
+
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
         let git_config = config_manager.get().git.clone();
         let mut process_manager = ProcessManager::new();
 
         if self.dry_run {
-            println!("Would cleanup worktrees with mode: {}", mode);
-            return Ok(());
-        }
-
-        // Fetch latest changes for accurate analysis
-        println!("🔄 Fetching latest changes...");
-        if !git_repo.fetch_branches()? {
-            println!("⚠️  Fetch failed, analysis may be outdated");
+            println!("🔎 Dry run: previewing cleanup with mode: {}", mode);
+        } else {
+            // Fetch latest changes for accurate analysis
+            println!("🔄 Fetching latest changes...");
+            if !git_repo.fetch_branches()? {
+                println!("⚠️  Fetch failed, analysis may be outdated");
+            }
         }
 
         let worktrees = git_repo.list_worktrees()?;
-        let branch_statuses =
-            git_repo.analyze_branches_for_cleanup_with_config(&worktrees, &git_config)?;
+        let analysis =
+            git_repo.analyze_worktrees_for_cleanup_with_config(&worktrees, &git_config)?;
 
-        if branch_statuses.is_empty() {
+        println!("🧭 Cleanup base branch: {}", analysis.base_branch);
+
+        if !analysis.skipped.is_empty() {
+            println!("🛡️  Skipped (not eligible for cleanup):");
+            for skip in &analysis.skipped {
+                println!(
+                    "  • {} at {} [{}]",
+                    skip.branch_label,
+                    skip.path.display(),
+                    skip.reason.label()
+                );
+            }
+            println!();
+        }
+
+        if analysis.candidates.is_empty() {
             println!("✨ No worktrees to clean up");
             return Ok(());
         }
 
         let mut candidates = Vec::new();
         let mut blocked = Vec::new();
+        let mut mode_excluded = Vec::new();
 
-        // Filter based on mode
-        for status in branch_statuses {
-            let should_include = match mode {
-                "all" => true,
+        for status in analysis.candidates {
+            let matches_mode = match mode {
+                "all" | "interactive" => true,
                 "merged" => status.is_merged,
                 "remoteless" => !status.has_remote,
-                "interactive" => true, // Will be filtered in interactive mode
-                _ => {
-                    println!("❌ Unknown cleanup mode: {}", mode);
-                    return Ok(());
-                }
+                _ => unreachable!(),
             };
 
-            if should_include {
-                if status.has_uncommitted_changes && !force {
-                    blocked.push(status);
-                } else {
-                    candidates.push(status);
-                }
+            if !matches_mode {
+                mode_excluded.push(status);
+                continue;
             }
+
+            if status.has_uncommitted_changes && !force {
+                blocked.push(status);
+            } else {
+                candidates.push(status);
+            }
+        }
+
+        if !mode_excluded.is_empty() {
+            println!("➖ Excluded by mode `{}`:", mode);
+            for status in &mode_excluded {
+                println!(
+                    "  • {} at {} [{}; {}; {}]",
+                    status.branch,
+                    status.path.display(),
+                    crate::tui::cleanup_reason_label_for_mode(status, mode),
+                    if status.has_remote {
+                        "remote"
+                    } else {
+                        "no remote"
+                    },
+                    if status.has_uncommitted_changes {
+                        "dirty"
+                    } else {
+                        "clean"
+                    }
+                );
+            }
+            println!();
         }
 
         if !blocked.is_empty() {
@@ -1111,6 +1152,7 @@ impl Cli {
 
         // Show what would be cleaned up
         println!("🧹 Cleanup candidates:");
+        let mut process_busy = Vec::new();
         for candidate in &candidates {
             let remote = if candidate.has_remote {
                 "remote"
@@ -1122,14 +1164,34 @@ impl Cli {
             } else {
                 "clean"
             };
+            let busy = match process_manager.has_processes_in_directory(&candidate.path) {
+                Ok(true) => {
+                    process_busy.push(candidate.branch.clone());
+                    "; process-busy"
+                }
+                Ok(false) => "",
+                Err(_) => "",
+            };
             println!(
-                "  • {} at {} [{}; {}; {}]",
+                "  • {} at {} [{}; {}; {}{}]",
                 candidate.branch,
                 candidate.path.display(),
-                crate::tui::cleanup_reason_label(candidate),
+                crate::tui::cleanup_reason_label_for_mode(candidate, mode),
                 remote,
-                dirty
+                dirty,
+                busy,
             );
+        }
+        if !process_busy.is_empty() && !force && !kill {
+            println!(
+                "💡 {} candidate(s) have running processes. Use --kill to terminate or --force to ignore.",
+                process_busy.len()
+            );
+        }
+
+        if self.dry_run {
+            println!("\n🔎 Dry run complete: no worktrees were removed.");
+            return Ok(());
         }
 
         if interactive {

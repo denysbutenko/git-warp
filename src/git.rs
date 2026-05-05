@@ -23,6 +23,41 @@ pub struct BranchStatus {
     pub has_uncommitted_changes: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CleanupSkipReason {
+    PrimaryWorktree,
+    BaseBranch,
+    ProtectedBranch,
+    DetachedHead,
+    EmptyBranch,
+}
+
+impl CleanupSkipReason {
+    pub fn label(&self) -> &'static str {
+        match self {
+            CleanupSkipReason::PrimaryWorktree => "primary worktree",
+            CleanupSkipReason::BaseBranch => "base branch",
+            CleanupSkipReason::ProtectedBranch => "protected branch",
+            CleanupSkipReason::DetachedHead => "detached HEAD",
+            CleanupSkipReason::EmptyBranch => "no branch checked out",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CleanupSkip {
+    pub branch_label: String,
+    pub path: PathBuf,
+    pub reason: CleanupSkipReason,
+}
+
+#[derive(Debug, Clone)]
+pub struct CleanupAnalysis {
+    pub candidates: Vec<BranchStatus>,
+    pub skipped: Vec<CleanupSkip>,
+    pub base_branch: String,
+}
+
 pub struct GitRepository {
     repo: Repository,
     repo_path: PathBuf,
@@ -32,6 +67,29 @@ fn is_protected_branch(branch: &str, protected_branches: &[String]) -> bool {
     protected_branches
         .iter()
         .any(|protected_branch| protected_branch.trim() == branch)
+}
+
+fn cleanup_skip_reason(
+    worktree: &WorktreeInfo,
+    cleanup_base_branch: &str,
+    protected_branches: &[String],
+) -> Option<CleanupSkipReason> {
+    if worktree.is_primary {
+        return Some(CleanupSkipReason::PrimaryWorktree);
+    }
+    if worktree.is_detached {
+        return Some(CleanupSkipReason::DetachedHead);
+    }
+    if worktree.branch.is_empty() {
+        return Some(CleanupSkipReason::EmptyBranch);
+    }
+    if worktree.branch == cleanup_base_branch {
+        return Some(CleanupSkipReason::BaseBranch);
+    }
+    if is_protected_branch(&worktree.branch, protected_branches) {
+        return Some(CleanupSkipReason::ProtectedBranch);
+    }
+    None
 }
 
 impl GitRepository {
@@ -281,11 +339,13 @@ impl GitRepository {
         worktrees: &[WorktreeInfo],
         protected_branches: &[String],
     ) -> Result<Vec<BranchStatus>> {
-        self.analyze_branches_for_cleanup_with_options(
-            worktrees,
-            protected_branches,
-            &GitConfig::default().default_branch,
-        )
+        Ok(self
+            .analyze_worktrees_for_cleanup_with_options(
+                worktrees,
+                protected_branches,
+                &GitConfig::default().default_branch,
+            )?
+            .candidates)
     }
 
     /// Analyze branches for cleanup using full git configuration
@@ -294,7 +354,19 @@ impl GitRepository {
         worktrees: &[WorktreeInfo],
         config: &GitConfig,
     ) -> Result<Vec<BranchStatus>> {
-        self.analyze_branches_for_cleanup_with_options(
+        Ok(self
+            .analyze_worktrees_for_cleanup_with_config(worktrees, config)?
+            .candidates)
+    }
+
+    /// Analyze worktrees for cleanup, returning both eligible candidates and
+    /// skipped worktrees with the reason each was filtered out.
+    pub fn analyze_worktrees_for_cleanup_with_config(
+        &self,
+        worktrees: &[WorktreeInfo],
+        config: &GitConfig,
+    ) -> Result<CleanupAnalysis> {
+        self.analyze_worktrees_for_cleanup_with_options(
             worktrees,
             &config.protected_branches,
             &config.default_branch,
@@ -327,23 +399,39 @@ impl GitRepository {
         self.get_main_branch()
     }
 
-    fn analyze_branches_for_cleanup_with_options(
+    fn analyze_worktrees_for_cleanup_with_options(
         &self,
         worktrees: &[WorktreeInfo],
         protected_branches: &[String],
         configured_default_branch: &str,
-    ) -> Result<Vec<BranchStatus>> {
+    ) -> Result<CleanupAnalysis> {
         use std::process::Command;
 
-        let mut branch_statuses = Vec::new();
+        let mut candidates = Vec::new();
+        let mut skipped = Vec::new();
         let cleanup_base_branch = self.cleanup_base_branch(worktrees, configured_default_branch)?;
 
         for worktree in worktrees {
-            if worktree.is_primary
-                || worktree.branch.is_empty()
-                || worktree.branch == cleanup_base_branch
-                || is_protected_branch(&worktree.branch, protected_branches)
+            if let Some(reason) =
+                cleanup_skip_reason(worktree, &cleanup_base_branch, protected_branches)
             {
+                let branch_label = if worktree.branch.is_empty() {
+                    if worktree.is_detached {
+                        format!(
+                            "(detached {})",
+                            worktree.head.chars().take(7).collect::<String>()
+                        )
+                    } else {
+                        "(no branch)".to_string()
+                    }
+                } else {
+                    worktree.branch.clone()
+                };
+                skipped.push(CleanupSkip {
+                    branch_label,
+                    path: worktree.path.clone(),
+                    reason,
+                });
                 continue;
             }
 
@@ -389,7 +477,7 @@ impl GitRepository {
                 output.map(|o| !o.stdout.is_empty()).unwrap_or(false)
             };
 
-            branch_statuses.push(BranchStatus {
+            candidates.push(BranchStatus {
                 branch: branch.clone(),
                 path: path.clone(),
                 has_remote,
@@ -399,7 +487,11 @@ impl GitRepository {
             });
         }
 
-        Ok(branch_statuses)
+        Ok(CleanupAnalysis {
+            candidates,
+            skipped,
+            base_branch: cleanup_base_branch,
+        })
     }
 
     fn remote_default_branch(&self) -> Result<Option<String>> {
