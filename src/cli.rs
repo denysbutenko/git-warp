@@ -159,6 +159,19 @@ struct DoctorInstallEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoctorHookSeverity {
+    Healthy,
+    Partial,
+    Missing,
+}
+
+struct DoctorHooksSummary {
+    severity: DoctorHookSeverity,
+    detail: String,
+    next_steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SwitchStepStatus {
     Done,
     Skipped,
@@ -1597,16 +1610,25 @@ impl Cli {
             );
         }
 
-        let hooks_installed = Self::doctor_hooks_installed();
-        if hooks_installed {
-            Self::doctor_ok("Agent hooks", "git-warp hooks found for Claude or Codex");
-        } else {
-            Self::doctor_warn("Agent hooks", "no user or project git-warp hooks found");
-            next_steps.push(
-                "Run `warp hooks-install --level user --runtime all` to enable live agent monitoring."
-                    .to_string(),
-            );
+        let hooks_summary = Self::doctor_hooks_summary();
+        match hooks_summary.severity {
+            DoctorHookSeverity::Healthy => {
+                Self::doctor_ok("Agent hooks", hooks_summary.detail);
+            }
+            DoctorHookSeverity::Partial => {
+                Self::doctor_warn("Agent hooks", hooks_summary.detail);
+                for step in &hooks_summary.next_steps {
+                    next_steps.push(step.clone());
+                }
+            }
+            DoctorHookSeverity::Missing => {
+                Self::doctor_warn("Agent hooks", hooks_summary.detail);
+                for step in &hooks_summary.next_steps {
+                    next_steps.push(step.clone());
+                }
+            }
         }
+        let hooks_installed = matches!(hooks_summary.severity, DoctorHookSeverity::Healthy);
 
         Self::report_doctor_install(&mut next_steps);
 
@@ -1791,24 +1813,95 @@ impl Cli {
         Some(line)
     }
 
-    fn doctor_hooks_installed() -> bool {
-        let mut paths = Vec::new();
+    fn doctor_hooks_summary() -> DoctorHooksSummary {
+        use crate::hooks::{HookState, HooksManager};
 
-        if let Some(home) = dirs::home_dir() {
-            paths.push(home.join(".claude").join("settings.json"));
-            paths.push(home.join(".codex").join("hooks.json"));
+        let diagnoses = match HooksManager::diagnose("all") {
+            Ok(d) => d,
+            Err(_) => {
+                return DoctorHooksSummary {
+                    severity: DoctorHookSeverity::Missing,
+                    detail: "unable to inspect hook configuration".to_string(),
+                    next_steps: vec![
+                        "Run `warp hooks-status --runtime all` to investigate.".to_string(),
+                    ],
+                };
+            }
+        };
+
+        let mut healthy: Vec<String> = Vec::new();
+        let mut partial: Vec<String> = Vec::new();
+        let mut conflicting: Vec<String> = Vec::new();
+        let mut next_steps: Vec<String> = Vec::new();
+
+        for d in &diagnoses {
+            let scope_label = match d.scope {
+                crate::hooks::HookScope::User => "user",
+                crate::hooks::HookScope::Project => "project",
+            };
+            let runtime_label = match d.runtime {
+                crate::hooks::HookRuntime::Claude => "claude",
+                crate::hooks::HookRuntime::Codex => "codex",
+            };
+            let combined = format!("{scope_label} {runtime_label}");
+
+            match d.state {
+                HookState::Complete => healthy.push(combined),
+                HookState::Partial => {
+                    partial.push(combined);
+                    next_steps.push(format!(
+                        "Run `{}` to repair partial {} {} hooks.",
+                        d.install_command(),
+                        scope_label,
+                        runtime_label
+                    ));
+                }
+                HookState::Conflicting => {
+                    conflicting.push(combined);
+                    next_steps.push(format!(
+                        "Run `{}` to deduplicate {} {} hooks.",
+                        d.install_command(),
+                        scope_label,
+                        runtime_label
+                    ));
+                }
+                HookState::Missing | HookState::NotConfigured => {}
+            }
         }
 
-        if let Ok(current_dir) = std::env::current_dir() {
-            paths.push(current_dir.join(".claude").join("settings.json"));
-            paths.push(current_dir.join(".codex").join("hooks.json"));
+        if healthy.is_empty() && partial.is_empty() && conflicting.is_empty() {
+            return DoctorHooksSummary {
+                severity: DoctorHookSeverity::Missing,
+                detail: "no user or project git-warp hooks found".to_string(),
+                next_steps: vec![
+                    "Run `warp hooks-install --level user --runtime all` to enable live agent monitoring.".to_string(),
+                ],
+            };
         }
 
-        paths.into_iter().any(|path| {
-            std::fs::read_to_string(path)
-                .map(|content| content.contains("\"git_warp_hook_id\""))
-                .unwrap_or(false)
-        })
+        if !partial.is_empty() || !conflicting.is_empty() {
+            let mut detail_parts = Vec::new();
+            if !healthy.is_empty() {
+                detail_parts.push(format!("complete: {}", healthy.join(", ")));
+            }
+            if !partial.is_empty() {
+                detail_parts.push(format!("partial: {}", partial.join(", ")));
+            }
+            if !conflicting.is_empty() {
+                detail_parts.push(format!("conflicting: {}", conflicting.join(", ")));
+            }
+            return DoctorHooksSummary {
+                severity: DoctorHookSeverity::Partial,
+                detail: detail_parts.join("; "),
+                next_steps,
+            };
+        }
+
+        DoctorHooksSummary {
+            severity: DoctorHookSeverity::Healthy,
+            detail: format!("complete: {}", healthy.join(", ")),
+            next_steps,
+        }
     }
 
     fn handle_agents(&self) -> Result<()> {
