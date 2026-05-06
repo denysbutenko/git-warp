@@ -1446,7 +1446,11 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
         .iter()
         .map(|target| {
             if target.force {
-                format!("{} ({}) [dirty — force]", target.branch, target.path.display())
+                format!(
+                    "{} ({}) [dirty — force]",
+                    target.branch,
+                    target.path.display()
+                )
             } else {
                 format!("{} ({})", target.branch, target.path.display())
             }
@@ -1458,7 +1462,9 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
     }
 
     if batch.targets.iter().any(|target| target.force) {
-        parts.push("⚠️  dirty worktrees will be force-removed; uncommitted changes lost".to_string());
+        parts.push(
+            "⚠️  dirty worktrees will be force-removed; uncommitted changes lost".to_string(),
+        );
     }
 
     if !batch.skipped.is_empty() {

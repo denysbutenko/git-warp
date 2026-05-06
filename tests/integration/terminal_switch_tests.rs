@@ -260,7 +260,14 @@ fn test_warp_switch_branch_already_in_use_prints_recovery_guidance() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success(), "{stderr}");
-    assert!(stderr.contains("Failed to create worktree"), "{stderr}");
+    assert!(
+        stderr.contains("Cannot create worktree for branch 'main'"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("already checked out in another worktree"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("Use a different branch name or run `warp ls`"),
         "{stderr}"

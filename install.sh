@@ -2,7 +2,7 @@
 set -eu
 
 repo_url="${GIT_WARP_REPO_URL:-https://github.com/denysbutenko/git-warp}"
-version="${GIT_WARP_VERSION:-v0.2.0}"
+version="${GIT_WARP_VERSION:-v0.3.0}"
 method="${GIT_WARP_INSTALL_METHOD:-binary}"
 download_base="${GIT_WARP_DOWNLOAD_BASE:-${repo_url}/releases/download/${version}}"
 

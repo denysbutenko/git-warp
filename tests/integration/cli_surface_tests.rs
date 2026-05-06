@@ -6,6 +6,20 @@ use tempfile::tempdir;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+fn iso_now_minus_hours_millis(hours: i64) -> String {
+    use chrono::{Duration, Local, SecondsFormat, Utc};
+    (Local::now() - Duration::hours(hours))
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn iso_now_minus_hours_secs(hours: i64) -> String {
+    use chrono::{Duration, Local, SecondsFormat, Utc};
+    (Local::now() - Duration::hours(hours))
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Secs, false)
+}
+
 fn run_git(repo_path: &Path, args: &[&str]) {
     let output = Command::new("git")
         .args(args)
@@ -432,7 +446,7 @@ fn test_release_check_metadata_only_accepts_current_release_metadata() {
 #[test]
 fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
-        .args(["release-check", "--metadata-only", "--version", "v0.3.0"])
+        .args(["release-check", "--metadata-only", "--version", "v0.4.0"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap();
@@ -441,11 +455,11 @@ fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
 
     assert!(!output.status.success(), "{stdout}");
     assert!(
-        stderr.contains("Cargo.toml package version is 0.2.0, expected 0.3.0"),
+        stderr.contains("Cargo.toml package version is 0.3.0, expected 0.4.0"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("docs/releases/v0.3.0.md is missing"),
+        stderr.contains("docs/releases/v0.4.0.md is missing"),
         "{stderr}"
     );
 }
@@ -554,7 +568,7 @@ fn test_switch_latest_resolves_branch_from_recent_agent_session() {
         &worktree_path,
         "session-latest",
         "agent-latest",
-        "2026-04-24T10:00:00.000Z",
+        &iso_now_minus_hours_millis(1),
     );
 
     let output = warp_command(repo_path)
@@ -581,15 +595,15 @@ fn test_switch_waiting_resolves_branch_from_waiting_agent_session() {
         &waiting_worktree,
         "session-waiting",
         "agent-waiting",
-        "2026-04-24T09:00:00.000Z",
+        &iso_now_minus_hours_millis(3),
     );
-    write_live_status(&waiting_worktree, "waiting", "2026-04-24T10:30:00+00:00");
+    write_live_status(&waiting_worktree, "waiting", &iso_now_minus_hours_secs(2));
     write_codex_session(
         home_dir.path(),
         &recent_worktree,
         "session-recent",
         "agent-recent",
-        "2026-04-24T11:00:00.000Z",
+        &iso_now_minus_hours_millis(1),
     );
 
     let output = warp_command(repo_path)
