@@ -7,9 +7,10 @@ use git_warp::tui::{
     AgentPresenceFilter, AgentRuntimeFilter, AgentsDashboard, DashboardFilters,
     WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows, build_dashboard_model,
     build_dashboard_model_filtered_windowed, build_dashboard_model_windowed,
-    build_worktree_switch_model, build_worktree_switch_model_with_protected_branches,
-    build_worktree_switch_rows, cleanup_reason_label_for_mode, is_stale_session,
-    next_bulk_selection_state, session_detail_lines,
+    build_worktree_switch_model, build_worktree_switch_model_with_metadata,
+    build_worktree_switch_model_with_protected_branches, build_worktree_switch_rows,
+    cleanup_reason_label_for_mode, is_stale_session, next_bulk_selection_state,
+    session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -517,6 +518,52 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
 }
 
 #[test]
+fn test_build_worktree_switch_model_marks_local_only_branches() {
+    let worktrees = vec![
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/tracked"),
+            branch: "tracked".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/local-only"),
+            branch: "local-only".to_string(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+    ];
+    let statuses = vec![];
+    let local_only_branches = vec!["local-only".to_string()];
+
+    let model =
+        build_worktree_switch_model_with_metadata(&worktrees, &statuses, &[], &local_only_branches);
+
+    let tracked_row = model
+        .rows
+        .iter()
+        .find(|row| row.branch_label == "tracked")
+        .expect("tracked row");
+    assert!(!tracked_row.badges.iter().any(|badge| badge == "local-only"));
+
+    let local_only_row = model
+        .rows
+        .iter()
+        .find(|row| row.branch_label == "local-only")
+        .expect("local-only row");
+    assert!(
+        local_only_row
+            .badges
+            .iter()
+            .any(|badge| badge == "local-only")
+    );
+}
+
+#[test]
 fn test_build_worktree_switch_model_orders_recently_touched_worktrees_first() {
     let older_path = PathBuf::from("/repo/.worktrees/older");
     let newer_path = PathBuf::from("/repo/.worktrees/newer");
@@ -817,7 +864,14 @@ fn test_worktree_switch_model_blocks_removal_for_risky_rows() {
     );
     assert!(model.removal_at(0).is_none());
     assert!(model.removal_at(1).is_none());
-    assert!(model.removal_at(2).is_none());
+    let dirty_target = model
+        .removal_at(2)
+        .expect("dirty worktree should be force-removable");
+    assert_eq!(dirty_target.branch, "dirty");
+    assert!(
+        dirty_target.force,
+        "dirty worktree must request force removal"
+    );
     assert!(model.removal_at(3).is_none());
 }
 
@@ -914,16 +968,20 @@ fn test_worktree_switch_model_builds_batch_removal_plan_with_skips() {
         .batch_removal_at(&[0, 1, 2, 2, 99])
         .expect("selected rows should build a batch plan");
 
-    assert_eq!(batch.targets.len(), 1);
+    assert_eq!(batch.targets.len(), 2);
     assert_eq!(batch.targets[0].branch, "safe");
     assert_eq!(batch.targets[0].path, safe_path);
-    assert_eq!(batch.skipped.len(), 2);
-    assert_eq!(batch.skipped[0].branch_label, "dirty");
-    assert_eq!(batch.skipped[0].path, dirty_path);
-    assert_eq!(batch.skipped[0].reason, "dirty");
-    assert_eq!(batch.skipped[1].branch_label, "main");
-    assert_eq!(batch.skipped[1].path, primary_path);
-    assert_eq!(batch.skipped[1].reason, "primary, protected, current");
+    assert!(!batch.targets[0].force);
+    assert_eq!(batch.targets[1].branch, "dirty");
+    assert_eq!(batch.targets[1].path, dirty_path);
+    assert!(
+        batch.targets[1].force,
+        "dirty worktree must be queued with force"
+    );
+    assert_eq!(batch.skipped.len(), 1);
+    assert_eq!(batch.skipped[0].branch_label, "main");
+    assert_eq!(batch.skipped[0].path, primary_path);
+    assert_eq!(batch.skipped[0].reason, "primary, protected, current");
     assert!(model.batch_removal_at(&[]).is_none());
 }
 

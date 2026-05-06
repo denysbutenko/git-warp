@@ -216,6 +216,7 @@ pub struct WorktreeSwitchTarget {
 pub struct WorktreeRemovalTarget {
     pub branch: String,
     pub path: PathBuf,
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -285,13 +286,19 @@ impl WorktreeSwitchModel {
 
     pub fn removal_at(&self, index: usize) -> Option<WorktreeRemovalTarget> {
         let row = self.rows.get(index)?;
-        if !row.removal_blockers.is_empty() {
+        if has_hard_blocker(&row.removal_blockers) {
             return None;
         }
+
+        let force = row
+            .removal_blockers
+            .iter()
+            .any(|blocker| is_soft_blocker(*blocker));
 
         Some(WorktreeRemovalTarget {
             branch: row.target.branch.clone()?,
             path: row.target.path.clone(),
+            force,
         })
     }
 
@@ -331,6 +338,14 @@ impl WorktreeSwitchModel {
 
         Some(WorktreeBatchRemoval { targets, skipped })
     }
+}
+
+fn is_soft_blocker(blocker: WorktreeRemovalBlock) -> bool {
+    matches!(blocker, WorktreeRemovalBlock::Dirty)
+}
+
+fn has_hard_blocker(blockers: &[WorktreeRemovalBlock]) -> bool {
+    blockers.iter().any(|blocker| !is_soft_blocker(*blocker))
 }
 
 pub struct TuiApp {
@@ -611,6 +626,15 @@ pub fn build_worktree_switch_model_with_protected_branches(
     statuses: &[WorktreeRuntimeStatus],
     protected_branches: &[String],
 ) -> WorktreeSwitchModel {
+    build_worktree_switch_model_with_metadata(worktrees, statuses, protected_branches, &[])
+}
+
+pub fn build_worktree_switch_model_with_metadata(
+    worktrees: &[WorktreeInfo],
+    statuses: &[WorktreeRuntimeStatus],
+    protected_branches: &[String],
+    local_only_branches: &[String],
+) -> WorktreeSwitchModel {
     let mut rows = worktrees
         .iter()
         .enumerate()
@@ -618,6 +642,11 @@ pub fn build_worktree_switch_model_with_protected_branches(
             let status = statuses.iter().find(|status| status.path == worktree.path);
             let is_detached = worktree.branch.trim().is_empty() || worktree.is_detached;
             let is_protected = is_protected_branch(&worktree.branch, protected_branches);
+            let is_local_only = !is_detached
+                && !worktree.branch.is_empty()
+                && local_only_branches
+                    .iter()
+                    .any(|name| name == &worktree.branch);
             let removal_blockers = worktree_removal_blockers(worktree, status, protected_branches);
             let mut badges = Vec::new();
 
@@ -629,6 +658,9 @@ pub fn build_worktree_switch_model_with_protected_branches(
             }
             if is_detached {
                 badges.push("detached".to_string());
+            }
+            if is_local_only {
+                badges.push("local-only".to_string());
             }
             if status.is_some_and(|status| status.is_current) {
                 badges.push("current".to_string());
@@ -667,7 +699,8 @@ pub fn build_worktree_switch_model_with_protected_branches(
     let empty_state_lines = if rows.is_empty() {
         vec![
             "No Git worktrees found for this repository.".to_string(),
-            "Run `warp switch <branch>` to create one.".to_string(),
+            "Run `warp switch <branch>` to create one (local or remote branches both work)."
+                .to_string(),
         ]
     } else {
         Vec::new()
@@ -1260,10 +1293,17 @@ impl WorktreeSwitchTui {
                                 notice = Some("No worktrees selected".to_string());
                             }
                         } else if let Some(removal) = self.model.removal_at(selected_index) {
-                            notice = Some(format!(
-                                "Remove '{}' and delete its local branch? y/N",
-                                removal.branch
-                            ));
+                            notice = Some(if removal.force {
+                                format!(
+                                    "⚠️  Worktree '{}' is dirty — uncommitted changes will be lost. Force remove? y/N",
+                                    removal.branch
+                                )
+                            } else {
+                                format!(
+                                    "Remove '{}' and delete its local branch? y/N",
+                                    removal.branch
+                                )
+                            });
                             pending_remove = Some(PendingWorktreeRemoval::Single(removal));
                         } else if let Some(row) = self.model.rows.get(selected_index) {
                             let reason = if row.removal_blockers.is_empty() {
@@ -1404,11 +1444,21 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
     let targets = batch
         .targets
         .iter()
-        .map(|target| format!("{} ({})", target.branch, target.path.display()))
+        .map(|target| {
+            if target.force {
+                format!("{} ({}) [dirty — force]", target.branch, target.path.display())
+            } else {
+                format!("{} ({})", target.branch, target.path.display())
+            }
+        })
         .collect::<Vec<_>>()
         .join("; ");
     if !targets.is_empty() {
         parts.push(format!("targets: {targets}"));
+    }
+
+    if batch.targets.iter().any(|target| target.force) {
+        parts.push("⚠️  dirty worktrees will be force-removed; uncommitted changes lost".to_string());
     }
 
     if !batch.skipped.is_empty() {

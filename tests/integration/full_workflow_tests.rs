@@ -65,7 +65,7 @@ fn test_complete_worktree_creation_workflow() {
     assert!(feature_worktree.is_some());
 
     // 8. Clean up
-    let cleanup_result = git_repo.remove_worktree(&worktree_path);
+    let cleanup_result = git_repo.remove_worktree(&worktree_path, false);
     assert!(cleanup_result.is_ok());
     assert!(!worktree_path.exists());
 
@@ -198,7 +198,7 @@ sleep 30
     fs::remove_file(&script_path).unwrap();
 
     // Now cleanup should succeed
-    let cleanup_result = git_repo.remove_worktree(&worktree_path);
+    let cleanup_result = git_repo.remove_worktree(&worktree_path, false);
     assert!(cleanup_result.is_ok());
 
     println!("Process detection and cleanup workflow test passed");
@@ -339,7 +339,7 @@ fn test_branch_analysis_and_cleanup_workflow() {
 
     // Clean up all worktrees
     for (_, worktree_path) in created_worktrees {
-        git_repo.remove_worktree(&worktree_path).unwrap();
+        git_repo.remove_worktree(&worktree_path, false).unwrap();
     }
 
     println!("Branch analysis and cleanup workflow test passed");
@@ -394,7 +394,7 @@ fn test_error_recovery_workflow() {
 
     // Test 3: Try to remove non-existent worktree
     let nonexistent_path = repo_path.join("nonexistent");
-    let result = git_repo.remove_worktree(&nonexistent_path);
+    let result = git_repo.remove_worktree(&nonexistent_path, false);
 
     // Should handle gracefully
     match result {
