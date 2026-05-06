@@ -1446,3 +1446,162 @@ fn test_doctor_shell_check_handles_unknown_shell() {
     );
     assert!(stdout.contains("supported: bash, zsh, fish"), "{stdout}");
 }
+
+fn setup_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {
+    let upstream = tempdir().unwrap();
+    Command::new("git")
+        .args(["init", "--bare", "-b", "main"])
+        .current_dir(upstream.path())
+        .output()
+        .unwrap();
+
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    Command::new("git")
+        .args(["remote", "add", "origin"])
+        .arg(upstream.path())
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["push", "-u", "origin", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    (temp_dir, upstream)
+}
+
+#[test]
+fn test_switch_dry_run_labels_new_branch_source() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+
+    let output = warp_command(repo_path)
+        .args(["--dry-run", "switch", "fresh-feature"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Source: new branch 'fresh-feature' from HEAD"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn test_switch_dry_run_labels_local_branch_source() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+
+    Command::new("git")
+        .args(["branch", "feature-local"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let output = warp_command(repo_path)
+        .args(["--dry-run", "switch", "feature-local"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Source: local branch 'feature-local'"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn test_switch_dry_run_labels_existing_worktree_source() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    let worktree_path = create_worktree(repo_path, "feature-existing");
+
+    let output = warp_command(repo_path)
+        .args(["--dry-run", "switch", "feature-existing"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    let canonical = worktree_path.canonicalize().unwrap();
+    assert!(
+        stdout.contains(&format!(
+            "Source: existing worktree at {}",
+            canonical.display()
+        )) || stdout.contains(&format!(
+            "Source: existing worktree at {}",
+            worktree_path.display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn test_switch_dry_run_labels_remote_branch_source() {
+    let (temp_dir, _upstream) = setup_repo_with_origin();
+    let repo_path = temp_dir.path();
+
+    Command::new("git")
+        .args(["branch", "feature-remote"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["push", "origin", "feature-remote"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["branch", "-D", "feature-remote"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let output = warp_command(repo_path)
+        .args(["--dry-run", "switch", "feature-remote"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Source: remote branch 'origin/feature-remote'"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn test_bare_warp_dry_run_marks_local_only_branch_in_switcher() {
+    let (temp_dir, _upstream) = setup_repo_with_origin();
+    let repo_path = temp_dir.path();
+    create_worktree(repo_path, "tracked-feature");
+    Command::new("git")
+        .args(["push", "origin", "tracked-feature"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    create_worktree(repo_path, "local-feature");
+
+    let output = warp_command(repo_path).arg("--dry-run").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    let local_line = stdout
+        .lines()
+        .find(|line| line.contains("local-feature"))
+        .expect(&stdout);
+    assert!(local_line.contains("local-only"), "{local_line}");
+    let tracked_line = stdout
+        .lines()
+        .find(|line| line.contains("tracked-feature"))
+        .expect(&stdout);
+    assert!(!tracked_line.contains("local-only"), "{tracked_line}");
+}

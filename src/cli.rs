@@ -169,6 +169,19 @@ struct DoctorInstallEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoctorHookSeverity {
+    Healthy,
+    Partial,
+    Missing,
+}
+
+struct DoctorHooksSummary {
+    severity: DoctorHookSeverity,
+    detail: String,
+    next_steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SwitchStepStatus {
     Done,
     Skipped,
@@ -257,18 +270,57 @@ impl Cli {
         )
     }
 
-    fn create_worktree_with_recovery(
+    fn create_worktree_for_source_with_recovery(
         git_repo: &crate::git::GitRepository,
         branch: &str,
         worktree_path: &Path,
+        source: &crate::git::BranchSource,
     ) -> Result<()> {
         git_repo
-            .create_worktree_and_branch(branch, worktree_path, None)
+            .create_worktree_for_source(branch, worktree_path, source)
             .map_err(|error| {
                 anyhow::anyhow!(
                     "{error}. Use a different branch name or run `warp ls` to inspect existing worktrees."
                 )
             })
+    }
+
+    fn source_announcement(branch: &str, source: &crate::git::BranchSource) -> String {
+        match source {
+            crate::git::BranchSource::ExistingWorktree { path } => format!(
+                "🔁 Reusing existing worktree for branch '{}' at {}",
+                branch,
+                path.display()
+            ),
+            crate::git::BranchSource::LocalBranch => {
+                format!("🌱 Creating worktree for local branch '{}'", branch)
+            }
+            crate::git::BranchSource::RemoteBranch { remote_ref } => format!(
+                "🌐 Creating worktree from remote branch '{}' (new local '{}' tracking it)",
+                remote_ref, branch
+            ),
+            crate::git::BranchSource::NewBranch => {
+                format!("✨ Creating new branch '{}' from HEAD", branch)
+            }
+        }
+    }
+
+    fn dry_run_source_label(branch: &str, source: &crate::git::BranchSource) -> String {
+        match source {
+            crate::git::BranchSource::ExistingWorktree { path } => {
+                format!("Source: existing worktree at {}", path.display())
+            }
+            crate::git::BranchSource::LocalBranch => {
+                format!("Source: local branch '{}'", branch)
+            }
+            crate::git::BranchSource::RemoteBranch { remote_ref } => format!(
+                "Source: remote branch '{}' (would create local '{}' tracking it)",
+                remote_ref, branch
+            ),
+            crate::git::BranchSource::NewBranch => {
+                format!("Source: new branch '{}' from HEAD", branch)
+            }
+        }
     }
 
     pub fn run(&self) -> Result<()> {
@@ -343,8 +395,7 @@ impl Cli {
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
         use crate::tui::{
-            WorktreeSwitchAction, WorktreeSwitchTui,
-            build_worktree_switch_model_with_protected_branches,
+            WorktreeSwitchAction, WorktreeSwitchTui, build_worktree_switch_model_with_metadata,
         };
 
         info!("Starting default worktree switcher");
@@ -355,10 +406,12 @@ impl Cli {
         let worktrees = git_repo.list_worktrees()?;
         let statuses =
             Self::collect_worktree_runtime_statuses(&git_repo, &worktrees, ProcessManager::new());
-        let model = build_worktree_switch_model_with_protected_branches(
+        let local_only_branches = Self::collect_local_only_branches(&git_repo, &worktrees);
+        let model = build_worktree_switch_model_with_metadata(
             &worktrees,
             &statuses,
             &protected_branches,
+            &local_only_branches,
         );
 
         if self.dry_run {
@@ -378,6 +431,23 @@ impl Cli {
                 Ok(())
             }
         }
+    }
+
+    fn collect_local_only_branches(
+        git_repo: &crate::git::GitRepository,
+        worktrees: &[crate::git::WorktreeInfo],
+    ) -> Vec<String> {
+        if !git_repo.has_remotes().unwrap_or(false) {
+            return Vec::new();
+        }
+        worktrees
+            .iter()
+            .filter(|wt| !wt.branch.trim().is_empty() && !wt.is_detached)
+            .filter_map(|wt| match git_repo.remote_branch_exists(&wt.branch) {
+                Ok(false) => Some(wt.branch.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     fn collect_worktree_runtime_statuses(
@@ -449,13 +519,14 @@ impl Cli {
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
 
         println!(
-            "Removing worktree for branch '{}': {}",
+            "Removing worktree for branch '{}'{}: {}",
             target.branch,
+            if target.force { " (force, dirty)" } else { "" },
             target.path.display()
         );
-        git_repo.remove_worktree(&target.path)?;
+        git_repo.remove_worktree(&target.path, target.force)?;
 
-        match git_repo.delete_branch(&target.branch, false) {
+        match git_repo.delete_branch(&target.branch, target.force) {
             Ok(()) => {
                 println!("Removed worktree and branch: {}", target.branch);
             }
@@ -514,15 +585,16 @@ impl Cli {
 
         for target in batch.targets {
             println!(
-                "Removing worktree for branch '{}': {}",
+                "Removing worktree for branch '{}'{}: {}",
                 target.branch,
+                if target.force { " (force, dirty)" } else { "" },
                 target.path.display()
             );
 
-            match git_repo.remove_worktree(&target.path) {
+            match git_repo.remove_worktree(&target.path, target.force) {
                 Ok(()) => {
                     removed += 1;
-                    match git_repo.delete_branch(&target.branch, false) {
+                    match git_repo.delete_branch(&target.branch, target.force) {
                         Ok(()) => {
                             println!("Removed worktree and branch: {}", target.branch);
                         }
@@ -553,17 +625,6 @@ impl Cli {
         );
 
         Ok(())
-    }
-
-    fn existing_worktree_path_for_branch(
-        git_repo: &crate::git::GitRepository,
-        branch: &str,
-    ) -> Result<Option<PathBuf>> {
-        Ok(git_repo
-            .list_worktrees()?
-            .into_iter()
-            .find(|worktree| worktree.branch == branch)
-            .map(|worktree| worktree.path))
     }
 
     fn handle_existing_worktree_jump(&self, worktree_path: &Path) -> Result<()> {
@@ -616,13 +677,18 @@ impl Cli {
         let config_manager = ConfigManager::new()?;
         let config = config_manager.get();
 
+        let worktrees_for_classification = git_repo.list_worktrees()?;
+        let branch_source =
+            git_repo.classify_branch_source(&branch, &worktrees_for_classification)?;
+
         // Determine worktree path
         let worktree_path = if let Some(path) = path {
             PathBuf::from(path)
-        } else if let Some(existing_path) =
-            Self::existing_worktree_path_for_branch(&git_repo, &branch)?
+        } else if let crate::git::BranchSource::ExistingWorktree {
+            path: existing_path,
+        } = &branch_source
         {
-            existing_path
+            existing_path.clone()
         } else {
             git_repo.get_worktree_path_with_base(&branch, config.worktrees_path.as_deref())
         };
@@ -633,6 +699,7 @@ impl Cli {
                 branch,
                 worktree_path.display()
             );
+            println!("{}", Self::dry_run_source_label(&branch, &branch_source));
             if worktree_path.exists() {
                 println!("Would reuse existing worktree");
             } else if !no_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false) {
@@ -652,7 +719,7 @@ impl Cli {
             println!("📁 Worktree already exists at: {}", worktree_path.display());
             report.skipped("Worktree creation", "already existed");
         } else {
-            println!("🚀 Creating worktree for branch '{}'", branch);
+            println!("{}", Self::source_announcement(&branch, &branch_source));
 
             // Choose creation method based on CoW support and user preference
             let use_cow =
@@ -662,7 +729,12 @@ impl Cli {
                 println!("⚡ Using Copy-on-Write for instant creation...");
 
                 // Create worktree using traditional method first
-                Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
+                Self::create_worktree_for_source_with_recovery(
+                    &git_repo,
+                    &branch,
+                    &worktree_path,
+                    &branch_source,
+                )?;
 
                 // If we have existing worktrees, try CoW enhancement
                 let worktrees = git_repo.list_worktrees()?;
@@ -676,7 +748,12 @@ impl Cli {
                     if let Err(e) = cow::clone_directory(&main_worktree.path, &worktree_path) {
                         log::warn!("CoW failed, falling back to traditional method: {}", e);
                         // Recreate using traditional method
-                        Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
+                        Self::create_worktree_for_source_with_recovery(
+                            &git_repo,
+                            &branch,
+                            &worktree_path,
+                            &branch_source,
+                        )?;
                     } else {
                         // Rewrite paths in the CoW copy
                         let rewriter = PathRewriter::new(&main_worktree.path, &worktree_path);
@@ -700,7 +777,12 @@ impl Cli {
                 }
             } else {
                 println!("📦 Using traditional Git worktree creation...");
-                Self::create_worktree_with_recovery(&git_repo, &branch, &worktree_path)?;
+                Self::create_worktree_for_source_with_recovery(
+                    &git_repo,
+                    &branch,
+                    &worktree_path,
+                    &branch_source,
+                )?;
             }
 
             if worktree_path.exists() {
@@ -1401,7 +1483,7 @@ impl Cli {
             }
 
             // Remove worktree
-            match git_repo.remove_worktree(&candidate.path) {
+            match git_repo.remove_worktree(&candidate.path, force) {
                 Ok(()) => {
                     // Try to delete the branch if it's safe
                     if candidate.is_merged || force {
@@ -1605,16 +1687,25 @@ impl Cli {
             );
         }
 
-        let hooks_installed = Self::doctor_hooks_installed();
-        if hooks_installed {
-            Self::doctor_ok("Agent hooks", "git-warp hooks found for Claude or Codex");
-        } else {
-            Self::doctor_warn("Agent hooks", "no user or project git-warp hooks found");
-            next_steps.push(
-                "Run `warp hooks-install --level user --runtime all` to enable live agent monitoring."
-                    .to_string(),
-            );
+        let hooks_summary = Self::doctor_hooks_summary();
+        match hooks_summary.severity {
+            DoctorHookSeverity::Healthy => {
+                Self::doctor_ok("Agent hooks", hooks_summary.detail);
+            }
+            DoctorHookSeverity::Partial => {
+                Self::doctor_warn("Agent hooks", hooks_summary.detail);
+                for step in &hooks_summary.next_steps {
+                    next_steps.push(step.clone());
+                }
+            }
+            DoctorHookSeverity::Missing => {
+                Self::doctor_warn("Agent hooks", hooks_summary.detail);
+                for step in &hooks_summary.next_steps {
+                    next_steps.push(step.clone());
+                }
+            }
         }
+        let hooks_installed = matches!(hooks_summary.severity, DoctorHookSeverity::Healthy);
 
         Self::report_doctor_install(&mut next_steps);
         Self::report_doctor_shell_integration(&mut next_steps);
@@ -1956,24 +2047,95 @@ impl Cli {
         Some(line)
     }
 
-    fn doctor_hooks_installed() -> bool {
-        let mut paths = Vec::new();
+    fn doctor_hooks_summary() -> DoctorHooksSummary {
+        use crate::hooks::{HookState, HooksManager};
 
-        if let Some(home) = dirs::home_dir() {
-            paths.push(home.join(".claude").join("settings.json"));
-            paths.push(home.join(".codex").join("hooks.json"));
+        let diagnoses = match HooksManager::diagnose("all") {
+            Ok(d) => d,
+            Err(_) => {
+                return DoctorHooksSummary {
+                    severity: DoctorHookSeverity::Missing,
+                    detail: "unable to inspect hook configuration".to_string(),
+                    next_steps: vec![
+                        "Run `warp hooks-status --runtime all` to investigate.".to_string(),
+                    ],
+                };
+            }
+        };
+
+        let mut healthy: Vec<String> = Vec::new();
+        let mut partial: Vec<String> = Vec::new();
+        let mut conflicting: Vec<String> = Vec::new();
+        let mut next_steps: Vec<String> = Vec::new();
+
+        for d in &diagnoses {
+            let scope_label = match d.scope {
+                crate::hooks::HookScope::User => "user",
+                crate::hooks::HookScope::Project => "project",
+            };
+            let runtime_label = match d.runtime {
+                crate::hooks::HookRuntime::Claude => "claude",
+                crate::hooks::HookRuntime::Codex => "codex",
+            };
+            let combined = format!("{scope_label} {runtime_label}");
+
+            match d.state {
+                HookState::Complete => healthy.push(combined),
+                HookState::Partial => {
+                    partial.push(combined);
+                    next_steps.push(format!(
+                        "Run `{}` to repair partial {} {} hooks.",
+                        d.install_command(),
+                        scope_label,
+                        runtime_label
+                    ));
+                }
+                HookState::Conflicting => {
+                    conflicting.push(combined);
+                    next_steps.push(format!(
+                        "Run `{}` to deduplicate {} {} hooks.",
+                        d.install_command(),
+                        scope_label,
+                        runtime_label
+                    ));
+                }
+                HookState::Missing | HookState::NotConfigured => {}
+            }
         }
 
-        if let Ok(current_dir) = std::env::current_dir() {
-            paths.push(current_dir.join(".claude").join("settings.json"));
-            paths.push(current_dir.join(".codex").join("hooks.json"));
+        if healthy.is_empty() && partial.is_empty() && conflicting.is_empty() {
+            return DoctorHooksSummary {
+                severity: DoctorHookSeverity::Missing,
+                detail: "no user or project git-warp hooks found".to_string(),
+                next_steps: vec![
+                    "Run `warp hooks-install --level user --runtime all` to enable live agent monitoring.".to_string(),
+                ],
+            };
         }
 
-        paths.into_iter().any(|path| {
-            std::fs::read_to_string(path)
-                .map(|content| content.contains("\"git_warp_hook_id\""))
-                .unwrap_or(false)
-        })
+        if !partial.is_empty() || !conflicting.is_empty() {
+            let mut detail_parts = Vec::new();
+            if !healthy.is_empty() {
+                detail_parts.push(format!("complete: {}", healthy.join(", ")));
+            }
+            if !partial.is_empty() {
+                detail_parts.push(format!("partial: {}", partial.join(", ")));
+            }
+            if !conflicting.is_empty() {
+                detail_parts.push(format!("conflicting: {}", conflicting.join(", ")));
+            }
+            return DoctorHooksSummary {
+                severity: DoctorHookSeverity::Partial,
+                detail: detail_parts.join("; "),
+                next_steps,
+            };
+        }
+
+        DoctorHooksSummary {
+            severity: DoctorHookSeverity::Healthy,
+            detail: format!("complete: {}", healthy.join(", ")),
+            next_steps,
+        }
     }
 
     fn handle_agents(&self) -> Result<()> {

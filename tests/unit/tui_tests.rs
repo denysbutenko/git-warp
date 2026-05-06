@@ -4,10 +4,13 @@ use git_warp::agents::{
 };
 use git_warp::git::{BranchStatus, WorktreeInfo};
 use git_warp::tui::{
-    AgentsDashboard, WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows,
-    build_dashboard_model, build_dashboard_model_windowed, build_worktree_switch_model,
+    AgentPresenceFilter, AgentRuntimeFilter, AgentsDashboard, DashboardFilters,
+    WorktreeRemovalBlock, WorktreeRuntimeStatus, build_cleanup_rows, build_dashboard_model,
+    build_dashboard_model_filtered_windowed, build_dashboard_model_windowed,
+    build_worktree_switch_model, build_worktree_switch_model_with_metadata,
     build_worktree_switch_model_with_protected_branches, build_worktree_switch_rows,
-    cleanup_reason_label_for_mode, next_bulk_selection_state, session_detail_lines,
+    cleanup_reason_label_for_mode, is_stale_session, next_bulk_selection_state,
+    session_detail_lines,
 };
 use std::{
     path::PathBuf,
@@ -227,6 +230,244 @@ fn test_agents_dashboard_accepts_discovery() {
     let _dashboard = AgentsDashboard::new(discovery);
 }
 
+fn dashboard_filter_sample(
+    runtime: AgentRuntime,
+    session_id: &str,
+    cwd: &str,
+    is_live: bool,
+    last_activity_hour: u32,
+) -> AgentSessionSummary {
+    let state = if is_live {
+        AgentSessionState::Working
+    } else {
+        AgentSessionState::Recent
+    };
+    let source = if is_live {
+        AgentSessionSource::LiveStatus
+    } else {
+        AgentSessionSource::SessionStore
+    };
+    sample_summary(
+        runtime,
+        session_id,
+        cwd,
+        state,
+        last_activity_hour,
+        is_live,
+        source,
+    )
+}
+
+#[test]
+fn test_is_stale_session_true_when_recent_and_older_than_a_day() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let mut session = dashboard_filter_sample(
+        AgentRuntime::Codex,
+        "stale",
+        "/repo/.worktrees/stale",
+        false,
+        11,
+    );
+    session.last_activity = now - chrono::Duration::hours(48);
+
+    assert!(is_stale_session(&session, now));
+}
+
+#[test]
+fn test_is_stale_session_false_when_live_even_if_old() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let mut session = dashboard_filter_sample(
+        AgentRuntime::Claude,
+        "live-old",
+        "/repo/.worktrees/live-old",
+        true,
+        11,
+    );
+    session.last_activity = now - chrono::Duration::hours(72);
+
+    assert!(!is_stale_session(&session, now));
+}
+
+#[test]
+fn test_is_stale_session_false_when_recent_but_fresh() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let mut session = dashboard_filter_sample(
+        AgentRuntime::Codex,
+        "fresh",
+        "/repo/.worktrees/fresh",
+        false,
+        11,
+    );
+    session.last_activity = now - chrono::Duration::hours(2);
+
+    assert!(!is_stale_session(&session, now));
+}
+
+#[test]
+fn test_build_dashboard_model_marks_stale_rows() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let mut stale = dashboard_filter_sample(
+        AgentRuntime::Codex,
+        "stale",
+        "/repo/.worktrees/stale",
+        false,
+        11,
+    );
+    stale.last_activity = now - chrono::Duration::hours(48);
+    let fresh = dashboard_filter_sample(
+        AgentRuntime::Codex,
+        "fresh",
+        "/repo/.worktrees/fresh",
+        false,
+        11,
+    );
+
+    let model = build_dashboard_model(&[stale, fresh], now);
+
+    let stale_row = model
+        .rows
+        .iter()
+        .find(|row| row.session.session_id.as_deref() == Some("stale"))
+        .expect("stale row");
+    let fresh_row = model
+        .rows
+        .iter()
+        .find(|row| row.session.session_id.as_deref() == Some("fresh"))
+        .expect("fresh row");
+    assert!(stale_row.is_stale);
+    assert!(!fresh_row.is_stale);
+}
+
+#[test]
+fn test_build_dashboard_model_filtered_filters_runtime_codex() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![
+        dashboard_filter_sample(
+            AgentRuntime::Claude,
+            "claude-1",
+            "/repo/.worktrees/claude-1",
+            true,
+            11,
+        ),
+        dashboard_filter_sample(
+            AgentRuntime::Codex,
+            "codex-1",
+            "/repo/.worktrees/codex-1",
+            true,
+            10,
+        ),
+    ];
+
+    let filters = DashboardFilters {
+        runtime: AgentRuntimeFilter::Codex,
+        presence: AgentPresenceFilter::All,
+    };
+    let model = build_dashboard_model_filtered_windowed(&sessions, now, 0, 10, filters);
+
+    assert_eq!(model.total_unfiltered, 2);
+    assert_eq!(model.total_rows, 1);
+    assert_eq!(model.rows[0].session.session_id.as_deref(), Some("codex-1"));
+}
+
+#[test]
+fn test_build_dashboard_model_filtered_filters_presence_live() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![
+        dashboard_filter_sample(
+            AgentRuntime::Codex,
+            "live-one",
+            "/repo/.worktrees/live-one",
+            true,
+            11,
+        ),
+        dashboard_filter_sample(
+            AgentRuntime::Codex,
+            "recent-one",
+            "/repo/.worktrees/recent-one",
+            false,
+            10,
+        ),
+    ];
+
+    let filters = DashboardFilters {
+        runtime: AgentRuntimeFilter::All,
+        presence: AgentPresenceFilter::Live,
+    };
+    let model = build_dashboard_model_filtered_windowed(&sessions, now, 0, 10, filters);
+
+    assert_eq!(model.rows.len(), 1);
+    assert_eq!(
+        model.rows[0].session.session_id.as_deref(),
+        Some("live-one")
+    );
+}
+
+#[test]
+fn test_build_dashboard_model_filter_summary_text_describes_active_filters() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![dashboard_filter_sample(
+        AgentRuntime::Codex,
+        "codex-1",
+        "/repo/.worktrees/codex-1",
+        true,
+        11,
+    )];
+
+    let filters = DashboardFilters {
+        runtime: AgentRuntimeFilter::Codex,
+        presence: AgentPresenceFilter::Live,
+    };
+    let model = build_dashboard_model_filtered_windowed(&sessions, now, 0, 10, filters);
+
+    assert_eq!(model.filter_summary, "Filter: Codex · live");
+}
+
+#[test]
+fn test_build_dashboard_model_filter_summary_empty_when_no_filters_active() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![dashboard_filter_sample(
+        AgentRuntime::Codex,
+        "codex-1",
+        "/repo/.worktrees/codex-1",
+        true,
+        11,
+    )];
+
+    let model =
+        build_dashboard_model_filtered_windowed(&sessions, now, 0, 10, DashboardFilters::default());
+
+    assert!(model.filter_summary.is_empty());
+}
+
+#[test]
+fn test_build_dashboard_model_filtered_empty_state_explains_filter() {
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+    let sessions = vec![dashboard_filter_sample(
+        AgentRuntime::Claude,
+        "claude-1",
+        "/repo/.worktrees/claude-1",
+        true,
+        11,
+    )];
+
+    let filters = DashboardFilters {
+        runtime: AgentRuntimeFilter::Codex,
+        presence: AgentPresenceFilter::All,
+    };
+    let model = build_dashboard_model_filtered_windowed(&sessions, now, 0, 10, filters);
+
+    assert!(model.rows.is_empty());
+    assert_eq!(model.total_unfiltered, 1);
+    assert!(
+        model
+            .empty_state_lines
+            .iter()
+            .any(|line| line.contains("filter")),
+        "expected empty state to mention the active filter, got {:?}",
+        model.empty_state_lines
+    );
+}
+
 #[test]
 fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
     let worktrees = vec![
@@ -274,6 +515,52 @@ fn test_build_worktree_switch_model_marks_state_and_detached_rows() {
     );
     assert_eq!(model.rows[1].branch_label, "(detached HEAD: abcdef01)");
     assert_eq!(model.rows[1].badges, vec!["detached", "occupied"]);
+}
+
+#[test]
+fn test_build_worktree_switch_model_marks_local_only_branches() {
+    let worktrees = vec![
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/tracked"),
+            branch: "tracked".to_string(),
+            head: "0123456789abcdef".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+        WorktreeInfo {
+            path: PathBuf::from("/repo/.worktrees/local-only"),
+            branch: "local-only".to_string(),
+            head: "abcdef0123456789".to_string(),
+            is_primary: false,
+            is_current: false,
+            is_detached: false,
+        },
+    ];
+    let statuses = vec![];
+    let local_only_branches = vec!["local-only".to_string()];
+
+    let model =
+        build_worktree_switch_model_with_metadata(&worktrees, &statuses, &[], &local_only_branches);
+
+    let tracked_row = model
+        .rows
+        .iter()
+        .find(|row| row.branch_label == "tracked")
+        .expect("tracked row");
+    assert!(!tracked_row.badges.iter().any(|badge| badge == "local-only"));
+
+    let local_only_row = model
+        .rows
+        .iter()
+        .find(|row| row.branch_label == "local-only")
+        .expect("local-only row");
+    assert!(
+        local_only_row
+            .badges
+            .iter()
+            .any(|badge| badge == "local-only")
+    );
 }
 
 #[test]
@@ -577,7 +864,14 @@ fn test_worktree_switch_model_blocks_removal_for_risky_rows() {
     );
     assert!(model.removal_at(0).is_none());
     assert!(model.removal_at(1).is_none());
-    assert!(model.removal_at(2).is_none());
+    let dirty_target = model
+        .removal_at(2)
+        .expect("dirty worktree should be force-removable");
+    assert_eq!(dirty_target.branch, "dirty");
+    assert!(
+        dirty_target.force,
+        "dirty worktree must request force removal"
+    );
     assert!(model.removal_at(3).is_none());
 }
 
@@ -674,16 +968,20 @@ fn test_worktree_switch_model_builds_batch_removal_plan_with_skips() {
         .batch_removal_at(&[0, 1, 2, 2, 99])
         .expect("selected rows should build a batch plan");
 
-    assert_eq!(batch.targets.len(), 1);
+    assert_eq!(batch.targets.len(), 2);
     assert_eq!(batch.targets[0].branch, "safe");
     assert_eq!(batch.targets[0].path, safe_path);
-    assert_eq!(batch.skipped.len(), 2);
-    assert_eq!(batch.skipped[0].branch_label, "dirty");
-    assert_eq!(batch.skipped[0].path, dirty_path);
-    assert_eq!(batch.skipped[0].reason, "dirty");
-    assert_eq!(batch.skipped[1].branch_label, "main");
-    assert_eq!(batch.skipped[1].path, primary_path);
-    assert_eq!(batch.skipped[1].reason, "primary, protected, current");
+    assert!(!batch.targets[0].force);
+    assert_eq!(batch.targets[1].branch, "dirty");
+    assert_eq!(batch.targets[1].path, dirty_path);
+    assert!(
+        batch.targets[1].force,
+        "dirty worktree must be queued with force"
+    );
+    assert_eq!(batch.skipped.len(), 1);
+    assert_eq!(batch.skipped[0].branch_label, "main");
+    assert_eq!(batch.skipped[0].path, primary_path);
+    assert_eq!(batch.skipped[0].reason, "primary, protected, current");
     assert!(model.batch_removal_at(&[]).is_none());
 }
 

@@ -83,14 +83,118 @@ pub struct DashboardRow {
     pub location_label: String,
     pub agent_label: String,
     pub relative_time: String,
+    pub is_stale: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DashboardModel {
     pub rows: Vec<DashboardRow>,
     pub total_rows: usize,
+    pub total_unfiltered: usize,
     pub start_index: usize,
     pub empty_state_lines: Vec<String>,
+    pub filter_summary: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum AgentRuntimeFilter {
+    #[default]
+    All,
+    Claude,
+    Codex,
+}
+
+impl AgentRuntimeFilter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Claude,
+            Self::Claude => Self::Codex,
+            Self::Codex => Self::All,
+        }
+    }
+
+    fn matches(self, runtime: AgentRuntime) -> bool {
+        match self {
+            Self::All => true,
+            Self::Claude => runtime == AgentRuntime::Claude,
+            Self::Codex => runtime == AgentRuntime::Codex,
+        }
+    }
+
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Claude => Some("Claude"),
+            Self::Codex => Some("Codex"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum AgentPresenceFilter {
+    #[default]
+    All,
+    Live,
+    Recent,
+}
+
+impl AgentPresenceFilter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Live,
+            Self::Live => Self::Recent,
+            Self::Recent => Self::All,
+        }
+    }
+
+    fn matches(self, session: &AgentSessionSummary, now: DateTime<Local>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Live => session.is_live,
+            Self::Recent => !session.is_live && !is_stale_session(session, now),
+        }
+    }
+
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Live => Some("live"),
+            Self::Recent => Some("recent"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub struct DashboardFilters {
+    pub runtime: AgentRuntimeFilter,
+    pub presence: AgentPresenceFilter,
+}
+
+impl DashboardFilters {
+    pub fn is_active(&self) -> bool {
+        self.runtime != AgentRuntimeFilter::All || self.presence != AgentPresenceFilter::All
+    }
+
+    pub fn summary(&self) -> String {
+        let parts: Vec<&'static str> = [self.runtime.label(), self.presence.label()]
+            .into_iter()
+            .flatten()
+            .collect();
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("Filter: {}", parts.join(" · "))
+        }
+    }
+}
+
+const STALE_THRESHOLD_HOURS: i64 = 24;
+
+pub fn is_stale_session(session: &AgentSessionSummary, now: DateTime<Local>) -> bool {
+    if session.is_live {
+        return false;
+    }
+    now.signed_duration_since(session.last_activity) > ChronoDuration::hours(STALE_THRESHOLD_HOURS)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -112,6 +216,7 @@ pub struct WorktreeSwitchTarget {
 pub struct WorktreeRemovalTarget {
     pub branch: String,
     pub path: PathBuf,
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -181,13 +286,19 @@ impl WorktreeSwitchModel {
 
     pub fn removal_at(&self, index: usize) -> Option<WorktreeRemovalTarget> {
         let row = self.rows.get(index)?;
-        if !row.removal_blockers.is_empty() {
+        if has_hard_blocker(&row.removal_blockers) {
             return None;
         }
+
+        let force = row
+            .removal_blockers
+            .iter()
+            .any(|blocker| is_soft_blocker(*blocker));
 
         Some(WorktreeRemovalTarget {
             branch: row.target.branch.clone()?,
             path: row.target.path.clone(),
+            force,
         })
     }
 
@@ -229,12 +340,21 @@ impl WorktreeSwitchModel {
     }
 }
 
+fn is_soft_blocker(blocker: WorktreeRemovalBlock) -> bool {
+    matches!(blocker, WorktreeRemovalBlock::Dirty)
+}
+
+fn has_hard_blocker(blockers: &[WorktreeRemovalBlock]) -> bool {
+    blockers.iter().any(|blocker| !is_soft_blocker(*blocker))
+}
+
 pub struct TuiApp {
     should_quit: bool,
     selected_index: usize,
     last_refresh: Instant,
     discovery: AgentDiscovery,
     sessions: Vec<AgentSessionSummary>,
+    filters: DashboardFilters,
 }
 
 impl TuiApp {
@@ -245,6 +365,7 @@ impl TuiApp {
             last_refresh: Instant::now() - REFRESH_INTERVAL,
             discovery,
             sessions: Vec::new(),
+            filters: DashboardFilters::default(),
         }
     }
 
@@ -311,12 +432,24 @@ impl TuiApp {
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            if self.selected_index < self.sessions.len().saturating_sub(1) {
+                            if self.selected_index < self.filtered_count().saturating_sub(1) {
                                 self.selected_index += 1;
                             }
                         }
                         KeyCode::Char('r') => {
                             self.refresh_sessions()?;
+                        }
+                        KeyCode::Char('t') => {
+                            self.filters.runtime = self.filters.runtime.next();
+                            self.selected_index = 0;
+                        }
+                        KeyCode::Char('p') => {
+                            self.filters.presence = self.filters.presence.next();
+                            self.selected_index = 0;
+                        }
+                        KeyCode::Char('c') => {
+                            self.filters = DashboardFilters::default();
+                            self.selected_index = 0;
                         }
                         _ => {}
                     }
@@ -333,13 +466,25 @@ impl TuiApp {
 
     fn refresh_sessions(&mut self) -> Result<()> {
         self.sessions = self.discovery.discover(Local::now())?;
-        if self.sessions.is_empty() {
+        let filtered = self.filtered_count();
+        if filtered == 0 {
             self.selected_index = 0;
         } else {
-            self.selected_index = self.selected_index.min(self.sessions.len() - 1);
+            self.selected_index = self.selected_index.min(filtered - 1);
         }
         self.last_refresh = Instant::now();
         Ok(())
+    }
+
+    fn filtered_count(&self) -> usize {
+        let now = Local::now();
+        self.sessions
+            .iter()
+            .filter(|session| {
+                self.filters.runtime.matches(session.runtime)
+                    && self.filters.presence.matches(session, now)
+            })
+            .count()
     }
 
     fn draw_agents_dashboard(&self, f: &mut Frame, now: DateTime<Local>) {
@@ -353,8 +498,24 @@ impl TuiApp {
             ])
             .split(f.size());
 
-        // Header
-        let header = Paragraph::new(format!("Warp Agents ({})", self.sessions.len()))
+        let preview_model = build_dashboard_model_filtered_windowed(
+            &self.sessions,
+            now,
+            self.selected_index,
+            1,
+            self.filters,
+        );
+        let header_text = if self.filters.is_active() {
+            format!(
+                "Warp Agents ({}/{}) — {}",
+                preview_model.total_rows,
+                preview_model.total_unfiltered,
+                preview_model.filter_summary
+            )
+        } else {
+            format!("Warp Agents ({})", preview_model.total_unfiltered)
+        };
+        let header = Paragraph::new(header_text)
             .style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -364,9 +525,10 @@ impl TuiApp {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
-        if self.sessions.is_empty() {
-            let model = build_dashboard_model(&[], now);
-            let empty_state = Paragraph::new(model.empty_state_lines.join("\n\n"))
+        if preview_model.total_rows == 0 {
+            let empty_model =
+                build_dashboard_model_filtered_windowed(&self.sessions, now, 0, 1, self.filters);
+            let empty_state = Paragraph::new(empty_model.empty_state_lines.join("\n\n"))
                 .block(Block::default().title("No Sessions").borders(Borders::ALL))
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Gray))
@@ -378,19 +540,22 @@ impl TuiApp {
                 .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .split(chunks[1]);
             let visible_capacity = content_chunks[0].height.saturating_sub(2).max(1) as usize;
-            let model = build_dashboard_model_windowed(
+            let model = build_dashboard_model_filtered_windowed(
                 &self.sessions,
                 now,
                 self.selected_index,
                 visible_capacity,
+                self.filters,
             );
 
             let session_items: Vec<ListItem> = model
                 .rows
                 .iter()
                 .map(|row| {
+                    let stale_marker = if row.is_stale { "~" } else { " " };
                     let text = format!(
-                        "{} {:<6} {:<10} {:<18} {:<18} {}",
+                        "{}{} {:<6} {:<10} {:<18} {:<18} {}",
+                        stale_marker,
                         row.state_symbol,
                         row.runtime_label,
                         truncate_label(row.state_label, 10),
@@ -398,7 +563,13 @@ impl TuiApp {
                         truncate_label(&row.agent_label, 18),
                         row.relative_time
                     );
-                    let style = Style::default().fg(session_state_color(row.session.state));
+                    let style = if row.is_stale {
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default().fg(session_state_color(row.session.state))
+                    };
                     ListItem::new(Line::from(text)).style(style)
                 })
                 .collect();
@@ -415,17 +586,22 @@ impl TuiApp {
             list_state.select(Some(self.selected_index.saturating_sub(model.start_index)));
             f.render_stateful_widget(sessions_list, content_chunks[0], &mut list_state);
 
-            if let Some(selected_session) = self.sessions.get(self.selected_index) {
-                let details = Paragraph::new(session_detail_lines(selected_session).join("\n"))
-                    .block(Block::default().title("Details").borders(Borders::ALL))
-                    .style(Style::default().fg(Color::White))
-                    .wrap(Wrap { trim: false });
+            if let Some(selected_row) = model
+                .rows
+                .get(self.selected_index.saturating_sub(model.start_index))
+            {
+                let details =
+                    Paragraph::new(session_detail_lines(&selected_row.session).join("\n"))
+                        .block(Block::default().title("Details").borders(Borders::ALL))
+                        .style(Style::default().fg(Color::White))
+                        .wrap(Wrap { trim: false });
                 f.render_widget(details, content_chunks[1]);
             }
         }
 
         // Help
-        let help_text = "↑↓/jk: Navigate | r: Refresh | q/Esc: Quit";
+        let help_text =
+            "↑↓/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | q/Esc: Quit";
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
@@ -450,6 +626,15 @@ pub fn build_worktree_switch_model_with_protected_branches(
     statuses: &[WorktreeRuntimeStatus],
     protected_branches: &[String],
 ) -> WorktreeSwitchModel {
+    build_worktree_switch_model_with_metadata(worktrees, statuses, protected_branches, &[])
+}
+
+pub fn build_worktree_switch_model_with_metadata(
+    worktrees: &[WorktreeInfo],
+    statuses: &[WorktreeRuntimeStatus],
+    protected_branches: &[String],
+    local_only_branches: &[String],
+) -> WorktreeSwitchModel {
     let mut rows = worktrees
         .iter()
         .enumerate()
@@ -457,6 +642,11 @@ pub fn build_worktree_switch_model_with_protected_branches(
             let status = statuses.iter().find(|status| status.path == worktree.path);
             let is_detached = worktree.branch.trim().is_empty() || worktree.is_detached;
             let is_protected = is_protected_branch(&worktree.branch, protected_branches);
+            let is_local_only = !is_detached
+                && !worktree.branch.is_empty()
+                && local_only_branches
+                    .iter()
+                    .any(|name| name == &worktree.branch);
             let removal_blockers = worktree_removal_blockers(worktree, status, protected_branches);
             let mut badges = Vec::new();
 
@@ -468,6 +658,9 @@ pub fn build_worktree_switch_model_with_protected_branches(
             }
             if is_detached {
                 badges.push("detached".to_string());
+            }
+            if is_local_only {
+                badges.push("local-only".to_string());
             }
             if status.is_some_and(|status| status.is_current) {
                 badges.push("current".to_string());
@@ -506,7 +699,8 @@ pub fn build_worktree_switch_model_with_protected_branches(
     let empty_state_lines = if rows.is_empty() {
         vec![
             "No Git worktrees found for this repository.".to_string(),
-            "Run `warp switch <branch>` to create one.".to_string(),
+            "Run `warp switch <branch>` to create one (local or remote branches both work)."
+                .to_string(),
         ]
     } else {
         Vec::new()
@@ -635,13 +829,38 @@ pub fn build_dashboard_model_windowed(
     selected_index: usize,
     visible_capacity: usize,
 ) -> DashboardModel {
-    let total_rows = sessions.len();
+    build_dashboard_model_filtered_windowed(
+        sessions,
+        now,
+        selected_index,
+        visible_capacity,
+        DashboardFilters::default(),
+    )
+}
+
+pub fn build_dashboard_model_filtered_windowed(
+    sessions: &[AgentSessionSummary],
+    now: DateTime<Local>,
+    selected_index: usize,
+    visible_capacity: usize,
+    filters: DashboardFilters,
+) -> DashboardModel {
+    let total_unfiltered = sessions.len();
+    let filtered: Vec<AgentSessionSummary> = sessions
+        .iter()
+        .filter(|session| {
+            filters.runtime.matches(session.runtime) && filters.presence.matches(session, now)
+        })
+        .cloned()
+        .collect();
+
+    let total_rows = filtered.len();
     let visible_capacity = visible_capacity.max(1).min(total_rows.max(1));
     let selected_index = selected_index.min(total_rows.saturating_sub(1));
     let start_index = dashboard_window_start(total_rows, selected_index, visible_capacity);
     let end_index = start_index.saturating_add(visible_capacity).min(total_rows);
 
-    let rows = sessions
+    let rows = filtered
         .get(start_index..end_index)
         .unwrap_or_default()
         .iter()
@@ -653,17 +872,28 @@ pub fn build_dashboard_model_windowed(
             location_label: session_location_label(&session),
             agent_label: session.agent_label.clone(),
             relative_time: relative_time_label(session.last_activity, now),
+            is_stale: is_stale_session(&session, now),
             session,
         })
         .collect::<Vec<_>>();
 
     let empty_state_lines = if rows.is_empty() {
-        vec![
-            "No agent sessions to show for this repository.".to_string(),
-            "Recent Claude/Codex sessions appear here for 7 days.".to_string(),
-            "Hint: run `warp hooks-install --runtime all --level user` to enable live monitoring."
-                .to_string(),
-        ]
+        if filters.is_active() && total_unfiltered > 0 {
+            vec![
+                format!(
+                    "No sessions match the active filter ({}/{} hidden).",
+                    total_unfiltered, total_unfiltered
+                ),
+                "Press `t` to cycle runtime, `p` for presence, or `c` to clear.".to_string(),
+            ]
+        } else {
+            vec![
+                "No agent sessions to show for this repository.".to_string(),
+                "Recent Claude/Codex sessions appear here for 7 days.".to_string(),
+                "Hint: run `warp hooks-install --runtime all --level user` to enable live monitoring."
+                    .to_string(),
+            ]
+        }
     } else {
         Vec::new()
     };
@@ -671,8 +901,10 @@ pub fn build_dashboard_model_windowed(
     DashboardModel {
         rows,
         total_rows,
+        total_unfiltered,
         start_index,
         empty_state_lines,
+        filter_summary: filters.summary(),
     }
 }
 
@@ -1061,10 +1293,17 @@ impl WorktreeSwitchTui {
                                 notice = Some("No worktrees selected".to_string());
                             }
                         } else if let Some(removal) = self.model.removal_at(selected_index) {
-                            notice = Some(format!(
-                                "Remove '{}' and delete its local branch? y/N",
-                                removal.branch
-                            ));
+                            notice = Some(if removal.force {
+                                format!(
+                                    "⚠️  Worktree '{}' is dirty — uncommitted changes will be lost. Force remove? y/N",
+                                    removal.branch
+                                )
+                            } else {
+                                format!(
+                                    "Remove '{}' and delete its local branch? y/N",
+                                    removal.branch
+                                )
+                            });
                             pending_remove = Some(PendingWorktreeRemoval::Single(removal));
                         } else if let Some(row) = self.model.rows.get(selected_index) {
                             let reason = if row.removal_blockers.is_empty() {
@@ -1205,11 +1444,21 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
     let targets = batch
         .targets
         .iter()
-        .map(|target| format!("{} ({})", target.branch, target.path.display()))
+        .map(|target| {
+            if target.force {
+                format!("{} ({}) [dirty — force]", target.branch, target.path.display())
+            } else {
+                format!("{} ({})", target.branch, target.path.display())
+            }
+        })
         .collect::<Vec<_>>()
         .join("; ");
     if !targets.is_empty() {
         parts.push(format!("targets: {targets}"));
+    }
+
+    if batch.targets.iter().any(|target| target.force) {
+        parts.push("⚠️  dirty worktrees will be force-removed; uncommitted changes lost".to_string());
     }
 
     if !batch.skipped.is_empty() {
