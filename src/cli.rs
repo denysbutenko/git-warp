@@ -152,6 +152,16 @@ pub enum Commands {
     },
 }
 
+enum DoctorShell {
+    Known {
+        name: &'static str,
+        rc_path: PathBuf,
+    },
+    Unknown {
+        value: Option<String>,
+    },
+}
+
 struct DoctorInstallEntry {
     path: PathBuf,
     active: bool,
@@ -1698,6 +1708,7 @@ impl Cli {
         let hooks_installed = matches!(hooks_summary.severity, DoctorHookSeverity::Healthy);
 
         Self::report_doctor_install(&mut next_steps);
+        Self::report_doctor_shell_integration(&mut next_steps);
 
         if repo.is_some() && config_manager.config_exists() && hooks_installed {
             next_steps.push("Run `warp switch <branch>` to create or open a worktree.".to_string());
@@ -1787,6 +1798,162 @@ impl Cli {
         } else {
             Self::doctor_ok("Install", detail);
         }
+    }
+
+    fn report_doctor_shell_integration(next_steps: &mut Vec<String>) {
+        let active = Self::resolve_warp_on_path();
+        let default_dir = Self::doctor_default_install_dir();
+        let path_dirs = Self::path_dirs();
+        let install_on_path = default_dir
+            .as_ref()
+            .map(|dir| path_dirs.iter().any(|d| Self::same_path(d, dir)))
+            .unwrap_or(false);
+
+        match (&active, &default_dir) {
+            (Some(path), _) => {
+                Self::doctor_ok("Shell PATH", format!("active warp at {}", path.display()))
+            }
+            (None, Some(dir)) => {
+                Self::doctor_warn(
+                    "Shell PATH",
+                    format!("no warp on PATH (expected {}/warp)", dir.display()),
+                );
+                next_steps.push(format!(
+                    "Add `{}` to PATH (e.g. `export PATH=\"{}:$PATH\"`).",
+                    dir.display(),
+                    dir.display()
+                ));
+            }
+            (None, None) => {
+                Self::doctor_warn("Shell PATH", "no warp on PATH and HOME is not set");
+            }
+        }
+
+        if let Some(dir) = &default_dir {
+            if !install_on_path {
+                Self::doctor_warn(
+                    "Default install path",
+                    format!("{} is not in PATH", dir.display()),
+                );
+                next_steps.push(format!(
+                    "Add `{}` to PATH (e.g. `export PATH=\"{}:$PATH\"`) so installed warp is found.",
+                    dir.display(),
+                    dir.display()
+                ));
+            } else if let Some(active_path) = &active {
+                let installed = dir.join("warp");
+                if installed.is_file() && !Self::same_path(active_path, &installed) {
+                    Self::doctor_warn(
+                        "Default install path",
+                        format!(
+                            "{} is on PATH but a different warp resolves first at {}",
+                            dir.display(),
+                            active_path.display()
+                        ),
+                    );
+                    next_steps.push(format!(
+                        "Reorder PATH to put `{}` before `{}`.",
+                        dir.display(),
+                        active_path
+                            .parent()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| active_path.display().to_string())
+                    ));
+                }
+            }
+        }
+
+        let shell = Self::detect_shell();
+        match &shell {
+            DoctorShell::Known { name, rc_path } => {
+                let rc_label = rc_path.display().to_string();
+                let configured = Self::shell_rc_has_warp_integration(rc_path);
+                if configured {
+                    Self::doctor_ok(
+                        "Shell integration",
+                        format!("warp_cd helper detected in {rc_label}"),
+                    );
+                } else {
+                    Self::doctor_warn(
+                        "Shell integration",
+                        format!("warp_cd helper not found in {rc_label}"),
+                    );
+                    next_steps.push(format!(
+                        "Run `warp shell-config {name}` and append the output to {rc_label} to enable `warp_cd` and completions."
+                    ));
+                }
+            }
+            DoctorShell::Unknown { value } => {
+                let detail = match value {
+                    Some(v) => format!("unsupported shell `{v}`; supported: bash, zsh, fish"),
+                    None => "SHELL is not set".to_string(),
+                };
+                Self::doctor_warn("Shell integration", detail);
+                next_steps.push(
+                    "Set SHELL to bash, zsh, or fish, then run `warp shell-config` for setup snippets.".to_string(),
+                );
+            }
+        }
+    }
+
+    fn doctor_default_install_dir() -> Option<PathBuf> {
+        if let Some(value) = std::env::var_os("GIT_WARP_DEFAULT_INSTALL_DIR") {
+            let path = PathBuf::from(value);
+            if !path.as_os_str().is_empty() {
+                return Some(path);
+            }
+        }
+        dirs::home_dir().map(|h| h.join(".local").join("bin"))
+    }
+
+    fn path_dirs() -> Vec<PathBuf> {
+        std::env::var_os("PATH")
+            .map(|value| std::env::split_paths(&value).collect())
+            .unwrap_or_default()
+    }
+
+    fn same_path(a: &Path, b: &Path) -> bool {
+        let canon_a = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+        let canon_b = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+        canon_a == canon_b
+    }
+
+    fn detect_shell() -> DoctorShell {
+        let raw = std::env::var("SHELL").ok().filter(|v| !v.trim().is_empty());
+        let basename = raw.as_deref().and_then(|value| {
+            value
+                .rsplit('/')
+                .next()
+                .map(str::to_string)
+                .filter(|v| !v.is_empty())
+        });
+
+        let home = match dirs::home_dir() {
+            Some(h) => h,
+            None => return DoctorShell::Unknown { value: raw },
+        };
+
+        match basename.as_deref() {
+            Some("bash") => DoctorShell::Known {
+                name: "bash",
+                rc_path: home.join(".bashrc"),
+            },
+            Some("zsh") => DoctorShell::Known {
+                name: "zsh",
+                rc_path: home.join(".zshrc"),
+            },
+            Some("fish") => DoctorShell::Known {
+                name: "fish",
+                rc_path: home.join(".config").join("fish").join("config.fish"),
+            },
+            _ => DoctorShell::Unknown { value: raw },
+        }
+    }
+
+    fn shell_rc_has_warp_integration(rc_path: &Path) -> bool {
+        std::fs::read_to_string(rc_path)
+            .map(|content| content.contains("warp_cd") || content.contains("warp __complete"))
+            .unwrap_or(false)
     }
 
     fn doctor_install_candidates() -> Vec<DoctorInstallEntry> {
