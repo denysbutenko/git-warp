@@ -53,7 +53,7 @@ The installer defaults to the latest documented release. Pin a version with
 `GIT_WARP_VERSION`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_VERSION=v0.2.0 sh
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_VERSION=v0.3.0 sh
 ```
 
 ## Supported Prebuilt Binaries

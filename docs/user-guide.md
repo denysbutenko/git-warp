@@ -84,7 +84,11 @@ warp doctor
 ```
 
 `warp doctor` checks repository detection, config path, worktree base path, CoW
-support, terminal mode, and hook setup.
+support, terminal mode, install layout (lists detected `warp` binaries and
+warns when more than one is on `PATH`), and hook setup. Hook output names each
+runtime/scope and reports `Complete`, `Partial`, `Missing`, or `Conflicting`
+with the exact `warp hooks-install --level <scope> --runtime <runtime>` repair
+command.
 
 ## Quick Start
 
@@ -124,6 +128,13 @@ warp switch --latest
 warp switch --waiting
 ```
 
+`warp switch` classifies the target as existing worktree, local branch, remote
+branch, or new branch and prints a labeled status line. When a branch only
+exists on a remote, Git-Warp creates a local tracking branch from that remote
+ref instead of branching from `HEAD`. Running bare `warp` opens an interactive
+switcher with a `local-only` badge for branches with no matching remote ref;
+`Space` and `a` toggle multi-select for batch worktree removal.
+
 Terminal handoff modes:
 
 ```bash
@@ -142,7 +153,11 @@ warp ls --debug
 ```
 
 The list output marks useful state such as primary, current, dirty, detached,
-and busy worktrees. `--debug` includes additional details for diagnostics.
+and busy worktrees. Rows are ordered current → primary → dirty → busy →
+detached → clean, with a one-line summary header and distinct row icons so
+busy repos stay scannable. The `[primary current dirty detached busy]` label
+tokens are preserved for script consumers. `--debug` includes additional
+details for diagnostics.
 
 ## Cleanup
 
@@ -171,6 +186,18 @@ warp cleanup --mode merged --no-kill
 ```
 
 Use `--dry-run` first when you are unsure what a cleanup mode will select.
+
+Both `warp cleanup` and `warp --dry-run cleanup` print:
+
+- the resolved base branch,
+- worktrees skipped from cleanup (primary, base branch, protected, detached, no
+  branch checked out) with structured reasons,
+- mode-excluded entries,
+- candidate tags (`merged` / `identical` / `no remote` / `all-mode`),
+- a `process-busy` flag from a pre-confirm process preview.
+
+`--force` can also remove dirty worktrees when you intentionally bypass safety
+checks.
 
 ## Agent Session Dashboard
 
