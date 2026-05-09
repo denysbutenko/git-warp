@@ -263,12 +263,20 @@ app = "auto"
 auto_activate = true
 init_commands = []
 
+[post_create]
+auto_install = true
+
 [agent]
 enabled = true
 refresh_rate = 1000
 max_activities = 100
 claude_hooks = true
 ```
+
+`post_create.auto_install` runs the matching `<manager> install` after Git-Warp
+creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` →
+`yarn.lock` → `bun.lockb` → `package-lock.json`; the first match wins. Set
+`auto_install = false` to skip the install step entirely.
 
 Environment variables override config file values:
 
@@ -314,6 +322,20 @@ warp --terminal echo switch branch-name
 ```
 
 Then manually `cd` into the printed path.
+
+### Skip Auto-Install After Worktree Creation
+
+If you do not want Git-Warp to run `<manager> install` after creating a
+worktree (for example, when the install step is slow or managed elsewhere),
+set:
+
+```toml
+[post_create]
+auto_install = false
+```
+
+in `~/.config/git-warp/config.toml`, or export
+`GIT_WARP_POST_CREATE_AUTO_INSTALL=false`.
 
 ### Cleanup Is Blocked
 
