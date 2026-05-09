@@ -1,5 +1,5 @@
 use git_warp::config::{
-    AgentConfig, Config, ConfigManager, GitConfig, ProcessConfig, TerminalConfig,
+    AgentConfig, Config, ConfigManager, GitConfig, PostCreateConfig, ProcessConfig, TerminalConfig,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -61,6 +61,9 @@ fn test_config_with_custom_values() {
             refresh_rate: 2000,
             max_activities: 50,
             claude_hooks: false,
+        },
+        post_create: PostCreateConfig {
+            auto_install: false,
         },
     };
 

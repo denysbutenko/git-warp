@@ -1,50 +1,109 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageManager {
+    Pnpm,
+    Yarn,
+    Bun,
+    Npm,
+}
+
+impl PackageManager {
+    pub fn binary(self) -> &'static str {
+        match self {
+            PackageManager::Pnpm => "pnpm",
+            PackageManager::Yarn => "yarn",
+            PackageManager::Bun => "bun",
+            PackageManager::Npm => "npm",
+        }
+    }
+
+    pub fn install_label(self) -> &'static str {
+        match self {
+            PackageManager::Pnpm => "pnpm install",
+            PackageManager::Yarn => "yarn install",
+            PackageManager::Bun => "bun install",
+            PackageManager::Npm => "npm install",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostCreateSetupStatus {
     SkippedExistingWorktree,
-    SkippedNonPnpmRepo,
-    Installed,
-    Warned(String),
+    SkippedDisabled,
+    SkippedNoLockfile,
+    Installed(PackageManager),
+    Warned {
+        manager: PackageManager,
+        reason: String,
+    },
 }
+
+const LOCKFILES: &[(&str, PackageManager)] = &[
+    ("pnpm-lock.yaml", PackageManager::Pnpm),
+    ("yarn.lock", PackageManager::Yarn),
+    ("bun.lockb", PackageManager::Bun),
+    ("package-lock.json", PackageManager::Npm),
+];
 
 pub fn run_post_create_setup<P: AsRef<Path>>(
     worktree_path: P,
     newly_created: bool,
+    auto_install: bool,
 ) -> PostCreateSetupStatus {
-    run_post_create_setup_with_pnpm(worktree_path.as_ref(), newly_created, Path::new("pnpm"))
+    run_post_create_setup_with_resolver(worktree_path.as_ref(), newly_created, auto_install, |m| {
+        PathBuf::from(m.binary())
+    })
 }
 
-fn run_post_create_setup_with_pnpm(
+fn run_post_create_setup_with_resolver<F>(
     worktree_path: &Path,
     newly_created: bool,
-    pnpm_path: &Path,
-) -> PostCreateSetupStatus {
+    auto_install: bool,
+    resolve_binary: F,
+) -> PostCreateSetupStatus
+where
+    F: Fn(PackageManager) -> PathBuf,
+{
     if !newly_created {
         return PostCreateSetupStatus::SkippedExistingWorktree;
     }
 
-    if !is_pnpm_repo(worktree_path) {
-        return PostCreateSetupStatus::SkippedNonPnpmRepo;
+    if !auto_install {
+        return PostCreateSetupStatus::SkippedDisabled;
     }
 
-    match Command::new(pnpm_path)
+    let Some(manager) = detect_manager(worktree_path) else {
+        return PostCreateSetupStatus::SkippedNoLockfile;
+    };
+
+    let binary = resolve_binary(manager);
+    match Command::new(&binary)
         .arg("install")
         .current_dir(worktree_path)
         .output()
     {
-        Ok(output) if output.status.success() => PostCreateSetupStatus::Installed,
-        Ok(output) => PostCreateSetupStatus::Warned(command_failure_message(&output)),
-        Err(error) => PostCreateSetupStatus::Warned(error.to_string()),
+        Ok(output) if output.status.success() => PostCreateSetupStatus::Installed(manager),
+        Ok(output) => PostCreateSetupStatus::Warned {
+            manager,
+            reason: command_failure_message(manager, &output),
+        },
+        Err(error) => PostCreateSetupStatus::Warned {
+            manager,
+            reason: error.to_string(),
+        },
     }
 }
 
-fn is_pnpm_repo(worktree_path: &Path) -> bool {
-    worktree_path.join("package.json").is_file() && worktree_path.join("pnpm-lock.yaml").is_file()
+fn detect_manager(worktree_path: &Path) -> Option<PackageManager> {
+    LOCKFILES
+        .iter()
+        .find_map(|(lockfile, manager)| worktree_path.join(lockfile).is_file().then_some(*manager))
 }
 
-fn command_failure_message(output: &std::process::Output) -> String {
+fn command_failure_message(manager: PackageManager, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
         return stderr;
@@ -56,8 +115,8 @@ fn command_failure_message(output: &std::process::Output) -> String {
     }
 
     match output.status.code() {
-        Some(code) => format!("pnpm install exited with status {}", code),
-        None => "pnpm install terminated by signal".to_string(),
+        Some(code) => format!("{} exited with status {}", manager.install_label(), code),
+        None => format!("{} terminated by signal", manager.install_label()),
     }
 }
 
@@ -76,82 +135,217 @@ mod tests {
         fs::set_permissions(path, permissions).unwrap();
     }
 
-    fn create_pnpm_repo(path: &Path) {
-        fs::write(path.join("package.json"), r#"{"name":"test-repo"}"#).unwrap();
-        fs::write(path.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'").unwrap();
+    fn write_marker_script(path: &Path, marker: &Path) {
+        fs::write(
+            path,
+            format!(
+                "#!/bin/sh\nprintf \"%s\" \"$PWD\" > \"{}\"\nexit 0\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        make_executable(path);
+    }
+
+    fn write_failing_script(path: &Path) {
+        fs::write(path, "#!/bin/sh\necho \"install failed\" >&2\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        make_executable(path);
+    }
+
+    fn resolver_for(manager: PackageManager, path: PathBuf) -> impl Fn(PackageManager) -> PathBuf {
+        move |m| {
+            assert_eq!(m, manager);
+            path.clone()
+        }
+    }
+
+    fn write_package_json(dir: &Path) {
+        fs::write(dir.join("package.json"), r#"{"name":"test-repo"}"#).unwrap();
     }
 
     #[test]
-    fn test_run_post_create_setup_skips_existing_worktree() {
-        let temp_dir = tempdir().unwrap();
-        create_pnpm_repo(temp_dir.path());
+    fn test_skips_existing_worktree() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("pnpm-lock.yaml"), "").unwrap();
 
-        let status =
-            run_post_create_setup_with_pnpm(temp_dir.path(), false, Path::new("/missing/pnpm"));
+        let status = run_post_create_setup_with_resolver(temp.path(), false, true, |m| {
+            PathBuf::from(format!("/missing/{}", m.binary()))
+        });
 
         assert_eq!(status, PostCreateSetupStatus::SkippedExistingWorktree);
     }
 
     #[test]
-    fn test_run_post_create_setup_skips_non_pnpm_repo() {
-        let temp_dir = tempdir().unwrap();
-        fs::write(
-            temp_dir.path().join("package.json"),
-            r#"{"name":"test-repo"}"#,
-        )
-        .unwrap();
+    fn test_skips_when_auto_install_disabled() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("pnpm-lock.yaml"), "").unwrap();
 
-        let status =
-            run_post_create_setup_with_pnpm(temp_dir.path(), true, Path::new("/missing/pnpm"));
+        let status = run_post_create_setup_with_resolver(temp.path(), true, false, |m| {
+            PathBuf::from(format!("/missing/{}", m.binary()))
+        });
 
-        assert_eq!(status, PostCreateSetupStatus::SkippedNonPnpmRepo);
+        assert_eq!(status, PostCreateSetupStatus::SkippedDisabled);
     }
 
     #[test]
-    fn test_run_post_create_setup_runs_pnpm_install_for_new_pnpm_repo() {
-        let temp_dir = tempdir().unwrap();
-        create_pnpm_repo(temp_dir.path());
+    fn test_skips_when_no_lockfile() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
 
-        let pnpm_path = temp_dir.path().join("fake-pnpm");
-        let marker_path = temp_dir.path().join("pnpm-ran.txt");
-        fs::write(
-            &pnpm_path,
-            format!(
-                "#!/bin/sh\nprintf \"%s\" \"$PWD\" > \"{}\"\nexit 0\n",
-                marker_path.display()
-            ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        make_executable(&pnpm_path);
+        let status = run_post_create_setup_with_resolver(temp.path(), true, true, |m| {
+            PathBuf::from(format!("/missing/{}", m.binary()))
+        });
 
-        let status = run_post_create_setup_with_pnpm(temp_dir.path(), true, &pnpm_path);
-
-        assert_eq!(status, PostCreateSetupStatus::Installed);
-        let recorded_path = fs::canonicalize(fs::read_to_string(marker_path).unwrap()).unwrap();
-        let expected_path = fs::canonicalize(temp_dir.path()).unwrap();
-        assert_eq!(recorded_path, expected_path);
+        assert_eq!(status, PostCreateSetupStatus::SkippedNoLockfile);
     }
 
     #[test]
-    fn test_run_post_create_setup_warns_on_failed_install() {
-        let temp_dir = tempdir().unwrap();
-        create_pnpm_repo(temp_dir.path());
+    fn test_runs_pnpm_when_pnpm_lockfile_present() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("pnpm-lock.yaml"), "").unwrap();
 
-        let pnpm_path = temp_dir.path().join("fake-pnpm");
-        fs::write(
-            &pnpm_path,
-            "#!/bin/sh\necho \"install failed\" >&2\nexit 1\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        make_executable(&pnpm_path);
+        let bin = temp.path().join("fake-pnpm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
 
-        let status = run_post_create_setup_with_pnpm(temp_dir.path(), true, &pnpm_path);
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Pnpm, bin),
+        );
 
         assert_eq!(
             status,
-            PostCreateSetupStatus::Warned("install failed".to_string())
+            PostCreateSetupStatus::Installed(PackageManager::Pnpm)
+        );
+        let recorded = fs::canonicalize(fs::read_to_string(marker).unwrap()).unwrap();
+        let expected = fs::canonicalize(temp.path()).unwrap();
+        assert_eq!(recorded, expected);
+    }
+
+    #[test]
+    fn test_runs_yarn_when_yarn_lockfile_present() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("yarn.lock"), "").unwrap();
+
+        let bin = temp.path().join("fake-yarn");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Yarn, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Yarn)
+        );
+    }
+
+    #[test]
+    fn test_runs_bun_when_bun_lockfile_present() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("bun.lockb"), "").unwrap();
+
+        let bin = temp.path().join("fake-bun");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Bun, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Bun)
+        );
+    }
+
+    #[test]
+    fn test_runs_npm_when_npm_lockfile_present() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("package-lock.json"), "").unwrap();
+
+        let bin = temp.path().join("fake-npm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Npm, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Npm)
+        );
+    }
+
+    #[test]
+    fn test_pnpm_wins_over_other_lockfiles() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("pnpm-lock.yaml"), "").unwrap();
+        fs::write(temp.path().join("yarn.lock"), "").unwrap();
+        fs::write(temp.path().join("bun.lockb"), "").unwrap();
+        fs::write(temp.path().join("package-lock.json"), "").unwrap();
+
+        let bin = temp.path().join("fake-pnpm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Pnpm, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Pnpm)
+        );
+    }
+
+    #[test]
+    fn test_warns_on_failed_install() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("yarn.lock"), "").unwrap();
+
+        let bin = temp.path().join("fake-yarn");
+        write_failing_script(&bin);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Yarn, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Warned {
+                manager: PackageManager::Yarn,
+                reason: "install failed".to_string(),
+            }
         );
     }
 }

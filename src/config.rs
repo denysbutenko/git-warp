@@ -40,6 +40,10 @@ pub struct Config {
     /// Agent monitoring settings
     #[serde(default)]
     pub agent: AgentConfig,
+
+    /// Post-create setup settings
+    #[serde(default)]
+    pub post_create: PostCreateConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +94,14 @@ pub struct TerminalConfig {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub init_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostCreateConfig {
+    /// Run `<manager> install` after creating a new worktree
+    /// when a recognized JS lockfile (pnpm/yarn/bun/npm) is present
+    #[serde(default = "default_true")]
+    pub auto_install: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,7 +172,14 @@ impl Default for Config {
             process: ProcessConfig::default(),
             terminal: TerminalConfig::default(),
             agent: AgentConfig::default(),
+            post_create: PostCreateConfig::default(),
         }
+    }
+}
+
+impl Default for PostCreateConfig {
+    fn default() -> Self {
+        Self { auto_install: true }
     }
 }
 
@@ -288,6 +307,11 @@ auto_activate = {}
 # Commands to run after changing into a worktree
 init_commands = []
 
+[post_create]
+# Run the matching `<manager> install` after creating a new worktree
+# when a recognized JS lockfile (pnpm/yarn/bun/npm) is present
+auto_install = {}
+
 [agent]
 # Enable agent monitoring
 enabled = {}
@@ -313,6 +337,7 @@ claude_hooks = {}
             config.process.kill_timeout,
             config.terminal.app,
             config.terminal.auto_activate,
+            config.post_create.auto_install,
             config.agent.enabled,
             config.agent.refresh_rate,
             config.agent.max_activities,
@@ -486,5 +511,22 @@ mod tests {
         assert!(sample.contains("[git]"));
         assert!(sample.contains("[process]"));
         assert!(sample.contains("[agent]"));
+        assert!(sample.contains("[post_create]"));
+        assert!(sample.contains("auto_install"));
+    }
+
+    #[test]
+    fn test_post_create_defaults() {
+        let config = Config::default();
+        assert_eq!(config.post_create.auto_install, true);
+    }
+
+    #[test]
+    fn test_post_create_serialization_roundtrip() {
+        let mut config = Config::default();
+        config.post_create.auto_install = false;
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.post_create.auto_install, false);
     }
 }

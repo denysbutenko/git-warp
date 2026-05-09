@@ -173,6 +173,9 @@ app = "auto"
 auto_activate = true
 init_commands = []
 
+[post_create]
+auto_install = true
+
 [agent]
 enabled = true
 refresh_rate = 1000
@@ -191,6 +194,12 @@ export GIT_WARP_WORKTREES_PATH=/custom/worktrees
 
 `terminal.init_commands` run after Git-Warp changes into the worktree for
 terminal handoff modes that print or send shell commands.
+
+`post_create.auto_install` controls whether Git-Warp runs the matching
+`<manager> install` after creating a new worktree. Lockfile detection order is
+`pnpm-lock.yaml` → `yarn.lock` → `bun.lockb` → `package-lock.json`; the first
+match wins. Set `auto_install = false` (or
+`GIT_WARP_POST_CREATE_AUTO_INSTALL=false`) to skip the install step entirely.
 
 ## Shell Integration
 

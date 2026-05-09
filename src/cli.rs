@@ -801,18 +801,29 @@ impl Cli {
 
         Self::record_branch_checkout(&mut report, &worktree_path, &branch, checkout_warning);
 
-        match run_post_create_setup(&worktree_path, worktree_created) {
-            PostCreateSetupStatus::Installed => {
-                println!("📦 Detected pnpm repo, ran `pnpm install`");
-            }
-            PostCreateSetupStatus::Warned(reason) => {
+        match run_post_create_setup(
+            &worktree_path,
+            worktree_created,
+            config.post_create.auto_install,
+        ) {
+            PostCreateSetupStatus::Installed(manager) => {
                 println!(
-                    "⚠️  Detected pnpm repo but `pnpm install` failed: {}",
+                    "📦 Detected {} repo, ran `{}`",
+                    manager.binary(),
+                    manager.install_label()
+                );
+            }
+            PostCreateSetupStatus::Warned { manager, reason } => {
+                println!(
+                    "⚠️  Detected {} repo but `{}` failed: {}",
+                    manager.binary(),
+                    manager.install_label(),
                     reason
                 );
             }
             PostCreateSetupStatus::SkippedExistingWorktree
-            | PostCreateSetupStatus::SkippedNonPnpmRepo => {}
+            | PostCreateSetupStatus::SkippedDisabled
+            | PostCreateSetupStatus::SkippedNoLockfile => {}
         }
 
         let terminal_mode = if let Some(mode_str) = &self.terminal {
