@@ -226,12 +226,8 @@ impl Default for AgentConfig {
 }
 
 impl Config {
-    /// Create a configuration with intelligent defaults
-    pub fn with_defaults() -> Self {
-        Self::default()
-    }
-
     /// Update configuration from environment variables
+    #[allow(dead_code)] // Exercised by config_tests integration tests.
     pub fn apply_env_overrides(&mut self) {
         // Terminal mode
         if let Ok(mode) = std::env::var("GIT_WARP_TERMINAL_MODE") {
@@ -255,6 +251,7 @@ impl Config {
     }
 
     /// Generate a sample configuration file content
+    #[allow(dead_code)] // Exercised by config_tests integration tests.
     pub fn sample_config() -> String {
         let config = Config::default();
         format!(
@@ -383,12 +380,8 @@ impl ConfigManager {
         &self.config
     }
 
-    /// Get a mutable reference to the configuration
-    pub fn get_mut(&mut self) -> &mut Config {
-        &mut self.config
-    }
-
     /// Save the configuration to file
+    #[allow(dead_code)] // Exercised by config_tests integration tests.
     pub fn save(&self) -> Result<()> {
         self.save_config(&self.config_path, &self.config)
     }
@@ -427,11 +420,6 @@ impl ConfigManager {
     pub fn config_exists(&self) -> bool {
         self.config_path.exists()
     }
-
-    /// Generate and display sample configuration
-    pub fn show_sample_config(&self) {
-        println!("{}", Config::sample_config());
-    }
 }
 
 /// Get the path to the configuration file
@@ -452,8 +440,8 @@ mod tests {
     fn test_config_defaults() {
         let config = Config::default();
         assert_eq!(config.terminal_mode, "tab");
-        assert_eq!(config.use_cow, true);
-        assert_eq!(config.auto_confirm, false);
+        assert!(config.use_cow);
+        assert!(!config.auto_confirm);
         assert_eq!(config.git.default_branch, "main");
         assert_eq!(config.process.kill_timeout, 5);
     }
@@ -495,7 +483,7 @@ mod tests {
         config.apply_env_overrides();
 
         assert_eq!(config.terminal_mode, "window");
-        assert_eq!(config.auto_confirm, true);
+        assert!(config.auto_confirm);
 
         // Clean up
         unsafe {
@@ -518,7 +506,7 @@ mod tests {
     #[test]
     fn test_post_create_defaults() {
         let config = Config::default();
-        assert_eq!(config.post_create.auto_install, true);
+        assert!(config.post_create.auto_install);
     }
 
     #[test]
@@ -527,6 +515,6 @@ mod tests {
         config.post_create.auto_install = false;
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.post_create.auto_install, false);
+        assert!(!parsed.post_create.auto_install);
     }
 }

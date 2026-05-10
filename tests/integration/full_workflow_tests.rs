@@ -3,7 +3,6 @@ use git_warp::cow::clone_directory;
 use git_warp::git::GitRepository;
 use git_warp::process::ProcessManager;
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 use tempfile::tempdir;
 
@@ -47,13 +46,13 @@ fn test_complete_worktree_creation_workflow() {
 
     // Commit the work
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["commit", "-m", "Add feature implementation"])
+        .args(["commit", "-m", "Add feature implementation"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
@@ -223,7 +222,7 @@ auto_fetch = false
     fs::write(&config_path, config_content).unwrap();
 
     // Test layered configuration loading
-    let manager = ConfigManager {
+    let _manager = ConfigManager {
         config: Config::default(),
         config_path: config_path.clone(),
     };
@@ -288,13 +287,13 @@ fn test_branch_analysis_and_cleanup_workflow() {
         .unwrap();
 
         Command::new("git")
-            .args(&["add", "."])
+            .args(["add", "."])
             .current_dir(&worktree_path)
             .output()
             .unwrap();
 
         Command::new("git")
-            .args(&["commit", "-m", &format!("Add content for {}", branch_name)])
+            .args(["commit", "-m", &format!("Add content for {}", branch_name)])
             .current_dir(&worktree_path)
             .output()
             .unwrap();
@@ -303,7 +302,7 @@ fn test_branch_analysis_and_cleanup_workflow() {
         if should_merge {
             std::env::set_current_dir(repo_path).unwrap();
             Command::new("git")
-                .args(&["merge", branch_name])
+                .args(["merge", branch_name])
                 .current_dir(repo_path)
                 .output()
                 .unwrap();
@@ -412,20 +411,20 @@ fn setup_test_repository() -> tempfile::TempDir {
 
     // Initialize git repo
     Command::new("git")
-        .args(&["init"])
+        .args(["init"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     // Configure git
     Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
+        .args(["config", "user.email", "test@example.com"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["config", "user.name", "Test User"])
+        .args(["config", "user.name", "Test User"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -439,13 +438,13 @@ fn setup_test_repository() -> tempfile::TempDir {
     .unwrap();
 
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["commit", "-m", "Initial commit"])
+        .args(["commit", "-m", "Initial commit"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -496,13 +495,13 @@ fn setup_test_repository_with_dependencies() -> tempfile::TempDir {
 
     // Commit the changes
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["commit", "-m", "Add dependencies"])
+        .args(["commit", "-m", "Add dependencies"])
         .current_dir(repo_path)
         .output()
         .unwrap();

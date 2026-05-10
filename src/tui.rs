@@ -417,42 +417,40 @@ impl TuiApp {
 
             // Non-blocking event check
             let timeout = Duration::from_millis(100);
-            if poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            self.should_quit = true;
-                        }
-                        KeyCode::Esc => {
-                            self.should_quit = true;
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if self.selected_index > 0 {
-                                self.selected_index -= 1;
-                            }
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if self.selected_index < self.filtered_count().saturating_sub(1) {
-                                self.selected_index += 1;
-                            }
-                        }
-                        KeyCode::Char('r') => {
-                            self.refresh_sessions()?;
-                        }
-                        KeyCode::Char('t') => {
-                            self.filters.runtime = self.filters.runtime.next();
-                            self.selected_index = 0;
-                        }
-                        KeyCode::Char('p') => {
-                            self.filters.presence = self.filters.presence.next();
-                            self.selected_index = 0;
-                        }
-                        KeyCode::Char('c') => {
-                            self.filters = DashboardFilters::default();
-                            self.selected_index = 0;
-                        }
-                        _ => {}
+            if poll(timeout)?
+                && let Event::Key(key) = event::read()?
+            {
+                match key.code {
+                    KeyCode::Char('q') => {
+                        self.should_quit = true;
                     }
+                    KeyCode::Esc => {
+                        self.should_quit = true;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') if self.selected_index > 0 => {
+                        self.selected_index -= 1;
+                    }
+                    KeyCode::Down | KeyCode::Char('j')
+                        if self.selected_index < self.filtered_count().saturating_sub(1) =>
+                    {
+                        self.selected_index += 1;
+                    }
+                    KeyCode::Char('r') => {
+                        self.refresh_sessions()?;
+                    }
+                    KeyCode::Char('t') => {
+                        self.filters.runtime = self.filters.runtime.next();
+                        self.selected_index = 0;
+                    }
+                    KeyCode::Char('p') => {
+                        self.filters.presence = self.filters.presence.next();
+                        self.selected_index = 0;
+                    }
+                    KeyCode::Char('c') => {
+                        self.filters = DashboardFilters::default();
+                        self.selected_index = 0;
+                    }
+                    _ => {}
                 }
             }
 
@@ -610,6 +608,7 @@ impl TuiApp {
     }
 }
 
+#[allow(dead_code)] // Convenience wrapper used by tui_tests integration tests.
 pub fn build_worktree_switch_model(
     worktrees: &[WorktreeInfo],
     statuses: &[WorktreeRuntimeStatus],
@@ -621,6 +620,7 @@ pub fn build_worktree_switch_model(
     )
 }
 
+#[allow(dead_code)] // Convenience wrapper used by tui_tests integration tests.
 pub fn build_worktree_switch_model_with_protected_branches(
     worktrees: &[WorktreeInfo],
     statuses: &[WorktreeRuntimeStatus],
@@ -814,6 +814,7 @@ pub fn build_worktree_switch_rows(
         .collect()
 }
 
+#[allow(dead_code)] // Convenience wrapper used by tui_tests integration tests.
 pub fn build_dashboard_model(
     sessions: &[AgentSessionSummary],
     now: DateTime<Local>,
@@ -823,6 +824,7 @@ pub fn build_dashboard_model(
     build_dashboard_model_windowed(&ordered_sessions, now, 0, ordered_sessions.len().max(1))
 }
 
+#[allow(dead_code)] // Convenience wrapper used by tui_tests integration tests.
 pub fn build_dashboard_model_windowed(
     sessions: &[AgentSessionSummary],
     now: DateTime<Local>,
@@ -1113,12 +1115,6 @@ impl AgentsDashboard {
 
     pub fn run(&self) -> Result<()> {
         let mut app = TuiApp::new(self.discovery.clone());
-        app.run()
-    }
-
-    /// Start monitoring agents in a specific worktree
-    pub fn monitor_worktree(&self, worktree_path: PathBuf) -> Result<()> {
-        let mut app = TuiApp::new(AgentDiscovery::new(vec![worktree_path]));
         app.run()
     }
 }
@@ -1555,6 +1551,12 @@ pub struct CleanupTui {
     candidates: Option<Vec<BranchStatus>>,
 }
 
+impl Default for CleanupTui {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CleanupTui {
     pub fn new() -> Self {
         Self { candidates: None }
@@ -1672,36 +1674,34 @@ impl CleanupTui {
             })?;
 
             // Handle input
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            should_quit = true;
-                            break;
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if selected_index > 0 {
-                                selected_index -= 1;
-                            }
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            if selected_index < branch_statuses.len() - 1 {
-                                selected_index += 1;
-                            }
-                        }
-                        KeyCode::Char(' ') => {
-                            selected_branches[selected_index] = !selected_branches[selected_index];
-                        }
-                        KeyCode::Char('a') => {
-                            let select_all = next_bulk_selection_state(&selected_branches);
-                            selected_branches.fill(select_all);
-                        }
-                        KeyCode::Enter => {
-                            confirmed = true;
-                            break;
-                        }
-                        _ => {}
+            if let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => {
+                        should_quit = true;
+                        break;
                     }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected_index = selected_index.saturating_sub(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j')
+                        if selected_index < branch_statuses.len() - 1 =>
+                    {
+                        selected_index += 1;
+                    }
+                    KeyCode::Char(' ') => {
+                        selected_branches[selected_index] = !selected_branches[selected_index];
+                    }
+                    KeyCode::Char('a') => {
+                        let select_all = next_bulk_selection_state(&selected_branches);
+                        selected_branches.fill(select_all);
+                    }
+                    KeyCode::Enter => {
+                        confirmed = true;
+                        break;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1732,13 +1732,21 @@ impl CleanupTui {
     }
 }
 
+#[allow(dead_code)] // Placeholder TUI shipped for the v0.3.1 config editor; not yet wired into bin.
 pub struct ConfigTui;
+
+impl Default for ConfigTui {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ConfigTui {
     pub fn new() -> Self {
         Self
     }
 
+    #[allow(dead_code)] // Wired up when the v0.3.1 config editor lands.
     pub fn run(&self) -> Result<()> {
         println!("⚙️ Configuration Editor");
         println!("=======================");

@@ -98,9 +98,11 @@ fn test_config_save_and_load() {
     let temp_dir = tempdir().unwrap();
     let config_path = temp_dir.path().join("config.toml");
 
-    let mut config = Config::default();
-    config.terminal_mode = "window".to_string();
-    config.use_cow = false;
+    let config = Config {
+        terminal_mode: "window".to_string(),
+        use_cow: false,
+        ..Config::default()
+    };
 
     let manager = ConfigManager {
         config: config.clone(),

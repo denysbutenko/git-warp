@@ -8,6 +8,12 @@ pub struct CurrentDirGuard {
     original: PathBuf,
 }
 
+impl Default for CurrentDirGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CurrentDirGuard {
     pub fn new() -> Self {
         let lock = CURRENT_DIR_LOCK

@@ -12,6 +12,8 @@ pub enum TerminalMode {
 }
 
 impl TerminalMode {
+    // Returns Option, not Result — we deliberately don't implement std::str::FromStr.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "tab" => Some(Self::Tab),
@@ -166,7 +168,7 @@ end tell
     fn is_supported(&self) -> bool {
         // Check if iTerm2 is available
         Command::new("osascript")
-            .args(&["-e", "tell application \"iTerm\" to get version"])
+            .args(["-e", "tell application \"iTerm\" to get version"])
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false)
@@ -177,13 +179,13 @@ end tell
 impl ITerm2 {
     fn run_applescript(&self, script: &str) -> Result<()> {
         let output = Command::new("osascript")
-            .args(&["-e", script])
+            .args(["-e", script])
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to execute AppleScript: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("AppleScript failed: {}", error).into());
+            return Err(anyhow::anyhow!("AppleScript failed: {}", error));
         }
 
         Ok(())
@@ -257,13 +259,13 @@ end tell
 impl AppleTerminal {
     fn run_applescript(&self, script: &str) -> Result<()> {
         let output = Command::new("osascript")
-            .args(&["-e", script])
+            .args(["-e", script])
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to execute AppleScript: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("AppleScript failed: {}", error).into());
+            return Err(anyhow::anyhow!("AppleScript failed: {}", error));
         }
 
         Ok(())
@@ -306,7 +308,7 @@ impl Terminal for WarpTerminal {
 
     fn is_supported(&self) -> bool {
         Command::new("osascript")
-            .args(&["-e", "tell application \"Warp\" to get version"])
+            .args(["-e", "tell application \"Warp\" to get version"])
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false)
@@ -326,7 +328,7 @@ impl WarpTerminal {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Warp URI open failed: {}", error).into());
+            return Err(anyhow::anyhow!("Warp URI open failed: {}", error));
         }
 
         Ok(())
@@ -463,9 +465,10 @@ fn enter_current_shell(path: &Path, options: &TerminalLaunchOptions) -> Result<(
         .map_err(|e| anyhow::anyhow!("Failed to start current terminal shell: {}", e))?;
 
     if !status.success() {
-        return Err(
-            anyhow::anyhow!("Current terminal shell exited with status: {}", status).into(),
-        );
+        return Err(anyhow::anyhow!(
+            "Current terminal shell exited with status: {}",
+            status
+        ));
     }
 
     Ok(())
@@ -474,6 +477,7 @@ fn enter_current_shell(path: &Path, options: &TerminalLaunchOptions) -> Result<(
 pub struct TerminalManager;
 
 impl TerminalManager {
+    #[allow(dead_code)] // Public helper used by tests/embedders.
     pub fn get_default_terminal() -> Result<Box<dyn Terminal>> {
         Self::get_terminal(None)
     }
@@ -522,6 +526,7 @@ impl TerminalManager {
         }
     }
 
+    #[allow(dead_code)] // Public convenience wrapper kept for embedders.
     pub fn switch_to_worktree<P: AsRef<Path>>(
         &self,
         path: P,
@@ -531,6 +536,7 @@ impl TerminalManager {
         self.switch_to_worktree_with_app(path, mode, session_id, None)
     }
 
+    #[allow(dead_code)] // Public convenience wrapper kept for embedders.
     pub fn switch_to_worktree_with_app<P: AsRef<Path>>(
         &self,
         path: P,

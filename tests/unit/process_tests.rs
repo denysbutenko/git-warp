@@ -91,7 +91,7 @@ sleep 30
 
     // On some systems, the process might not be detected immediately
     if !sleep_processes.is_empty() {
-        assert!(sleep_processes.len() > 0);
+        assert!(!sleep_processes.is_empty());
         println!("Successfully detected running process in directory");
     } else {
         println!("Process detection test skipped (timing-dependent)");
@@ -105,7 +105,7 @@ fn test_process_termination() {
 
     let pid = child.id();
 
-    let mut manager = ProcessManager::new();
+    let manager = ProcessManager::new();
 
     // Create a mock ProcessInfo for the child process
     let process_info = ProcessInfo {

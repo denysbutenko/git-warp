@@ -927,7 +927,7 @@ impl Cli {
         };
 
         match terminal_manager.switch_to_worktree_with_options(
-            &worktree_path,
+            worktree_path,
             terminal_mode,
             None,
             Some(terminal_app),
@@ -1986,13 +1986,12 @@ impl Cli {
         for (path, active) in paths {
             let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
             if !seen.insert(canonical.clone()) {
-                if active {
-                    if let Some(existing) = entries
+                if active
+                    && let Some(existing) = entries
                         .iter_mut()
                         .find(|e: &&mut DoctorInstallEntry| e.path == path)
-                    {
-                        existing.active = true;
-                    }
+                {
+                    existing.active = true;
                 }
                 continue;
             }
@@ -2231,55 +2230,47 @@ impl Cli {
         match detected_shell.as_str() {
             "bash" => {
                 println!("# Add to ~/.bashrc");
+                println!("warp_cd() {{ eval \"$(warp --terminal echo \"$@\")\"; }}");
                 println!(
-                    "{}",
-                    r#"warp_cd() { eval "$(warp --terminal echo "$@")"; }"#
-                );
-                println!(
-                    "{}",
-                    r#"_warp_completion() {
+                    "_warp_completion() {{
     local cur prev commands branches
-    cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config"
+    cur=\"${{COMP_WORDS[COMP_CWORD]}}\"
+    prev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"
+    commands=\"switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config\"
 
-    if [[ "$prev" == "switch" ]]; then
-        branches="$(warp __complete branches "$cur" 2>/dev/null)"
-        COMPREPLY=($(compgen -W "$branches" -- "$cur"))
+    if [[ \"$prev\" == \"switch\" ]]; then
+        branches=\"$(warp __complete branches \"$cur\" 2>/dev/null)\"
+        COMPREPLY=($(compgen -W \"$branches\" -- \"$cur\"))
     elif [[ $COMP_CWORD -eq 1 ]]; then
-        branches="$(warp __complete branches "$cur" 2>/dev/null)"
-        COMPREPLY=($(compgen -W "$commands $branches" -- "$cur"))
+        branches=\"$(warp __complete branches \"$cur\" 2>/dev/null)\"
+        COMPREPLY=($(compgen -W \"$commands $branches\" -- \"$cur\"))
     fi
-}
-complete -F _warp_completion warp"#
+}}
+complete -F _warp_completion warp"
                 );
             }
             "zsh" => {
                 println!("# Add to ~/.zshrc");
+                println!("warp_cd() {{ eval \"$(warp --terminal echo \"$@\")\"; }}");
                 println!(
-                    "{}",
-                    r#"warp_cd() { eval "$(warp --terminal echo "$@")"; }"#
-                );
-                println!(
-                    "{}",
-                    r#"_warp_branch_completions() {
+                    "_warp_branch_completions() {{
     local -a branches
-    branches=("${(@f)$(warp __complete branches "$PREFIX" 2>/dev/null)}")
-    compadd -- "${branches[@]}"
-}
+    branches=(\"${{(@f)$(warp __complete branches \"$PREFIX\" 2>/dev/null)}}\")
+    compadd -- \"${{branches[@]}}\"
+}}
 
-_warp_completion() {
+_warp_completion() {{
     local -a commands
     commands=(switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config)
 
     if (( CURRENT == 2 )); then
-        compadd -- "${commands[@]}"
+        compadd -- \"${{commands[@]}}\"
         _warp_branch_completions
-    elif [[ ${words[2]} == switch && CURRENT == 3 ]]; then
+    elif [[ ${{words[2]}} == switch && CURRENT == 3 ]]; then
         _warp_branch_completions
     fi
-}
-compdef _warp_completion warp"#
+}}
+compdef _warp_completion warp"
                 );
             }
             "fish" => {
@@ -2288,10 +2279,9 @@ compdef _warp_completion warp"#
                 println!("    eval (warp --terminal echo $argv)");
                 println!("end");
                 println!(
-                    "{}",
-                    r#"complete -c warp -n '__fish_use_subcommand' -a 'switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config'
+                    "complete -c warp -n '__fish_use_subcommand' -a 'switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config'
 complete -c warp -n '__fish_use_subcommand' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'
-complete -c warp -n '__fish_seen_subcommand_from switch' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'"#
+complete -c warp -n '__fish_seen_subcommand_from switch' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'"
                 );
             }
             other => {

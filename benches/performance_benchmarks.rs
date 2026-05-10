@@ -355,17 +355,17 @@ fn setup_git_repository() -> tempfile::TempDir {
     let repo_path = temp_dir.path();
 
     Command::new("git")
-        .args(&["init"])
+        .args(["init"])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["config", "user.email", "bench@example.com"])
+        .args(["config", "user.email", "bench@example.com"])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["config", "user.name", "Bench User"])
+        .args(["config", "user.name", "Bench User"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -373,12 +373,12 @@ fn setup_git_repository() -> tempfile::TempDir {
     fs::write(repo_path.join("README.md"), "# Benchmark Repo").unwrap();
 
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["commit", "-m", "Initial commit"])
+        .args(["commit", "-m", "Initial commit"])
         .current_dir(repo_path)
         .output()
         .unwrap();
