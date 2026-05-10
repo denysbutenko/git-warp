@@ -343,7 +343,7 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
     let live_status = worktree_root.join(".codex").join("git-warp").join("status");
     let codex_sessions = temp_home.path().join(".codex").join("sessions");
 
-    fs::create_dir_all(&live_status.parent().unwrap()).unwrap();
+    fs::create_dir_all(live_status.parent().unwrap()).unwrap();
     fs::create_dir_all(&codex_sessions).unwrap();
 
     fs::write(
@@ -401,7 +401,7 @@ fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps()
     let live_status = worktree_root.join(".codex").join("git-warp").join("status");
     let codex_sessions = temp_home.path().join(".codex").join("sessions");
 
-    fs::create_dir_all(&live_status.parent().unwrap()).unwrap();
+    fs::create_dir_all(live_status.parent().unwrap()).unwrap();
     fs::create_dir_all(&codex_sessions).unwrap();
 
     fs::write(
@@ -458,7 +458,7 @@ fn test_discover_keeps_live_row_even_when_older_than_cutoff() {
     let worktree_root = repo_root.path().join(".worktrees").join("feat");
     let live_status = worktree_root.join(".codex").join("git-warp").join("status");
 
-    fs::create_dir_all(&live_status.parent().unwrap()).unwrap();
+    fs::create_dir_all(live_status.parent().unwrap()).unwrap();
     fs::write(
         &live_status,
         r#"{"status":"working","last_activity":"2026-04-10T10:00:00+00:00"}"#,

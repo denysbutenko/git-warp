@@ -14,20 +14,20 @@ fn setup_test_repo_with_initial_branch(initial_branch: &str) -> tempfile::TempDi
 
     // Initialize git repo
     Command::new("git")
-        .args(&["init", "--initial-branch", initial_branch])
+        .args(["init", "--initial-branch", initial_branch])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     // Configure git
     Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
+        .args(["config", "user.email", "test@example.com"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["config", "user.name", "Test User"])
+        .args(["config", "user.name", "Test User"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -36,13 +36,13 @@ fn setup_test_repo_with_initial_branch(initial_branch: &str) -> tempfile::TempDi
     fs::write(repo_path.join("README.md"), "# Test Repository").unwrap();
 
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["commit", "-m", "Initial commit"])
+        .args(["commit", "-m", "Initial commit"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -142,7 +142,7 @@ fn test_cleanup_analysis_excludes_protected_branches() {
     let git_repo = GitRepository::find().unwrap();
 
     Command::new("git")
-        .args(&["branch", "develop"])
+        .args(["branch", "develop"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -173,7 +173,7 @@ fn test_cleanup_analysis_excludes_custom_protected_branches() {
     let git_repo = GitRepository::find().unwrap();
 
     Command::new("git")
-        .args(&["branch", "staging"])
+        .args(["branch", "staging"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -217,7 +217,7 @@ fn test_cleanup_analysis_reports_skipped_with_reasons() {
 
     // Protected branch worktree (default protected list contains "develop").
     Command::new("git")
-        .args(&["branch", "develop"])
+        .args(["branch", "develop"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -356,20 +356,20 @@ fn test_analyze_branches_for_cleanup() {
 
     // Create some branches
     Command::new("git")
-        .args(&["checkout", "-b", "feature-1"])
+        .args(["checkout", "-b", "feature-1"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["checkout", "-b", "feature-2"])
+        .args(["checkout", "-b", "feature-2"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     // Go back to main
     Command::new("git")
-        .args(&["checkout", "main"])
+        .args(["checkout", "main"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -415,7 +415,7 @@ fn test_cleanup_analysis_uses_primary_worktree_branch_when_default_is_not_main()
     let git_repo = GitRepository::find().unwrap();
 
     Command::new("git")
-        .args(&["branch", "feature-done"])
+        .args(["branch", "feature-done"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -453,13 +453,13 @@ fn test_delete_branch() {
 
     // Create a branch
     Command::new("git")
-        .args(&["checkout", "-b", "test-branch"])
+        .args(["checkout", "-b", "test-branch"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["checkout", "main"])
+        .args(["checkout", "main"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -470,7 +470,7 @@ fn test_delete_branch() {
 
     // Verify branch is gone
     let output = Command::new("git")
-        .args(&["branch", "--list", "test-branch"])
+        .args(["branch", "--list", "test-branch"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -499,7 +499,7 @@ fn test_uncommitted_changes_detection() {
 
     // Stage the changes
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -509,7 +509,7 @@ fn test_uncommitted_changes_detection() {
 
     // Commit the changes
     Command::new("git")
-        .args(&["commit", "-m", "Add new file"])
+        .args(["commit", "-m", "Add new file"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -527,7 +527,7 @@ fn test_branch_merge_detection() {
 
     // Create a feature branch with some changes
     Command::new("git")
-        .args(&["checkout", "-b", "feature"])
+        .args(["checkout", "-b", "feature"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -535,26 +535,26 @@ fn test_branch_merge_detection() {
     fs::write(repo_path.join("feature.txt"), "Feature content").unwrap();
 
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["commit", "-m", "Add feature"])
+        .args(["commit", "-m", "Add feature"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     // Go back to main and merge
     Command::new("git")
-        .args(&["checkout", "main"])
+        .args(["checkout", "main"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["merge", "feature"])
+        .args(["merge", "feature"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -567,7 +567,7 @@ fn test_branch_merge_detection() {
 
     // Test with non-merged branch
     Command::new("git")
-        .args(&["checkout", "-b", "unmerged"])
+        .args(["checkout", "-b", "unmerged"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -575,19 +575,19 @@ fn test_branch_merge_detection() {
     fs::write(repo_path.join("unmerged.txt"), "Unmerged content").unwrap();
 
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["commit", "-m", "Add unmerged feature"])
+        .args(["commit", "-m", "Add unmerged feature"])
         .current_dir(repo_path)
         .output()
         .unwrap();
 
     Command::new("git")
-        .args(&["checkout", "main"])
+        .args(["checkout", "main"])
         .current_dir(repo_path)
         .output()
         .unwrap();

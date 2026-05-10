@@ -35,7 +35,7 @@ fn test_cow_clone_with_git_worktree_registration() {
 
             // Use git worktree add with existing directory
             let result = Command::new("git")
-                .args(&[
+                .args([
                     "worktree",
                     "add",
                     "--detach",
@@ -49,7 +49,7 @@ fn test_cow_clone_with_git_worktree_registration() {
                     if output.status.success() {
                         // Now create and checkout the branch
                         Command::new("git")
-                            .args(&["checkout", "-b", branch_name])
+                            .args(["checkout", "-b", branch_name])
                             .current_dir(&worktree_path)
                             .output()
                             .unwrap();
@@ -63,13 +63,13 @@ fn test_cow_clone_with_git_worktree_registration() {
                         fs::write(worktree_path.join("feature.txt"), "CoW feature").unwrap();
 
                         Command::new("git")
-                            .args(&["add", "."])
+                            .args(["add", "."])
                             .current_dir(&worktree_path)
                             .output()
                             .unwrap();
 
                         Command::new("git")
-                            .args(&["commit", "-m", "Add CoW feature"])
+                            .args(["commit", "-m", "Add CoW feature"])
                             .current_dir(&worktree_path)
                             .output()
                             .unwrap();
@@ -131,7 +131,7 @@ fn test_cow_with_path_rewriting() {
             assert!(original_script.contains(&repo_path.to_string_lossy().to_string()));
 
             // Apply path rewriting
-            let rewriter = PathRewriter::new(&repo_path, &clone_path);
+            let rewriter = PathRewriter::new(repo_path, &clone_path);
 
             let rewrite_result = rewriter.rewrite_paths();
             match rewrite_result {
@@ -170,7 +170,7 @@ fn test_cow_preserves_git_history() {
 
     // Get original git history
     let original_log = Command::new("git")
-        .args(&["log", "--oneline"])
+        .args(["log", "--oneline"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -186,7 +186,7 @@ fn test_cow_preserves_git_history() {
 
             // Get cloned git history
             let cloned_log = Command::new("git")
-                .args(&["log", "--oneline"])
+                .args(["log", "--oneline"])
                 .current_dir(&clone_path)
                 .output()
                 .unwrap();
@@ -198,26 +198,26 @@ fn test_cow_preserves_git_history() {
             fs::write(clone_path.join("new_file.txt"), "New content").unwrap();
 
             Command::new("git")
-                .args(&["add", "."])
+                .args(["add", "."])
                 .current_dir(&clone_path)
                 .output()
                 .unwrap();
 
             Command::new("git")
-                .args(&["commit", "-m", "Add new file in clone"])
+                .args(["commit", "-m", "Add new file in clone"])
                 .current_dir(&clone_path)
                 .output()
                 .unwrap();
 
             // Original should not have the new commit
             let new_original_log = Command::new("git")
-                .args(&["log", "--oneline"])
+                .args(["log", "--oneline"])
                 .current_dir(repo_path)
                 .output()
                 .unwrap();
 
             let new_cloned_log = Command::new("git")
-                .args(&["log", "--oneline"])
+                .args(["log", "--oneline"])
                 .current_dir(&clone_path)
                 .output()
                 .unwrap();
@@ -423,17 +423,17 @@ fn setup_git_repository() -> tempfile::TempDir {
     let repo_path = temp_dir.path();
 
     Command::new("git")
-        .args(&["init"])
+        .args(["init"])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
+        .args(["config", "user.email", "test@example.com"])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["config", "user.name", "Test User"])
+        .args(["config", "user.name", "Test User"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -442,12 +442,12 @@ fn setup_git_repository() -> tempfile::TempDir {
     fs::write(repo_path.join(".gitignore"), "node_modules/\n*.log\n").unwrap();
 
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["commit", "-m", "Initial commit"])
+        .args(["commit", "-m", "Initial commit"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -492,12 +492,12 @@ echo "Building in {}"
 
     // Add to git
     Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(repo_path)
         .output()
         .unwrap();
     Command::new("git")
-        .args(&["commit", "-m", "Add configs"])
+        .args(["commit", "-m", "Add configs"])
         .current_dir(repo_path)
         .output()
         .unwrap();
@@ -517,12 +517,12 @@ fn setup_git_repository_with_history() -> tempfile::TempDir {
         )
         .unwrap();
         Command::new("git")
-            .args(&["add", "."])
+            .args(["add", "."])
             .current_dir(repo_path)
             .output()
             .unwrap();
         Command::new("git")
-            .args(&["commit", "-m", &format!("Commit {}", i)])
+            .args(["commit", "-m", &format!("Commit {}", i)])
             .current_dir(repo_path)
             .output()
             .unwrap();

@@ -87,7 +87,10 @@ fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resu
 
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("Failed to clone directory with CoW: {}", error).into());
+        return Err(anyhow::anyhow!(
+            "Failed to clone directory with CoW: {}",
+            error
+        ));
     }
 
     Ok(())

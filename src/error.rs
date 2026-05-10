@@ -2,6 +2,7 @@ use thiserror::Error;
 
 pub type Result<T> = anyhow::Result<T>;
 
+#[allow(dead_code)] // Public error API; some variants are produced only via paths not reachable from `warp` bin yet.
 #[derive(Error, Debug)]
 pub enum GitWarpError {
     #[error("Not in a git repository")]

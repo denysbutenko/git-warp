@@ -72,6 +72,7 @@ pub enum BranchSource {
 }
 
 pub struct GitRepository {
+    #[allow(dead_code)] // Held to keep gix repository state alive; commands shell out to `git`.
     repo: Repository,
     repo_path: PathBuf,
 }
@@ -120,6 +121,7 @@ impl GitRepository {
     }
 
     /// Open a specific Git repository
+    #[allow(dead_code)] // Public constructor used by inline tests/embedders.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let repo_path = path.as_ref().to_path_buf();
         let repo = gix::open(&repo_path).map_err(|_| GitWarpError::NotInGitRepository)?;
@@ -138,13 +140,13 @@ impl GitRepository {
 
         // Use git command to list worktrees since gix doesn't have full worktree support yet
         let output = Command::new("git")
-            .args(&["worktree", "list", "--porcelain"])
+            .args(["worktree", "list", "--porcelain"])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to list worktrees: {}", e))?;
 
         if !output.status.success() {
-            return Err(anyhow::anyhow!("Git worktree list failed").into());
+            return Err(anyhow::anyhow!("Git worktree list failed"));
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -182,10 +184,10 @@ impl GitRepository {
                 if let Some(ref mut wt) = current_worktree {
                     wt.is_primary = true;
                 }
-            } else if line == "detached" {
-                if let Some(ref mut wt) = current_worktree {
-                    wt.is_detached = true;
-                }
+            } else if line == "detached"
+                && let Some(ref mut wt) = current_worktree
+            {
+                wt.is_detached = true;
             }
         }
 
@@ -251,7 +253,7 @@ impl GitRepository {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to list remote branches: {}", error).into());
+            return Err(anyhow::anyhow!("Failed to list remote branches: {}", error));
         }
 
         let mut origin_match: Option<String> = None;
@@ -317,8 +319,7 @@ impl GitRepository {
         match source {
             BranchSource::ExistingWorktree { .. } => Err(anyhow::anyhow!(
                 "Cannot create worktree for branch '{branch_name}': it is already checked out in another worktree"
-            )
-            .into()),
+            )),
             BranchSource::LocalBranch => {
                 let output = Command::new("git")
                     .args(["worktree", "add"])
@@ -330,7 +331,7 @@ impl GitRepository {
 
                 if !output.status.success() {
                     let error = String::from_utf8_lossy(&output.stderr);
-                    return Err(anyhow::anyhow!("Failed to create worktree: {}", error).into());
+                    return Err(anyhow::anyhow!("Failed to create worktree: {}", error));
                 }
                 Ok(())
             }
@@ -350,8 +351,7 @@ impl GitRepository {
                     return Err(anyhow::anyhow!(
                         "Failed to create worktree from remote branch '{remote_ref}': {}",
                         error
-                    )
-                    .into());
+                    ));
                 }
                 Ok(())
             }
@@ -366,9 +366,10 @@ impl GitRepository {
 
                 if !output.status.success() {
                     let error = String::from_utf8_lossy(&output.stderr);
-                    return Err(
-                        anyhow::anyhow!("Failed to create worktree and branch: {}", error).into(),
-                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to create worktree and branch: {}",
+                        error
+                    ));
                 }
                 Ok(())
             }
@@ -376,6 +377,7 @@ impl GitRepository {
     }
 
     /// Create a new worktree and branch
+    #[allow(dead_code)] // Used by integration tests/benches; bin path uses other helpers today.
     pub fn create_worktree_and_branch<P: AsRef<Path>>(
         &self,
         branch_name: &str,
@@ -390,7 +392,7 @@ impl GitRepository {
         if self.branch_exists(branch_name)? {
             // Create worktree from existing branch
             let mut cmd = Command::new("git");
-            cmd.args(&["worktree", "add"])
+            cmd.args(["worktree", "add"])
                 .arg(worktree_path)
                 .arg(branch_name)
                 .current_dir(&self.repo_path);
@@ -401,7 +403,7 @@ impl GitRepository {
 
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
-                return Err(anyhow::anyhow!("Failed to create worktree: {}", error).into());
+                return Err(anyhow::anyhow!("Failed to create worktree: {}", error));
             }
         } else if let Some(remote_ref) = self.find_remote_branch_ref(branch_name)? {
             // Track remote branch as new local branch
@@ -420,13 +422,12 @@ impl GitRepository {
                 return Err(anyhow::anyhow!(
                     "Failed to create worktree from remote branch '{remote_ref}': {}",
                     error
-                )
-                .into());
+                ));
             }
         } else {
             // Create new branch and worktree
             let mut cmd = Command::new("git");
-            cmd.args(&["worktree", "add", "-b", branch_name])
+            cmd.args(["worktree", "add", "-b", branch_name])
                 .arg(worktree_path);
 
             if let Some(commit) = from_commit {
@@ -443,9 +444,10 @@ impl GitRepository {
 
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
-                return Err(
-                    anyhow::anyhow!("Failed to create worktree and branch: {}", error).into(),
-                );
+                return Err(anyhow::anyhow!(
+                    "Failed to create worktree and branch: {}",
+                    error
+                ));
             }
         }
 
@@ -460,7 +462,7 @@ impl GitRepository {
         let worktree_path = worktree_path.as_ref();
 
         let mut cmd = Command::new("git");
-        cmd.args(&["worktree", "remove"]);
+        cmd.args(["worktree", "remove"]);
         if force {
             cmd.arg("--force");
         }
@@ -472,7 +474,7 @@ impl GitRepository {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to remove worktree: {}", error).into());
+            return Err(anyhow::anyhow!("Failed to remove worktree: {}", error));
         }
 
         Ok(())
@@ -485,16 +487,18 @@ impl GitRepository {
         let delete_flag = if force { "-D" } else { "-d" };
 
         let output = Command::new("git")
-            .args(&["branch", delete_flag, branch_name])
+            .args(["branch", delete_flag, branch_name])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to delete branch: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(
-                anyhow::anyhow!("Failed to delete branch {}: {}", branch_name, error).into(),
-            );
+            return Err(anyhow::anyhow!(
+                "Failed to delete branch {}: {}",
+                branch_name,
+                error
+            ));
         }
 
         Ok(())
@@ -505,20 +509,21 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(&["worktree", "prune"])
+            .args(["worktree", "prune"])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to prune worktrees: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to prune worktrees: {}", error).into());
+            return Err(anyhow::anyhow!("Failed to prune worktrees: {}", error));
         }
 
         Ok(())
     }
 
     /// Analyze branches for cleanup
+    #[allow(dead_code)] // Default-config wrapper used by tests/benches.
     pub fn analyze_branches_for_cleanup(
         &self,
         worktrees: &[WorktreeInfo],
@@ -528,6 +533,7 @@ impl GitRepository {
     }
 
     /// Analyze branches for cleanup using an explicit protected branch list
+    #[allow(dead_code)] // Convenience wrapper used by tests; bin uses *_with_config.
     pub fn analyze_branches_for_cleanup_with_protected_branches(
         &self,
         worktrees: &[WorktreeInfo],
@@ -635,7 +641,7 @@ impl GitRepository {
             // Check if branch has a remote
             let has_remote = {
                 let output = Command::new("git")
-                    .args(&["config", &format!("branch.{}.remote", branch)])
+                    .args(["config", &format!("branch.{}.remote", branch)])
                     .current_dir(&self.repo_path)
                     .output()
                     .map_err(|e| anyhow::anyhow!("Failed to check remote: {}", e))?;
@@ -664,7 +670,7 @@ impl GitRepository {
             // Check for uncommitted changes
             let has_uncommitted_changes = {
                 let output = Command::new("git")
-                    .args(&["status", "--porcelain"])
+                    .args(["status", "--porcelain"])
                     .current_dir(path)
                     .output();
 
@@ -713,7 +719,7 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(&["fetch", "--all", "--prune"])
+            .args(["fetch", "--all", "--prune"])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to fetch: {}", e))?;
@@ -732,7 +738,7 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(&[
+            .args([
                 "show-ref",
                 "--verify",
                 "--quiet",
@@ -757,7 +763,7 @@ impl GitRepository {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to list local branches: {}", error).into());
+            return Err(anyhow::anyhow!("Failed to list local branches: {}", error));
         }
 
         let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
@@ -772,18 +778,19 @@ impl GitRepository {
     }
 
     /// Get the current HEAD commit
+    #[allow(dead_code)] // Public helper kept for tests/embedders.
     pub fn get_head_commit(&self) -> Result<String> {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to get HEAD commit: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to get HEAD commit: {}", error).into());
+            return Err(anyhow::anyhow!("Failed to get HEAD commit: {}", error));
         }
 
         let commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -792,6 +799,7 @@ impl GitRepository {
     }
 
     /// Get the default worktree path for a branch
+    #[allow(dead_code)] // Convenience wrapper used by tests; bin path passes a base.
     pub fn get_worktree_path(&self, branch_name: &str) -> PathBuf {
         self.get_worktree_path_with_base(branch_name, None)
     }
@@ -831,16 +839,16 @@ impl GitRepository {
 
         // Try to get the default branch from remote
         let output = Command::new("git")
-            .args(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+            .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
             .current_dir(&self.repo_path)
             .output();
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let branch_ref = String::from_utf8_lossy(&output.stdout);
-                if let Some(branch) = branch_ref.trim().strip_prefix("refs/remotes/origin/") {
-                    return Ok(branch.to_string());
-                }
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let branch_ref = String::from_utf8_lossy(&output.stdout);
+            if let Some(branch) = branch_ref.trim().strip_prefix("refs/remotes/origin/") {
+                return Ok(branch.to_string());
             }
         }
 
@@ -857,25 +865,26 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(&["status", "--porcelain"])
+            .args(["status", "--porcelain"])
             .current_dir(path.as_ref())
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to check git status: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Git status failed: {}", error).into());
+            return Err(anyhow::anyhow!("Git status failed: {}", error));
         }
 
         Ok(!output.stdout.is_empty())
     }
 
     /// Check if a branch is merged into a target branch
+    #[allow(dead_code)] // Public helper kept for tests/embedders.
     pub fn is_branch_merged(&self, branch: &str, target_branch: &str) -> Result<bool> {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(&["merge-base", "--is-ancestor", branch, target_branch])
+            .args(["merge-base", "--is-ancestor", branch, target_branch])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to check merge status: {}", e))?;
@@ -898,20 +907,20 @@ mod tests {
 
         // Initialize git repo
         Command::new("git")
-            .args(&["init"])
+            .args(["init"])
             .current_dir(repo_path)
             .output()
             .unwrap();
 
         // Configure git
         Command::new("git")
-            .args(&["config", "user.email", "test@example.com"])
+            .args(["config", "user.email", "test@example.com"])
             .current_dir(repo_path)
             .output()
             .unwrap();
 
         Command::new("git")
-            .args(&["config", "user.name", "Test User"])
+            .args(["config", "user.name", "Test User"])
             .current_dir(repo_path)
             .output()
             .unwrap();
@@ -919,13 +928,13 @@ mod tests {
         // Create initial commit
         std::fs::write(repo_path.join("test.txt"), "test").unwrap();
         Command::new("git")
-            .args(&["add", "."])
+            .args(["add", "."])
             .current_dir(repo_path)
             .output()
             .unwrap();
 
         Command::new("git")
-            .args(&["commit", "-m", "Initial commit"])
+            .args(["commit", "-m", "Initial commit"])
             .current_dir(repo_path)
             .output()
             .unwrap();

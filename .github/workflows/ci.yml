@@ -37,7 +37,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --locked --lib --bins --tests
+      - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
     name: cargo test (${{ matrix.os }})

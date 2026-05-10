@@ -58,7 +58,7 @@ fn test_iterm2_detection() {
     if supported {
         // In a real test environment, we wouldn't actually execute these
         // but we can test that the script generation works
-        let temp_dir = tempdir().unwrap();
+        let _temp_dir = tempdir().unwrap();
 
         // Test that methods exist and can be called (dry run)
         println!("iTerm2 methods are callable");
@@ -116,7 +116,7 @@ fn test_terminal_commands_generation() {
 #[test]
 fn test_session_id_handling() {
     let session_id = Some("test-session-123");
-    let path = tempdir().unwrap().path().to_path_buf();
+    let _path = tempdir().unwrap().path().to_path_buf();
 
     // Test that session IDs are handled properly in method calls
     #[cfg(target_os = "macos")]
@@ -137,7 +137,7 @@ fn test_session_id_handling() {
 #[test]
 fn test_init_script_handling() {
     let init_script = Some("npm install && npm start");
-    let path = tempdir().unwrap().path().to_path_buf();
+    let _path = tempdir().unwrap().path().to_path_buf();
 
     #[cfg(target_os = "macos")]
     {
@@ -188,7 +188,7 @@ fn test_terminal_error_handling() {
 #[test]
 fn test_branch_name_in_session() {
     let branch_name = "feature/awesome-new-feature";
-    let path = tempdir().unwrap().path().to_path_buf();
+    let _path = tempdir().unwrap().path().to_path_buf();
 
     #[cfg(target_os = "macos")]
     {
@@ -210,7 +210,7 @@ fn test_branch_name_in_session() {
 
 #[test]
 fn test_terminal_modes() {
-    let path = tempdir().unwrap().path().to_path_buf();
+    let _path = tempdir().unwrap().path().to_path_buf();
 
     #[cfg(target_os = "macos")]
     {

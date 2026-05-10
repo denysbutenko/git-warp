@@ -7,6 +7,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+#[allow(dead_code)] // Used via AgentDiscovery::new (public API exercised by integration tests).
 const DEFAULT_HISTORY_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -100,7 +101,7 @@ fn is_fallback_label(runtime: AgentRuntime, label: &str) -> bool {
         )
 }
 
-fn preferred_group<'a>(items: &'a [AgentSessionSummary]) -> Vec<&'a AgentSessionSummary> {
+fn preferred_group(items: &[AgentSessionSummary]) -> Vec<&AgentSessionSummary> {
     let mut refs: Vec<&AgentSessionSummary> = items.iter().collect();
     refs.sort_by(|a, b| {
         b.is_live
@@ -176,6 +177,7 @@ fn session_file_candidates_under(
 }
 
 impl AgentDiscovery {
+    #[allow(dead_code)] // Public constructor used by tui/tests; bin path uses with_max_history_sessions.
     pub fn new(monitored_paths: Vec<PathBuf>) -> Self {
         Self::with_max_history_sessions(monitored_paths, DEFAULT_HISTORY_LIMIT)
     }
@@ -489,30 +491,26 @@ fn merge_session_group(items: Vec<&AgentSessionSummary>) -> AgentSessionSummary 
         selected.is_live = true;
     }
 
-    if selected.branch.is_none()
-        || is_fallback_label(selected.runtime, selected.agent_label.as_str())
-    {
-        if let Some(branch) = items
+    if (selected.branch.is_none()
+        || is_fallback_label(selected.runtime, selected.agent_label.as_str()))
+        && let Some(branch) = items
             .iter()
             .filter_map(|item| item.branch.clone())
             .find(|branch| !branch.is_empty())
-        {
-            selected.branch = Some(branch);
-        }
+    {
+        selected.branch = Some(branch);
     }
 
     if is_fallback_label(selected.runtime, &selected.agent_label)
         && session_store_item
             .map(|item| !is_fallback_label(selected.runtime, &item.agent_label))
             .unwrap_or(false)
-    {
-        if let Some(label) = items
+        && let Some(label) = items
             .iter()
             .map(|item| item.agent_label.as_str())
             .find(|label| !is_fallback_label(selected.runtime, label))
-        {
-            selected.agent_label = label.to_string();
-        }
+    {
+        selected.agent_label = label.to_string();
     }
 
     if selected.session_id.is_none() {

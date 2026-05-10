@@ -25,7 +25,9 @@ impl HookRuntime {
             "claude" => Ok(vec![Self::Claude]),
             "codex" => Ok(vec![Self::Codex]),
             "all" => Ok(vec![Self::Claude, Self::Codex]),
-            _ => Err(anyhow::anyhow!("Invalid runtime. Use: claude, codex, or all").into()),
+            _ => Err(anyhow::anyhow!(
+                "Invalid runtime. Use: claude, codex, or all"
+            )),
         }
     }
 
@@ -518,10 +520,7 @@ impl HooksManager {
         Ok(())
     }
 
-    fn hooks_object<'a>(
-        settings: &'a Value,
-        runtime: HookRuntime,
-    ) -> Result<&'a Map<String, Value>> {
+    fn hooks_object(settings: &Value, runtime: HookRuntime) -> Result<&Map<String, Value>> {
         let container = if runtime.wraps_hooks_at_root() {
             settings
                 .get("hooks")
@@ -532,13 +531,10 @@ impl HooksManager {
 
         container
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Hooks config is not a JSON object").into())
+            .ok_or_else(|| anyhow::anyhow!("Hooks config is not a JSON object"))
     }
 
-    fn hooks_object_mut<'a>(
-        settings: &'a mut Value,
-        runtime: HookRuntime,
-    ) -> &'a mut Map<String, Value> {
+    fn hooks_object_mut(settings: &mut Value, runtime: HookRuntime) -> &mut Map<String, Value> {
         if !settings.is_object() {
             *settings = json!({});
         }
@@ -629,7 +625,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|entry| HooksManager::is_git_warp_hook(entry))
+                .any(HooksManager::is_git_warp_hook)
         );
     }
 

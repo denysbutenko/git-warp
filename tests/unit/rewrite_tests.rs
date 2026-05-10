@@ -1,6 +1,5 @@
 use git_warp::rewrite::PathRewriter;
 use std::fs;
-use std::path::Path;
 use tempfile::tempdir;
 
 const TWO_MIB: usize = 2 * 1024 * 1024;
@@ -10,7 +9,7 @@ fn test_path_rewriter_creation() {
     let src_dir = "/original/project";
     let dst_dir = "/cloned/project";
 
-    let rewriter = PathRewriter::new(src_dir, dst_dir);
+    let _rewriter = PathRewriter::new(src_dir, dst_dir);
 
     // PathRewriter should be created successfully
     println!("PathRewriter created for {} -> {}", src_dir, dst_dir);
@@ -399,7 +398,7 @@ vendor/
         ("package.json", false),
     ];
 
-    for (file_path, should_match) in test_files {
+    for (file_path, _should_match) in test_files {
         let full_path = dst_dir.join(file_path);
 
         if let Some(parent) = full_path.parent() {
@@ -605,7 +604,7 @@ fn test_binary_with_leading_text_not_rewritten() {
     let src_str = src_dir.to_string_lossy().into_owned();
     let mut content: Vec<u8> = format!("header={src_str}\n").into_bytes();
     // Trailing block of null bytes flips the binary heuristic.
-    content.extend(std::iter::repeat(0u8).take(64));
+    content.extend(std::iter::repeat_n(0u8, 64));
     let blob = dst_dir.join("blob.dat");
     fs::write(&blob, &content).unwrap();
 

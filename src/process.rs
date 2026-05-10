@@ -11,9 +11,12 @@ pub struct ProcessInfo {
     pub working_dir: PathBuf,
     pub cpu_usage: f32,
     pub memory_usage: u64,
+    // Captured for tests/future reporting; bin display path doesn't read it yet.
+    #[allow(dead_code)]
     pub start_time: u64,
 }
 
+#[allow(dead_code)] // Public stats type used by tests/embedders.
 #[derive(Debug)]
 pub struct ProcessStats {
     pub total_count: usize,
@@ -25,6 +28,12 @@ pub struct ProcessStats {
 
 pub struct ProcessManager {
     system: System,
+}
+
+impl Default for ProcessManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProcessManager {
@@ -57,18 +66,18 @@ impl ProcessManager {
         let mut processes = Vec::new();
 
         for (pid, process) in self.system.processes() {
-            if let Some(cwd) = process.cwd() {
-                if cwd.starts_with(&target_path) {
-                    processes.push(ProcessInfo {
-                        pid: pid.as_u32(),
-                        name: process.name().to_string(),
-                        cmd: process.cmd().join(" "),
-                        working_dir: cwd.to_path_buf(),
-                        cpu_usage: process.cpu_usage(),
-                        memory_usage: process.memory(),
-                        start_time: process.start_time(),
-                    });
-                }
+            if let Some(cwd) = process.cwd()
+                && cwd.starts_with(&target_path)
+            {
+                processes.push(ProcessInfo {
+                    pid: pid.as_u32(),
+                    name: process.name().to_string(),
+                    cmd: process.cmd().join(" "),
+                    working_dir: cwd.to_path_buf(),
+                    cpu_usage: process.cpu_usage(),
+                    memory_usage: process.memory(),
+                    start_time: process.start_time(),
+                });
             }
         }
 
@@ -216,6 +225,7 @@ impl ProcessManager {
     }
 
     /// Get detailed process statistics for a directory
+    #[allow(dead_code)] // Public helper used by tests/embedders.
     pub fn get_directory_process_stats<P: AsRef<Path>>(&mut self, path: P) -> Result<ProcessStats> {
         let processes = self.find_processes_in_directory(path)?;
 
@@ -234,6 +244,7 @@ impl ProcessManager {
     }
 
     /// Kill all processes in a directory with confirmation
+    #[allow(dead_code)] // Public helper kept for embedders.
     pub fn kill_directory_processes<P: AsRef<Path>>(
         &mut self,
         path: P,
@@ -257,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_process_manager_creation() {
-        let manager = ProcessManager::new();
+        let _manager = ProcessManager::new();
         // Just verify we can create a process manager
     }
 
