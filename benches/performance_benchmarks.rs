@@ -85,7 +85,7 @@ fn bench_git_operations(c: &mut Criterion) {
             let _ = git_repo.create_worktree_and_branch(&branch_name, &worktree_path, None);
 
             // Clean up
-            let _ = git_repo.remove_worktree(&worktree_path, false, true);
+            let _ = git_repo.remove_worktree(&worktree_path, false);
         })
     });
 
@@ -106,6 +106,8 @@ fn bench_git_operations(c: &mut Criterion) {
                     branch: branch_name,
                     head: "HEAD".to_string(),
                     is_primary: false,
+                    is_current: false,
+                    is_detached: false,
                 });
             }
         }
@@ -116,7 +118,7 @@ fn bench_git_operations(c: &mut Criterion) {
 
         // Clean up test worktrees
         for worktree in &test_worktrees {
-            let _ = git_repo.remove_worktree(&worktree.path, false, true);
+            let _ = git_repo.remove_worktree(&worktree.path, false);
         }
     });
 
@@ -167,10 +169,7 @@ fn bench_path_rewriting(c: &mut Criterion) {
             &clone_path,
             |b, clone_path| {
                 b.iter(|| {
-                    let rewriter = PathRewriter::new(
-                        repo_path.to_string_lossy(),
-                        clone_path.to_string_lossy(),
-                    );
+                    let rewriter = PathRewriter::new(repo_path, clone_path);
                     let _ = rewriter.rewrite_paths();
                 })
             },
