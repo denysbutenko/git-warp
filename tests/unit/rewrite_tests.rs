@@ -3,6 +3,8 @@ use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
 
+const TWO_MIB: usize = 2 * 1024 * 1024;
+
 #[test]
 fn test_path_rewriter_creation() {
     let src_dir = "/original/project";
@@ -517,4 +519,100 @@ special_chars = "{}/àáâãäå"
             println!("Unicode path test failed: {}", e);
         }
     }
+}
+
+#[test]
+fn test_prefix_collision_preserves_unrelated_paths() {
+    let temp_dir = tempdir().unwrap();
+    let src_dir = temp_dir.path().join("repo");
+    let dst_dir = temp_dir.path().join("repo-feature");
+    let archive_dir = temp_dir.path().join("repo-archive");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&dst_dir).unwrap();
+
+    fs::write(dst_dir.join(".gitignore"), "config.toml\n").unwrap();
+
+    let src_str = src_dir.to_string_lossy().into_owned();
+    let dst_str = dst_dir.to_string_lossy().into_owned();
+    let archive_str = archive_dir.to_string_lossy().into_owned();
+
+    // Mix matches that must rewrite with prefix collisions that must not.
+    let original = format!(
+        "project={src_str}\n\
+         entry={src_str}/lib/main.js\n\
+         backup={archive_str}/snapshot.tar\n\
+         neighbor={src_str}-old/data\n",
+    );
+    fs::write(dst_dir.join("config.toml"), &original).unwrap();
+
+    PathRewriter::new(&src_dir, &dst_dir)
+        .rewrite_paths()
+        .unwrap();
+
+    let rewritten = fs::read_to_string(dst_dir.join("config.toml")).unwrap();
+    let expected = format!(
+        "project={dst_str}\n\
+         entry={dst_str}/lib/main.js\n\
+         backup={archive_str}/snapshot.tar\n\
+         neighbor={src_str}-old/data\n",
+    );
+    assert_eq!(rewritten, expected);
+}
+
+#[test]
+fn test_oversized_file_is_skipped() {
+    let temp_dir = tempdir().unwrap();
+    let src_dir = temp_dir.path().join("source");
+    let dst_dir = temp_dir.path().join("destination");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&dst_dir).unwrap();
+
+    fs::write(dst_dir.join(".gitignore"), "huge.log\n").unwrap();
+
+    let src_str = src_dir.to_string_lossy().into_owned();
+    // Build a file > 2 MiB that contains the source path at the start
+    // and is otherwise valid UTF-8 ASCII so a non-capped rewrite would
+    // happily rewrite it.
+    let mut payload = String::with_capacity(TWO_MIB + 4096);
+    payload.push_str(&format!("path={src_str}\n"));
+    while payload.len() <= TWO_MIB + 1024 {
+        payload.push_str("filler line that takes up space ----------------\n");
+    }
+    let huge_path = dst_dir.join("huge.log");
+    fs::write(&huge_path, &payload).unwrap();
+
+    PathRewriter::new(&src_dir, &dst_dir)
+        .rewrite_paths()
+        .unwrap();
+
+    let after = fs::read_to_string(&huge_path).unwrap();
+    assert_eq!(after, payload, "oversized file must be left untouched");
+}
+
+#[test]
+fn test_binary_with_leading_text_not_rewritten() {
+    let temp_dir = tempdir().unwrap();
+    let src_dir = temp_dir.path().join("source");
+    let dst_dir = temp_dir.path().join("destination");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::create_dir_all(&dst_dir).unwrap();
+
+    fs::write(dst_dir.join(".gitignore"), "blob.dat\n").unwrap();
+
+    let src_str = src_dir.to_string_lossy().into_owned();
+    let mut content: Vec<u8> = format!("header={src_str}\n").into_bytes();
+    // Trailing block of null bytes flips the binary heuristic.
+    content.extend(std::iter::repeat(0u8).take(64));
+    let blob = dst_dir.join("blob.dat");
+    fs::write(&blob, &content).unwrap();
+
+    PathRewriter::new(&src_dir, &dst_dir)
+        .rewrite_paths()
+        .unwrap();
+
+    let after = fs::read(&blob).unwrap();
+    assert_eq!(after, content, "binary file must not be rewritten");
 }
