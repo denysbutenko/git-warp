@@ -22,6 +22,7 @@ fn test_cow_support_detection() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_cow_support_nonexistent_path() {
     let result = is_cow_supported("/nonexistent/path/that/should/not/exist");

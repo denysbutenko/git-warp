@@ -28,6 +28,7 @@ impl TerminalMode {
 
 #[derive(Debug, Clone)]
 pub struct TerminalLaunchOptions {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub auto_activate: bool,
     pub init_commands: Vec<String>,
 }
@@ -56,16 +57,19 @@ pub trait Terminal {
     ) -> Result<()>;
     fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
     fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn is_supported(&self) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum TerminalPreference {
     ITerm2,
     AppleTerminal,
     Warp,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn parse_terminal_preference(value: &str) -> Option<TerminalPreference> {
     match value.to_lowercase().as_str() {
         "iterm" | "iterm2" => Some(TerminalPreference::ITerm2),
@@ -75,6 +79,7 @@ fn parse_terminal_preference(value: &str) -> Option<TerminalPreference> {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn resolve_terminal_preference(
     preferred_app: &str,
     term_program: Option<&str>,
