@@ -833,7 +833,7 @@ impl GitRepository {
             .unwrap_or_else(|| self.repo_path.clone())
     }
 
-    /// Get the main branch name (main or master)
+    /// Get the main branch name. Prefers `origin/HEAD`, falls back to `main`.
     pub fn get_main_branch(&self) -> Result<String> {
         use std::process::Command;
 
@@ -852,12 +852,7 @@ impl GitRepository {
             }
         }
 
-        // Fallback: check if main exists, otherwise use master
-        if self.branch_exists("main")? {
-            Ok("main".to_string())
-        } else {
-            Ok("master".to_string())
-        }
+        Ok("main".to_string())
     }
 
     /// Check if a directory has uncommitted changes

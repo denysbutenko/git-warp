@@ -162,7 +162,7 @@ details for diagnostics.
 ## Cleanup
 
 Git-Warp analyzes worktrees before removal. Protected branches default to
-`main`, `master`, and `develop`.
+`main` and `develop`.
 
 ```bash
 warp cleanup --mode merged
@@ -249,7 +249,7 @@ auto_confirm = false
 
 [git]
 default_branch = "main"
-protected_branches = ["main", "master", "develop"]
+protected_branches = ["main", "develop"]
 auto_fetch = true
 auto_prune = true
 

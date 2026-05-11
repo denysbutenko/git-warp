@@ -11,10 +11,7 @@ fn test_config_defaults() {
     assert!(config.use_cow);
     assert!(!config.auto_confirm);
     assert_eq!(config.git.default_branch, "main");
-    assert_eq!(
-        config.git.protected_branches,
-        vec!["main", "master", "develop"]
-    );
+    assert_eq!(config.git.protected_branches, vec!["main", "develop"]);
     assert!(config.git.auto_fetch);
     assert!(config.git.auto_prune);
     assert!(config.process.check_processes);

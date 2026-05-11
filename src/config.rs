@@ -48,7 +48,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitConfig {
-    /// Default branch name (main, master, develop)
+    /// Default branch name (main, develop)
     #[serde(default = "default_main_branch")]
     pub default_branch: String,
 
@@ -137,11 +137,7 @@ fn default_main_branch() -> String {
 }
 
 fn default_protected_branches() -> Vec<String> {
-    vec![
-        "main".to_string(),
-        "master".to_string(),
-        "develop".to_string(),
-    ]
+    vec!["main".to_string(), "develop".to_string()]
 }
 
 fn default_kill_timeout() -> u64 {
