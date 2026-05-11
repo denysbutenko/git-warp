@@ -828,6 +828,7 @@ fn test_config_edit_creates_config_and_launches_editor() {
 
     let output = warp_command(repo_path)
         .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("EDITOR", &editor_path)
         .env_remove("VISUAL")
         .args(["config", "--edit"])
