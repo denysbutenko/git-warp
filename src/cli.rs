@@ -76,7 +76,7 @@ pub enum Commands {
         #[arg(long)]
         kill: bool,
         /// Don't kill processes (override config)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "kill")]
         no_kill: bool,
         /// Interactive mode
         #[arg(long, short)]
