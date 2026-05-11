@@ -112,8 +112,8 @@ warp cleanup --mode merged --kill
 warp cleanup --mode merged --force
 ```
 
-Protected branches default to `main`, `master`, and `develop`. Cleanup also
-checks for dirty worktrees and running processes before removing anything.
+Protected branches default to `main` and `develop`. Cleanup also checks for
+dirty worktrees and running processes before removing anything.
 
 ## Agent Session Dashboard
 
@@ -159,7 +159,7 @@ auto_confirm = false
 
 [git]
 default_branch = "main"
-protected_branches = ["main", "master", "develop"]
+protected_branches = ["main", "develop"]
 auto_fetch = true
 auto_prune = true
 
