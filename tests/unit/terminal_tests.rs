@@ -177,10 +177,9 @@ fn test_terminal_error_handling() {
     #[cfg(not(target_os = "macos"))]
     {
         let result = TerminalManager::get_default_terminal();
-        assert!(result.is_err());
-
-        // Verify error message is descriptive
-        let error = result.unwrap_err();
+        let error = result
+            .err()
+            .expect("get_default_terminal must error on non-macOS");
         println!("Expected error on unsupported platform: {}", error);
     }
 }

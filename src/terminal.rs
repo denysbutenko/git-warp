@@ -335,6 +335,7 @@ impl WarpTerminal {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn percent_encode(input: &str) -> String {
     let mut encoded = String::new();
 
@@ -354,6 +355,7 @@ fn shell_quote(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
 }
 
+#[cfg(target_os = "macos")]
 fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<String> {
     let mut commands = vec![format!("cd {}", shell_quote(&path.to_string_lossy()))];
     commands.extend(
@@ -367,12 +369,14 @@ fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<S
     commands
 }
 
+#[cfg(target_os = "macos")]
 fn print_shell_commands(path: &Path, options: &TerminalLaunchOptions) {
     for command in shell_command_sequence(path, options) {
         println!("{command}");
     }
 }
 
+#[cfg(target_os = "macos")]
 fn escape_applescript_string(input: &str) -> String {
     input.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -522,6 +526,7 @@ impl TerminalManager {
 
         #[cfg(not(target_os = "macos"))]
         {
+            let _ = preferred_app;
             Err(GitWarpError::TerminalNotSupported.into())
         }
     }
