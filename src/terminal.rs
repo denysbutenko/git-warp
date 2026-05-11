@@ -28,6 +28,7 @@ impl TerminalMode {
 
 #[derive(Debug, Clone)]
 pub struct TerminalLaunchOptions {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub auto_activate: bool,
     pub init_commands: Vec<String>,
 }
@@ -56,16 +57,19 @@ pub trait Terminal {
     ) -> Result<()>;
     fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
     fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn is_supported(&self) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum TerminalPreference {
     ITerm2,
     AppleTerminal,
     Warp,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn parse_terminal_preference(value: &str) -> Option<TerminalPreference> {
     match value.to_lowercase().as_str() {
         "iterm" | "iterm2" => Some(TerminalPreference::ITerm2),
@@ -75,6 +79,7 @@ fn parse_terminal_preference(value: &str) -> Option<TerminalPreference> {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn resolve_terminal_preference(
     preferred_app: &str,
     term_program: Option<&str>,
@@ -335,6 +340,7 @@ impl WarpTerminal {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn percent_encode(input: &str) -> String {
     let mut encoded = String::new();
 
@@ -354,6 +360,7 @@ fn shell_quote(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
 }
 
+#[cfg(target_os = "macos")]
 fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<String> {
     let mut commands = vec![format!("cd {}", shell_quote(&path.to_string_lossy()))];
     commands.extend(
@@ -367,12 +374,14 @@ fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<S
     commands
 }
 
+#[cfg(target_os = "macos")]
 fn print_shell_commands(path: &Path, options: &TerminalLaunchOptions) {
     for command in shell_command_sequence(path, options) {
         println!("{command}");
     }
 }
 
+#[cfg(target_os = "macos")]
 fn escape_applescript_string(input: &str) -> String {
     input.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -522,6 +531,7 @@ impl TerminalManager {
 
         #[cfg(not(target_os = "macos"))]
         {
+            let _ = preferred_app;
             Err(GitWarpError::TerminalNotSupported.into())
         }
     }

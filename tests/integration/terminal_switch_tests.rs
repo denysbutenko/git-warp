@@ -66,6 +66,7 @@ fn create_fake_osascript(bin_dir: &Path, log_path: &Path) -> PathBuf {
     script_path
 }
 
+#[cfg(target_os = "macos")]
 fn create_fake_open(bin_dir: &Path, log_path: &Path) -> PathBuf {
     let script_path = bin_dir.join("open");
     fs::write(
@@ -146,6 +147,7 @@ init_commands = [{init_commands}]
     .unwrap();
 }
 
+#[cfg(target_os = "macos")]
 fn run_warp_switch(
     repo_path: &Path,
     branch: &str,
@@ -163,6 +165,7 @@ fn run_warp_switch(
         .unwrap()
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_warp_switch_honors_explicit_warp_terminal_app() {
     let repo_dir = setup_git_repo();
@@ -429,6 +432,7 @@ fn test_warp_switch_current_starts_shell_in_worktree() {
     );
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_warp_switch_auto_prefers_current_warp_terminal() {
     let repo_dir = setup_git_repo();
@@ -467,6 +471,7 @@ fn test_warp_switch_auto_prefers_current_warp_terminal() {
     );
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn test_warp_switch_echo_includes_configured_init_commands() {
     let repo_dir = setup_git_repo();

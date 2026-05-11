@@ -1,3 +1,4 @@
+#[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 use git_warp::terminal::{
     Terminal, TerminalManager, TerminalMode, TerminalPreference, resolve_terminal_preference,
 };
@@ -78,6 +79,7 @@ fn test_apple_terminal_detection() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn test_terminal_commands_generation() {
     // Test that we can generate appropriate terminal commands
     let temp_dir = tempdir().unwrap();
@@ -114,6 +116,7 @@ fn test_terminal_commands_generation() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn test_session_id_handling() {
     let session_id = Some("test-session-123");
     let _path = tempdir().unwrap().path().to_path_buf();
@@ -135,6 +138,7 @@ fn test_session_id_handling() {
 }
 
 #[test]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn test_init_script_handling() {
     let init_script = Some("npm install && npm start");
     let _path = tempdir().unwrap().path().to_path_buf();
@@ -177,15 +181,15 @@ fn test_terminal_error_handling() {
     #[cfg(not(target_os = "macos"))]
     {
         let result = TerminalManager::get_default_terminal();
-        assert!(result.is_err());
-
-        // Verify error message is descriptive
-        let error = result.unwrap_err();
+        let error = result
+            .err()
+            .expect("get_default_terminal must error on non-macOS");
         println!("Expected error on unsupported platform: {}", error);
     }
 }
 
 #[test]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn test_branch_name_in_session() {
     let branch_name = "feature/awesome-new-feature";
     let _path = tempdir().unwrap().path().to_path_buf();
@@ -230,6 +234,7 @@ fn test_terminal_modes() {
 
 #[test]
 fn test_concurrent_terminal_operations() {
+    #[cfg(target_os = "macos")]
     use std::thread;
 
     #[cfg(target_os = "macos")]
