@@ -733,6 +733,29 @@ fn test_cleanup_uses_primary_branch_as_base_and_prints_candidate_reasons() {
 }
 
 #[test]
+fn test_cleanup_rejects_kill_and_no_kill_together() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+
+    let output = warp_command(repo_path)
+        .args(["cleanup", "--mode", "merged", "--kill", "--no-kill"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit when --kill and --no-kill are combined; stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--kill") && stderr.contains("--no-kill"),
+        "stderr should mention both flags: {stderr}"
+    );
+}
+
+#[test]
 fn test_cleanup_dry_run_explains_candidates_and_skipped_reasons() {
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
