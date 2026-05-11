@@ -152,6 +152,21 @@ pub enum Commands {
     },
 }
 
+fn public_subcommand_names() -> Vec<String> {
+    use clap::CommandFactory;
+    let mut names = Vec::new();
+    for sub in Cli::command().get_subcommands() {
+        if sub.is_hide_set() {
+            continue;
+        }
+        names.push(sub.get_name().to_string());
+        for alias in sub.get_all_aliases() {
+            names.push(alias.to_string());
+        }
+    }
+    names
+}
+
 enum DoctorShell {
     Known {
         name: &'static str,
@@ -2227,6 +2242,8 @@ impl Cli {
             })
             .unwrap_or_else(|| "bash".to_string());
 
+        let commands = public_subcommand_names().join(" ");
+
         match detected_shell.as_str() {
             "bash" => {
                 println!("# Add to ~/.bashrc");
@@ -2236,7 +2253,7 @@ impl Cli {
     local cur prev commands branches
     cur=\"${{COMP_WORDS[COMP_CWORD]}}\"
     prev=\"${{COMP_WORDS[COMP_CWORD-1]}}\"
-    commands=\"switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config\"
+    commands=\"{commands}\"
 
     if [[ \"$prev\" == \"switch\" ]]; then
         branches=\"$(warp __complete branches \"$cur\" 2>/dev/null)\"
@@ -2261,7 +2278,7 @@ complete -F _warp_completion warp"
 
 _warp_completion() {{
     local -a commands
-    commands=(switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config)
+    commands=({commands})
 
     if (( CURRENT == 2 )); then
         compadd -- \"${{commands[@]}}\"
@@ -2279,7 +2296,7 @@ compdef _warp_completion warp"
                 println!("    eval (warp --terminal echo $argv)");
                 println!("end");
                 println!(
-                    "complete -c warp -n '__fish_use_subcommand' -a 'switch ls list cleanup config agents doctor hooks-install hooks-remove hooks-status shell-config'
+                    "complete -c warp -n '__fish_use_subcommand' -a '{commands}'
 complete -c warp -n '__fish_use_subcommand' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'
 complete -c warp -n '__fish_seen_subcommand_from switch' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'"
                 );

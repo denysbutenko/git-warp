@@ -911,6 +911,48 @@ fn test_shell_config_fish_outputs_branch_completion_for_root_and_switch() {
     assert!(stdout.contains("warp __complete branches (commandline -ct)"));
 }
 
+// Keep in sync with the public variants of `Commands` in src/cli.rs.
+// The binary builds the live list dynamically via clap::CommandFactory, so
+// adding a new public subcommand updates the rendered snippet automatically;
+// this constant exists so the test fails loudly if anyone hides a command,
+// renames one, or drops an alias without updating the test alongside the enum.
+const PUBLIC_SUBCOMMAND_NAMES: &[&str] = &[
+    "switch",
+    "ls",
+    "list",
+    "cleanup",
+    "config",
+    "agents",
+    "doctor",
+    "release-check",
+    "hooks-install",
+    "hooks-remove",
+    "hooks-status",
+    "shell-config",
+];
+
+#[test]
+fn test_shell_config_lists_every_public_subcommand() {
+    for shell in ["bash", "zsh", "fish"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+            .args(["shell-config", shell])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "shell-config {shell} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for name in PUBLIC_SUBCOMMAND_NAMES {
+            assert!(
+                stdout.contains(name),
+                "shell-config {shell} snippet is missing subcommand `{name}`:\n{stdout}"
+            );
+        }
+    }
+}
+
 #[cfg(unix)]
 fn uninstall_script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("uninstall.sh")
