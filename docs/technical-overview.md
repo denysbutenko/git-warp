@@ -72,7 +72,6 @@ gix = "0.62.0"          # Pure Rust Git implementation
 # System Integration
 nix = "0.28.0"          # Unix system calls (CoW support)
 sysinfo = "0.30.12"     # System process information
-notify = "6.1.1"        # File system event monitoring
 
 # Configuration
 figment = "0.10.19"     # Layered configuration management

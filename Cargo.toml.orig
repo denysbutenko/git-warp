@@ -24,7 +24,6 @@ nix = { version = "0.28.0", features = ["fs"] }
 rayon = "1.10.0"
 ignore = "0.4.22"
 sysinfo = "0.30.12"
-notify = "6.1.1"
 
 # Configuration & Data
 figment = { version = "0.10.19", features = ["toml", "env"] }
