@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod cow;
 mod error;
+mod fs_atomic;
 mod git;
 mod hooks;
 mod post_create;

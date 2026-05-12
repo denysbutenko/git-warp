@@ -7,6 +7,7 @@ pub mod agents;
 pub mod config;
 pub mod cow;
 pub mod error;
+pub mod fs_atomic;
 pub mod git;
 pub mod hooks;
 pub mod post_create;

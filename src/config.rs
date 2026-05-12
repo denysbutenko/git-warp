@@ -6,7 +6,7 @@ use figment::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -383,7 +383,7 @@ impl ConfigManager {
     }
 
     /// Save configuration to a specific path
-    fn save_config(&self, path: &PathBuf, config: &Config) -> Result<()> {
+    fn save_config(&self, path: &Path, config: &Config) -> Result<()> {
         // Create config directory if it doesn't exist
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -394,8 +394,10 @@ impl ConfigManager {
                 message: format!("Failed to serialize configuration: {}", e),
             })?;
 
-        fs::write(path, toml_content).map_err(|e| GitWarpError::ConfigError {
-            message: format!("Failed to write config file: {}", e),
+        crate::fs_atomic::write_atomic(path, toml_content.as_bytes()).map_err(|e| {
+            GitWarpError::ConfigError {
+                message: format!("Failed to write config file: {}", e),
+            }
         })?;
 
         Ok(())

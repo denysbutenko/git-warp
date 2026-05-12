@@ -483,7 +483,7 @@ impl HooksManager {
         }
 
         let content = serde_json::to_string_pretty(&settings)?;
-        fs::write(&settings_path, content)?;
+        crate::fs_atomic::write_atomic(&settings_path, content.as_bytes())?;
 
         println!(
             "{} hooks installed to: {}",
@@ -510,7 +510,7 @@ impl HooksManager {
         }
 
         let content = serde_json::to_string_pretty(&settings)?;
-        fs::write(&settings_path, content)?;
+        crate::fs_atomic::write_atomic(&settings_path, content.as_bytes())?;
 
         println!(
             "{} hooks removed from: {}",
