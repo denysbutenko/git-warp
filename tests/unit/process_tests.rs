@@ -316,10 +316,15 @@ fn test_graceful_vs_force_termination() {
 #[cfg(unix)]
 #[test]
 fn test_signal_handling() {
-    // Start a process that handles SIGTERM
+    // The script touches `$1` as soon as its SIGTERM trap is installed so the
+    // test can wait for that readiness before delivering SIGTERM. Without the
+    // handshake the harness sometimes wins the race against bash startup,
+    // bash gets SIGTERM under the default disposition, and the assertion
+    // below sees a signal-killed exit instead of `exit 0`.
     let script_content = r#"#!/bin/bash
 child_pid=""
 trap 'test -n "$child_pid" && kill "$child_pid" 2>/dev/null; exit 0' TERM
+: > "$1"
 sleep 30 &
 child_pid=$!
 wait "$child_pid"
@@ -327,6 +332,7 @@ wait "$child_pid"
 
     let temp_dir = tempdir().unwrap();
     let script_path = temp_dir.path().join("signal_test.sh");
+    let ready_path = temp_dir.path().join("ready");
     fs::write(&script_path, script_content).unwrap();
 
     use std::os::unix::fs::PermissionsExt;
@@ -334,7 +340,23 @@ wait "$child_pid"
     perms.set_mode(0o755);
     fs::set_permissions(&script_path, perms).unwrap();
 
-    let mut child = Command::new("bash").arg(&script_path).spawn().unwrap();
+    let mut child = Command::new("bash")
+        .arg(&script_path)
+        .arg(&ready_path)
+        .spawn()
+        .unwrap();
+
+    // Wait for the script to install its trap; give up after a generous
+    // budget so a wedged spawn doesn't silently hang the suite.
+    let ready_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !ready_path.exists() {
+        if std::time::Instant::now() >= ready_deadline {
+            child.kill().ok();
+            child.wait().ok();
+            panic!("signal handler script never signaled readiness");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 
     let pid = child.id();
     let manager = ProcessManager::new();
