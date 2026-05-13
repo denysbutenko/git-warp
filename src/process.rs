@@ -1,6 +1,6 @@
 use crate::error::{GitWarpError, Result};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sysinfo::{ProcessRefreshKind, System};
 
 #[derive(Debug, Clone)]
@@ -170,22 +170,40 @@ impl ProcessManager {
 
             match graceful_result {
                 Ok(output) if output.status.success() => {
-                    // Wait for graceful shutdown
-                    std::thread::sleep(Duration::from_millis(2000));
+                    // Poll `kill -0 <pid>` until the process is gone or we hit
+                    // the grace budget. A fixed sleep would either rush a
+                    // legitimate slow exit into SIGKILL or block longer than
+                    // needed when SIGTERM is honored immediately.
+                    const POLL_INTERVAL: Duration = Duration::from_millis(50);
+                    const GRACEFUL_BUDGET: Duration = Duration::from_secs(10);
 
-                    // Check if process is still running
-                    let check_result = Command::new("kill").arg("-0").arg(pid.to_string()).output();
-
-                    match check_result {
-                        Ok(output) if output.status.success() => {
-                            // Process still running, force kill
-                            let force_result = Command::new("kill")
-                                .arg("-KILL")
-                                .arg(pid.to_string())
-                                .output();
-                            force_result.map(|o| o.status.success()).unwrap_or(false)
+                    let deadline = Instant::now() + GRACEFUL_BUDGET;
+                    let mut still_running = true;
+                    loop {
+                        let alive = Command::new("kill")
+                            .arg("-0")
+                            .arg(pid.to_string())
+                            .output()
+                            .map(|o| o.status.success())
+                            .unwrap_or(false);
+                        if !alive {
+                            still_running = false;
+                            break;
                         }
-                        _ => true, // Process gracefully terminated
+                        if Instant::now() >= deadline {
+                            break;
+                        }
+                        std::thread::sleep(POLL_INTERVAL);
+                    }
+
+                    if still_running {
+                        let force_result = Command::new("kill")
+                            .arg("-KILL")
+                            .arg(pid.to_string())
+                            .output();
+                        force_result.map(|o| o.status.success()).unwrap_or(false)
+                    } else {
+                        true
                     }
                 }
                 _ => {
