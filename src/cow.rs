@@ -9,14 +9,7 @@ pub fn is_cow_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
         is_apfs(path)
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        // TODO: Check for overlayfs support
-        let _ = path;
-        Ok(false)
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(target_os = "macos"))]
     {
         let _ = path;
         Ok(false)
@@ -40,14 +33,7 @@ pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resul
         clone_directory_apfs(src, dest)
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        // TODO: Implement overlayfs cloning
-        let _ = dest;
-        Err(GitWarpError::CoWNotSupported.into())
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(target_os = "macos"))]
     {
         let _ = dest;
         Err(GitWarpError::CoWNotSupported.into())
