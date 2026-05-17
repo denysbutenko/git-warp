@@ -171,6 +171,10 @@ match terminal_mode {
 
 ## Copy-on-Write Implementation
 
+CoW cloning runs on macOS/APFS only. On Linux, Windows, and any other platform,
+`is_cow_supported` returns `false` and worktree creation falls back to `git
+worktree add` without attempting a clone.
+
 ### APFS CoW Engine
 
 The CoW implementation leverages macOS APFS's native clonefile capability:

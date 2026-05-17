@@ -146,15 +146,12 @@ This plan outlines the major phases to merge the concepts of `autowt` and `cowor
 
 **Goal:** Make the tool robust, well-documented, and available on more platforms.
 
-1.  **Linux CoW Support:**
-    *   Research and implement the `overlayfs` backend for Linux. This will be a significant feature requiring careful implementation of mounting and unmounting logic. This will likely involve more `nix` syscalls.
-
-2.  **Documentation & CI/CD:**
+1.  **Documentation & CI/CD:**
     *   Set up GitHub Actions for automated testing, linting (`clippy`), and formatting (`rustfmt`).
     *   Write comprehensive user documentation and guides.
     *   Generate and publish API documentation using `cargo doc`.
 
-3.  **Distribution:**
+2.  **Distribution:**
     *   Use `cargo-dist` or custom GitHub Actions to build and release binaries for macOS (x86_64, aarch64), Linux (x86_64, aarch64), and Windows.
     *   Create a Homebrew tap for easy installation on macOS.
 

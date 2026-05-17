@@ -68,7 +68,6 @@ This plan is structured into six modules, which can be seen as sequential develo
     *   Implement `is_cow_supported()` which checks the filesystem type.
     *   Implement `clone_directory(src, dest)`. This function will contain the platform-specific logic:
         *   `#[cfg(target_os = "macos")]`: Use `nix::sys::stat::clonefile`.
-        *   `#[cfg(target_os = "linux")]`: Placeholder for future `overlayfs` implementation.
         *   The function will return a `Result` to indicate success, failure, or "unsupported".
 
 3.  **Implement `create` and `switch` Commands:**
