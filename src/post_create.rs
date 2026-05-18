@@ -67,6 +67,10 @@ fn run_post_create_setup_with_resolver<F>(
 where
     F: Fn(PackageManager) -> PathBuf,
 {
+    // Self-healing: keep the agent heartbeat out of version control on every
+    // switch (cheap + idempotent), even for pre-existing worktrees.
+    ensure_agent_state_excluded(worktree_path);
+
     if !newly_created {
         return PostCreateSetupStatus::SkippedExistingWorktree;
     }
@@ -95,6 +99,72 @@ where
             reason: error.to_string(),
         },
     }
+}
+
+/// git-warp installs a Claude/Codex hook that writes a liveness heartbeat to
+/// `<root>/.claude/git-warp/status` (and `.codex/...`), rewritten with a fresh
+/// `last_activity` timestamp every session. If the repo doesn't ignore it the
+/// churning single-line file gets committed, so every branch diverges from the
+/// base on that line and every merge/PR conflicts on it forever.
+///
+/// Ensure the repo's shared `info/exclude` (common git dir, honored across all
+/// worktrees, never committed, leaves the user's `.gitignore` untouched) lists
+/// the git-warp runtime dirs. Best-effort: never blocks a switch.
+pub fn ensure_agent_state_excluded(worktree_path: &Path) {
+    const ENTRIES: [&str; 2] = [".claude/git-warp/", ".codex/git-warp/"];
+    const HEADER: &str = "# git-warp: agent runtime heartbeat (machine-local, never track)";
+
+    let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(worktree_path)
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let common = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if common.is_empty() {
+        return;
+    }
+    let common_dir = if Path::new(&common).is_absolute() {
+        PathBuf::from(&common)
+    } else {
+        worktree_path.join(&common)
+    };
+
+    let info_dir = common_dir.join("info");
+    if std::fs::create_dir_all(&info_dir).is_err() {
+        return;
+    }
+    let exclude_path = info_dir.join("exclude");
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    let already: std::collections::HashSet<&str> =
+        existing.lines().map(|l| l.trim()).collect();
+
+    let missing: Vec<&str> = ENTRIES
+        .iter()
+        .copied()
+        .filter(|e| !already.contains(*e))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+
+    let mut out = existing.clone();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !already.contains(HEADER) {
+        out.push_str(HEADER);
+        out.push('\n');
+    }
+    for entry in missing {
+        out.push_str(entry);
+        out.push('\n');
+    }
+    let _ = std::fs::write(&exclude_path, out);
 }
 
 fn detect_manager(worktree_path: &Path) -> Option<PackageManager> {
@@ -163,6 +233,89 @@ mod tests {
 
     fn write_package_json(dir: &Path) {
         fs::write(dir.join("package.json"), r#"{"name":"test-repo"}"#).unwrap();
+    }
+
+    fn git_init(dir: &Path) {
+        let ok = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git init failed");
+    }
+
+    #[test]
+    fn test_ensure_agent_state_excluded_adds_entries() {
+        let temp = tempdir().unwrap();
+        git_init(temp.path());
+
+        ensure_agent_state_excluded(temp.path());
+
+        let exclude = fs::read_to_string(temp.path().join(".git/info/exclude")).unwrap();
+        assert!(exclude.contains(".claude/git-warp/"), "{exclude}");
+        assert!(exclude.contains(".codex/git-warp/"), "{exclude}");
+    }
+
+    #[test]
+    fn test_ensure_agent_state_excluded_is_idempotent() {
+        let temp = tempdir().unwrap();
+        git_init(temp.path());
+
+        ensure_agent_state_excluded(temp.path());
+        ensure_agent_state_excluded(temp.path());
+        ensure_agent_state_excluded(temp.path());
+
+        let exclude = fs::read_to_string(temp.path().join(".git/info/exclude")).unwrap();
+        assert_eq!(
+            exclude.matches(".claude/git-warp/").count(),
+            1,
+            "duplicated entry: {exclude}"
+        );
+        assert_eq!(exclude.matches(".codex/git-warp/").count(), 1, "{exclude}");
+    }
+
+    #[test]
+    fn test_ensure_agent_state_excluded_preserves_existing_exclude() {
+        let temp = tempdir().unwrap();
+        git_init(temp.path());
+        let exclude_path = temp.path().join(".git/info/exclude");
+        fs::write(&exclude_path, "# pre-existing\n*.tmp\n").unwrap();
+
+        ensure_agent_state_excluded(temp.path());
+
+        let exclude = fs::read_to_string(&exclude_path).unwrap();
+        assert!(exclude.contains("*.tmp"), "clobbered existing: {exclude}");
+        assert!(exclude.contains(".claude/git-warp/"), "{exclude}");
+    }
+
+    #[test]
+    fn test_heartbeat_status_file_is_untracked_after_exclude() {
+        // The actual bug: the churning status file must not show up as a
+        // tracked/untracked change git would ever commit.
+        let temp = tempdir().unwrap();
+        git_init(temp.path());
+
+        ensure_agent_state_excluded(temp.path());
+
+        let status_dir = temp.path().join(".claude/git-warp");
+        fs::create_dir_all(&status_dir).unwrap();
+        fs::write(
+            status_dir.join("status"),
+            r#"{"status":"working","last_activity":"2026-05-18T03:11:58+07:00"}"#,
+        )
+        .unwrap();
+
+        let out = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        let porcelain = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !porcelain.contains(".claude"),
+            "heartbeat is visible to git (would get committed): {porcelain}"
+        );
     }
 
     #[test]
