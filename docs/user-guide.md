@@ -275,7 +275,7 @@ claude_hooks = true
 
 `post_create.auto_install` runs the matching `<manager> install` after Git-Warp
 creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` →
-`yarn.lock` → `bun.lockb` → `package-lock.json`; the first match wins. Set
+`yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json`; the first match wins. Set
 `auto_install = false` to skip the install step entirely.
 
 Environment variables override config file values:

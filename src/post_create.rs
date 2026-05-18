@@ -44,6 +44,7 @@ pub enum PostCreateSetupStatus {
 const LOCKFILES: &[(&str, PackageManager)] = &[
     ("pnpm-lock.yaml", PackageManager::Pnpm),
     ("yarn.lock", PackageManager::Yarn),
+    ("bun.lock", PackageManager::Bun),
     ("bun.lockb", PackageManager::Bun),
     ("package-lock.json", PackageManager::Npm),
 ];
@@ -272,6 +273,66 @@ mod tests {
         assert_eq!(
             status,
             PostCreateSetupStatus::Installed(PackageManager::Bun)
+        );
+    }
+
+    #[test]
+    fn test_runs_bun_when_text_bun_lockfile_present() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("bun.lock"), "").unwrap();
+
+        let bin = temp.path().join("fake-bun");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Bun, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Bun)
+        );
+    }
+
+    #[test]
+    fn test_bun_text_lockfile_wins_over_legacy_binary() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("bun.lock"), "").unwrap();
+        fs::write(temp.path().join("bun.lockb"), "").unwrap();
+
+        let bin = temp.path().join("fake-bun");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Bun, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Bun)
+        );
+
+        let bun_lock_pos = LOCKFILES
+            .iter()
+            .position(|(name, _)| *name == "bun.lock")
+            .expect("bun.lock present in LOCKFILES");
+        let bun_lockb_pos = LOCKFILES
+            .iter()
+            .position(|(name, _)| *name == "bun.lockb")
+            .expect("bun.lockb present in LOCKFILES");
+        assert!(
+            bun_lock_pos < bun_lockb_pos,
+            "bun.lock must be detected before bun.lockb"
         );
     }
 
