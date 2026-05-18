@@ -118,6 +118,40 @@ download() {
   fi
 }
 
+verify_checksum() {
+  dir="$1"
+  archive_name="$2"
+
+  if [ "${GIT_WARP_SKIP_CHECKSUM:-0}" = "1" ]; then
+    echo "Skipping checksum verification (GIT_WARP_SKIP_CHECKSUM=1)"
+    return 0
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    checker="shasum -a 256 -c"
+    digester="shasum -a 256"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    checker="sha256sum -c"
+    digester="sha256sum"
+  else
+    echo "error: neither shasum nor sha256sum is available to verify ${archive_name}" >&2
+    cargo_fallback_hint
+    exit 1
+  fi
+
+  if ( cd "$dir" && $checker "${archive_name}.sha256" >/dev/null 2>&1 ); then
+    return 0
+  fi
+
+  expected="$(awk '{print $1; exit}' "${dir}/${archive_name}.sha256" 2>/dev/null)"
+  actual="$( ( cd "$dir" && $digester "$archive_name" ) | awk '{print $1; exit}')"
+  echo "error: checksum verification failed for ${archive_name}" >&2
+  echo "  expected: ${expected:-<missing>}" >&2
+  echo "  actual:   ${actual:-<unknown>}" >&2
+  cargo_fallback_hint
+  exit 1
+}
+
 target_triple() {
   os="$(uname -s)"
   arch="$(uname -m)"
@@ -151,6 +185,11 @@ install_from_binary() {
 
   echo "Downloading Git-Warp ${version} for ${target}"
   download "$url" "$archive"
+
+  if [ "${GIT_WARP_SKIP_CHECKSUM:-0}" != "1" ]; then
+    download "${url}.sha256" "${archive}.sha256"
+  fi
+  verify_checksum "$tmp_dir" "$asset"
 
   tar -xzf "$archive" -C "$tmp_dir" || fail "failed to extract ${archive}; the download may be incomplete or corrupt"
 

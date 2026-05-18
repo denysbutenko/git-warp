@@ -319,15 +319,26 @@ fi
     write_executable(
         &fake_bin.path().join("curl"),
         r#"#!/bin/sh
+url=""
 output=""
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    output="$1"
-  fi
+  case "$1" in
+    -o) shift; output="$1" ;;
+    -O) shift; output="$1" ;;
+    http*|https*) url="$1" ;;
+  esac
   shift
 done
-printf fake > "$output"
+case "$url" in
+  *.sha256)
+    archive_name="${url##*/}"
+    archive_name="${archive_name%.sha256}"
+    printf 'b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78  %s\n' "$archive_name" > "$output"
+    ;;
+  *)
+    printf fake > "$output"
+    ;;
+esac
 "#,
     );
     write_executable(
@@ -376,6 +387,146 @@ chmod 755 "$dest/warp"
         stdout.contains("Open a new terminal or run 'warp doctor' after updating PATH."),
         "{stdout}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_fails_on_checksum_mismatch() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Linux
+else
+  echo x86_64
+fi
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("curl"),
+        r#"#!/bin/sh
+url=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) shift; output="$1" ;;
+    -O) shift; output="$1" ;;
+    http*|https*) url="$1" ;;
+  esac
+  shift
+done
+case "$url" in
+  *.sha256)
+    archive_name="${url##*/}"
+    archive_name="${archive_name%.sha256}"
+    printf '0000000000000000000000000000000000000000000000000000000000000000  %s\n' "$archive_name" > "$output"
+    ;;
+  *)
+    printf fake > "$output"
+    ;;
+esac
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "checksum verification failed for git-warp-v9.9.9-x86_64-unknown-linux-gnu.tar.gz"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr
+            .contains("expected: 0000000000000000000000000000000000000000000000000000000000000000"),
+        "{stderr}"
+    );
+    assert!(
+        stderr
+            .contains("actual:   b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("GIT_WARP_INSTALL_METHOD=cargo"), "{stderr}");
+    assert!(
+        !install_dir.path().join("warp").exists(),
+        "warp binary should not be installed on checksum mismatch"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_skips_checksum_when_opted_out() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("uname"),
+        r#"#!/bin/sh
+if [ "$1" = "-s" ]; then
+  echo Linux
+else
+  echo x86_64
+fi
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("curl"),
+        r#"#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+printf fake > "$output"
+"#,
+    );
+    write_executable(
+        &fake_bin.path().join("tar"),
+        r#"#!/bin/sh
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-C" ]; then
+    shift
+    dest="$1"
+  fi
+  shift
+done
+cat > "$dest/warp" <<'SCRIPT'
+#!/bin/sh
+echo warp 9.9.9
+SCRIPT
+chmod 755 "$dest/warp"
+"#,
+    );
+
+    let output = installer_command(fake_bin.path(), home_dir.path())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .env("GIT_WARP_SKIP_CHECKSUM", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("Skipping checksum verification"),
+        "{stdout}"
+    );
+    assert!(!stderr.contains("checksum verification failed"), "{stderr}");
+    assert!(install_dir.path().join("warp").exists());
 }
 
 #[test]
@@ -1014,15 +1165,26 @@ fi
     write_executable(
         &fake_bin.path().join("curl"),
         r#"#!/bin/sh
+url=""
 output=""
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    output="$1"
-  fi
+  case "$1" in
+    -o) shift; output="$1" ;;
+    -O) shift; output="$1" ;;
+    http*|https*) url="$1" ;;
+  esac
   shift
 done
-printf fake > "$output"
+case "$url" in
+  *.sha256)
+    archive_name="${url##*/}"
+    archive_name="${archive_name%.sha256}"
+    printf 'b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78  %s\n' "$archive_name" > "$output"
+    ;;
+  *)
+    printf fake > "$output"
+    ;;
+esac
 "#,
     );
     write_executable(
@@ -1091,15 +1253,26 @@ fi
     write_executable(
         &fake_bin.path().join("curl"),
         r#"#!/bin/sh
+url=""
 output=""
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then
-    shift
-    output="$1"
-  fi
+  case "$1" in
+    -o) shift; output="$1" ;;
+    -O) shift; output="$1" ;;
+    http*|https*) url="$1" ;;
+  esac
   shift
 done
-printf fake > "$output"
+case "$url" in
+  *.sha256)
+    archive_name="${url##*/}"
+    archive_name="${archive_name%.sha256}"
+    printf 'b5d54c39e66671c9731b9f471e585d8262cd4f54963f0c93082d8dcf334d4c78  %s\n' "$archive_name" > "$output"
+    ;;
+  *)
+    printf fake > "$output"
+    ;;
+esac
 "#,
     );
     write_executable(
