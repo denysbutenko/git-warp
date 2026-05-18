@@ -47,6 +47,20 @@ Install into another writable directory with `GIT_WARP_INSTALL_DIR`:
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_DIR=/usr/local/bin sh
 ```
 
+## Checksum Verification
+
+`install.sh` downloads the release archive's companion `.sha256` file from the
+same release and verifies the digest with `shasum -a 256 -c` (falling back to
+`sha256sum -c`) before extracting. A mismatch aborts the install with both the
+expected and actual digests printed on stderr.
+
+If you install from a private mirror that does not publish digests, opt out
+with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_SKIP_CHECKSUM=1 sh
+```
+
 ## Install A Specific Version
 
 The installer defaults to the latest documented release. Pin a version with
