@@ -30,8 +30,9 @@ warp release-check --metadata-only --version v0.3.0
 After metadata passes, the full command runs:
 
 ```bash
-cargo fmt --check
-cargo test
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
 cargo build --release --bin warp
 ./target/release/warp --version
 ./target/release/warp --help
@@ -39,6 +40,9 @@ cargo build --release --bin warp
 ./target/release/warp cleanup --help
 ./target/release/warp doctor
 ```
+
+These mirror the gates in `.github/workflows/ci.yml`, so a tree that passes
+release-check stays green on CI.
 
 For source builds, this covers the contributor path. For public installs, the
 metadata checks cover the install script default, pinned install docs, release

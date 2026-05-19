@@ -216,8 +216,24 @@ fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<(
     let release_binary = release_binary.to_string_lossy().into_owned();
 
     let steps = [
-        ReleaseCommand::new("cargo fmt --check", "cargo", &["fmt", "--check"]),
-        ReleaseCommand::new("cargo test", "cargo", &["test"]),
+        ReleaseCommand::new(
+            "cargo fmt --all -- --check",
+            "cargo",
+            &["fmt", "--all", "--", "--check"],
+        ),
+        ReleaseCommand::new(
+            "cargo clippy --all-targets --locked -- -D warnings",
+            "cargo",
+            &[
+                "clippy",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+        ReleaseCommand::new("cargo test --locked", "cargo", &["test", "--locked"]),
         ReleaseCommand::new(
             "cargo build --release --bin warp",
             "cargo",
