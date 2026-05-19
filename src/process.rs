@@ -163,58 +163,59 @@ impl ProcessManager {
         let kill_timeout = kill_timeout.max(Duration::from_millis(100));
         #[cfg(unix)]
         {
-            use std::process::Command;
+            use nix::errno::Errno;
+            use nix::sys::signal::{self, Signal};
+            use nix::unistd::Pid;
 
-            // Try graceful termination first (SIGTERM)
-            let graceful_result = Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .output();
+            let nix_pid = Pid::from_raw(pid as i32);
 
-            match graceful_result {
-                Ok(output) if output.status.success() => {
-                    // Poll `kill -0 <pid>` until the process is gone or we hit
-                    // the grace budget. A fixed sleep would either rush a
-                    // legitimate slow exit into SIGKILL or block longer than
-                    // needed when SIGTERM is honored immediately.
-                    const POLL_INTERVAL: Duration = Duration::from_millis(50);
+            match signal::kill(nix_pid, Some(Signal::SIGTERM)) {
+                Ok(()) => {}
+                Err(Errno::ESRCH) => return true,
+                Err(Errno::EPERM) => {
+                    log::warn!("no permission to signal pid {pid}");
+                    return false;
+                }
+                Err(err) => {
+                    log::warn!("SIGTERM to pid {pid} failed: {err}");
+                }
+            }
 
-                    let deadline = Instant::now() + kill_timeout;
-                    let mut still_running = true;
-                    loop {
-                        let alive = Command::new("kill")
-                            .arg("-0")
-                            .arg(pid.to_string())
-                            .output()
-                            .map(|o| o.status.success())
-                            .unwrap_or(false);
-                        if !alive {
-                            still_running = false;
-                            break;
-                        }
-                        if Instant::now() >= deadline {
-                            break;
-                        }
-                        std::thread::sleep(POLL_INTERVAL);
+            // Poll the process with signal 0 until it exits or the grace
+            // budget expires. A fixed sleep would either rush a legitimate
+            // slow exit into SIGKILL or block longer than needed when SIGTERM
+            // is honored immediately.
+            const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+            let deadline = Instant::now() + kill_timeout;
+            let mut still_running = true;
+            loop {
+                match signal::kill(nix_pid, None) {
+                    Ok(()) => {}
+                    Err(Errno::ESRCH) => {
+                        still_running = false;
+                        break;
                     }
-
-                    if still_running {
-                        let force_result = Command::new("kill")
-                            .arg("-KILL")
-                            .arg(pid.to_string())
-                            .output();
-                        force_result.map(|o| o.status.success()).unwrap_or(false)
-                    } else {
-                        true
+                    Err(err) => {
+                        log::warn!("liveness probe for pid {pid} failed: {err}");
+                        break;
                     }
                 }
-                _ => {
-                    // Graceful termination failed, force kill immediately
-                    let force_result = Command::new("kill")
-                        .arg("-KILL")
-                        .arg(pid.to_string())
-                        .output();
-                    force_result.map(|o| o.status.success()).unwrap_or(false)
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+
+            if !still_running {
+                return true;
+            }
+
+            match signal::kill(nix_pid, Some(Signal::SIGKILL)) {
+                Ok(()) | Err(Errno::ESRCH) => true,
+                Err(err) => {
+                    log::warn!("SIGKILL to pid {pid} failed: {err}");
+                    false
                 }
             }
         }
@@ -367,6 +368,24 @@ mod tests {
         assert_eq!(stats.total_memory, 3072);
         assert_eq!(stats.total_cpu, 20.0);
         assert_eq!(stats.high_cpu_count, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_single_process_handles_missing_pid() {
+        use std::process::Command as StdCommand;
+
+        // Spawn a short-lived child, wait for it to exit, then reap it. The
+        // resulting PID is guaranteed gone so signal::kill should report
+        // ESRCH, which the function maps to success.
+        let mut child = StdCommand::new("true").spawn().expect("spawn true");
+        let pid = child.id();
+        let _ = child.wait();
+
+        let manager = ProcessManager::new();
+        let ok = manager.terminate_single_process(pid, Duration::from_millis(200));
+
+        assert!(ok, "ESRCH should be treated as success");
     }
 
     #[cfg(unix)]
