@@ -152,6 +152,16 @@ pub enum Commands {
     },
 }
 
+/// Resolve the effective kill behavior for cleanup. `--no-kill` always wins,
+/// matching the precedence established in #67 — explicit opt-out trumps any
+/// config-driven auto-kill.
+fn resolve_cleanup_kill(flag_kill: bool, flag_no_kill: bool, config_auto_kill: bool) -> bool {
+    if flag_no_kill {
+        return false;
+    }
+    flag_kill || config_auto_kill
+}
+
 fn public_subcommand_names() -> Vec<String> {
     use clap::CommandFactory;
     let mut names = Vec::new();
@@ -529,9 +539,11 @@ impl Cli {
     }
 
     fn handle_switcher_remove(&self, target: crate::tui::WorktreeRemovalTarget) -> Result<()> {
+        use crate::config::ConfigManager;
         use crate::git::GitRepository;
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
+        let auto_prune = ConfigManager::new()?.get().git.auto_prune;
 
         println!(
             "Removing worktree for branch '{}'{}: {}",
@@ -553,7 +565,9 @@ impl Cli {
             }
         }
 
-        if let Err(err) = git_repo.prune_worktrees() {
+        if auto_prune
+            && let Err(err) = git_repo.prune_worktrees()
+        {
             log::warn!("Failed to prune worktrees: {}", err);
         }
 
@@ -561,9 +575,11 @@ impl Cli {
     }
 
     fn handle_switcher_batch_remove(&self, batch: crate::tui::WorktreeBatchRemoval) -> Result<()> {
+        use crate::config::ConfigManager;
         use crate::git::GitRepository;
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
+        let auto_prune = ConfigManager::new()?.get().git.auto_prune;
 
         println!(
             "Batch removing {} selected worktree{}",
@@ -628,7 +644,9 @@ impl Cli {
             }
         }
 
-        if let Err(err) = git_repo.prune_worktrees() {
+        if auto_prune
+            && let Err(err) = git_repo.prune_worktrees()
+        {
             log::warn!("Failed to prune worktrees: {}", err);
         }
 
@@ -1267,17 +1285,23 @@ impl Cli {
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
-        let git_config = config_manager.get().git.clone();
+        let config = config_manager.get().clone();
+        let git_config = config.git.clone();
+        let effective_kill = resolve_cleanup_kill(kill, no_kill, config.process.auto_kill);
+        let check_processes = config.process.check_processes;
+        let kill_timeout = std::time::Duration::from_secs(config.process.kill_timeout);
         let mut process_manager = ProcessManager::new();
 
         if self.dry_run {
             println!("🔎 Dry run: previewing cleanup with mode: {}", mode);
-        } else {
+        } else if config.git.auto_fetch {
             // Fetch latest changes for accurate analysis
             println!("🔄 Fetching latest changes...");
             if !git_repo.fetch_branches()? {
                 println!("⚠️  Fetch failed, analysis may be outdated");
             }
+        } else {
+            println!("ℹ️  Skipping fetch (git.auto_fetch=false); analysis uses local refs only.");
         }
 
         let worktrees = git_repo.list_worktrees()?;
@@ -1383,13 +1407,17 @@ impl Cli {
             } else {
                 "clean"
             };
-            let busy = match process_manager.has_processes_in_directory(&candidate.path) {
-                Ok(true) => {
-                    process_busy.push(candidate.branch.clone());
-                    "; process-busy"
+            let busy = if check_processes {
+                match process_manager.has_processes_in_directory(&candidate.path) {
+                    Ok(true) => {
+                        process_busy.push(candidate.branch.clone());
+                        "; process-busy"
+                    }
+                    Ok(false) => "",
+                    Err(_) => "",
                 }
-                Ok(false) => "",
-                Err(_) => "",
+            } else {
+                ""
             };
             println!(
                 "  • {} at {} [{}; {}; {}{}]",
@@ -1401,7 +1429,7 @@ impl Cli {
                 busy,
             );
         }
-        if !process_busy.is_empty() && !force && !kill {
+        if !process_busy.is_empty() && !force && !effective_kill {
             println!(
                 "💡 {} candidate(s) have running processes. Use --kill to terminate or --force to ignore.",
                 process_busy.len()
@@ -1462,12 +1490,16 @@ impl Cli {
             println!("🗑️  Removing worktree: {}", candidate.branch);
 
             // Handle process management
-            if kill && !no_kill {
+            if effective_kill && check_processes {
                 println!("🔍 Checking for processes in worktree...");
                 match process_manager.find_processes_in_directory(&candidate.path) {
                     Ok(processes) if !processes.is_empty() => {
                         println!("⚠️  Found {} processes in worktree", processes.len());
-                        if !process_manager.terminate_processes(&processes, self.auto_confirm)? {
+                        if !process_manager.terminate_processes(
+                            &processes,
+                            self.auto_confirm,
+                            kill_timeout,
+                        )? {
                             println!("❌ Failed to terminate processes, skipping worktree");
                             failed += 1;
                             continue;
@@ -1480,7 +1512,7 @@ impl Cli {
                         println!("⚠️  Failed to check processes: {}", e);
                     }
                 }
-            } else if !no_kill {
+            } else if !no_kill && check_processes {
                 // Default behavior - check for processes but don't auto-kill
                 match process_manager.has_processes_in_directory(&candidate.path) {
                     Ok(true) => {
@@ -1537,7 +1569,9 @@ impl Cli {
         }
 
         // Prune stale worktree references
-        if let Err(e) = git_repo.prune_worktrees() {
+        if config.git.auto_prune
+            && let Err(e) = git_repo.prune_worktrees()
+        {
             log::warn!("Failed to prune worktrees: {}", e);
         }
 
@@ -2177,10 +2211,18 @@ impl Cli {
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
-        let dashboard = AgentsDashboard::new(AgentDiscovery::with_max_history_sessions(
-            Self::agent_monitored_paths(&git_repo)?,
-            config_manager.get().agent.max_activities,
-        ));
+        let agent_config = &config_manager.get().agent;
+        if !agent_config.enabled {
+            println!("🚫 Agent monitoring is disabled (agent.enabled=false in config).");
+            return Ok(());
+        }
+        let dashboard = AgentsDashboard::with_refresh_rate(
+            AgentDiscovery::with_max_history_sessions(
+                Self::agent_monitored_paths(&git_repo)?,
+                agent_config.max_activities,
+            ),
+            agent_config.refresh_rate,
+        );
         dashboard.run()
     }
 
@@ -2384,4 +2426,28 @@ fn worktree_last_touched(path: &Path) -> Option<SystemTime> {
         .into_iter()
         .flatten()
         .max()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_cleanup_kill_no_kill_flag_always_wins() {
+        assert!(!resolve_cleanup_kill(true, true, true));
+        assert!(!resolve_cleanup_kill(false, true, true));
+        assert!(!resolve_cleanup_kill(true, true, false));
+    }
+
+    #[test]
+    fn resolve_cleanup_kill_kill_flag_or_config_enables() {
+        assert!(resolve_cleanup_kill(true, false, false));
+        assert!(resolve_cleanup_kill(false, false, true));
+        assert!(resolve_cleanup_kill(true, false, true));
+    }
+
+    #[test]
+    fn resolve_cleanup_kill_default_is_off() {
+        assert!(!resolve_cleanup_kill(false, false, false));
+    }
 }

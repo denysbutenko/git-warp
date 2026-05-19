@@ -119,7 +119,7 @@ fn test_process_termination() {
     };
 
     // Test termination
-    let result = manager.terminate_processes(&[process_info], true);
+    let result = manager.terminate_processes(&[process_info], true, Duration::from_secs(5));
 
     match result {
         Ok(success) => {
@@ -154,7 +154,7 @@ fn test_process_termination_nonexistent() {
         start_time: 0,
     };
 
-    let result = manager.terminate_processes(&[fake_process], true);
+    let result = manager.terminate_processes(&[fake_process], true, Duration::from_secs(5));
 
     // Should handle non-existent processes gracefully
     match result {
@@ -296,7 +296,7 @@ fn test_graceful_vs_force_termination() {
     };
 
     // Test auto-confirm termination (should use graceful then force)
-    let result = manager.terminate_processes(&[process_info], true);
+    let result = manager.terminate_processes(&[process_info], true, Duration::from_secs(5));
 
     match result {
         Ok(_) => {
@@ -371,7 +371,7 @@ wait "$child_pid"
         start_time: 0,
     };
 
-    let result = manager.terminate_processes(&[process_info], true);
+    let result = manager.terminate_processes(&[process_info], true, Duration::from_secs(5));
 
     match result {
         Ok(_) => {

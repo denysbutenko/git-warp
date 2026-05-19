@@ -183,6 +183,12 @@ max_activities = 100
 claude_hooks = true
 ```
 
+`[git].auto_fetch`, `[git].auto_prune`, `[process].check_processes`,
+`[process].auto_kill`, `[process].kill_timeout`, `[agent].enabled`, and
+`[agent].refresh_rate` now drive runtime behavior — see `docs/user-guide.md`
+for the per-key semantics. `[process].auto_kill` defers to `--kill` /
+`--no-kill` when those flags are present (`--no-kill` always wins).
+
 Environment overrides use the `GIT_WARP_` prefix:
 
 ```bash
