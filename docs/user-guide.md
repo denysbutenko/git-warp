@@ -273,6 +273,17 @@ max_activities = 100
 claude_hooks = true
 ```
 
+`[git].auto_fetch` controls whether `warp cleanup` runs `git fetch --all --prune`
+before analysis. `[git].auto_prune` gates the `git worktree prune` call that
+follows worktree removal. `[process].check_processes` skips the "process-busy"
+preview and per-candidate process check when `false`; `[process].auto_kill`
+makes `warp cleanup` behave as if `--kill` was passed when neither `--kill` nor
+`--no-kill` is on the command line (`--no-kill` still wins).
+`[process].kill_timeout` is the SIGTERM grace period before Git-Warp escalates
+to SIGKILL. `[agent].enabled = false` short-circuits `warp agents` with a
+disabled banner; `[agent].refresh_rate` sets the dashboard poll interval in
+milliseconds (clamped to ≥ 250 ms).
+
 `post_create.auto_install` runs the matching `<manager> install` after Git-Warp
 creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` →
 `yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json`; the first match wins. Set

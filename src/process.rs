@@ -96,6 +96,7 @@ impl ProcessManager {
         &self,
         processes: &[ProcessInfo],
         auto_confirm: bool,
+        kill_timeout: Duration,
     ) -> Result<bool> {
         if processes.is_empty() {
             return Ok(true);
@@ -114,7 +115,7 @@ impl ProcessManager {
         for process in processes {
             println!("🔪 Terminating PID {}: {}", process.pid, process.name);
 
-            if self.terminate_single_process(process.pid) {
+            if self.terminate_single_process(process.pid, kill_timeout) {
                 success_count += 1;
                 println!("  ✅ Terminated successfully");
             } else {
@@ -156,8 +157,10 @@ impl ProcessManager {
         Ok(input.trim().to_lowercase().starts_with('y'))
     }
 
-    /// Terminate a single process by PID with graceful fallback
-    fn terminate_single_process(&self, pid: u32) -> bool {
+    /// Terminate a single process by PID with graceful fallback.
+    /// `kill_timeout` caps the SIGTERM grace period; clamped to >= 100 ms.
+    fn terminate_single_process(&self, pid: u32, kill_timeout: Duration) -> bool {
+        let kill_timeout = kill_timeout.max(Duration::from_millis(100));
         #[cfg(unix)]
         {
             use std::process::Command;
@@ -175,9 +178,8 @@ impl ProcessManager {
                     // legitimate slow exit into SIGKILL or block longer than
                     // needed when SIGTERM is honored immediately.
                     const POLL_INTERVAL: Duration = Duration::from_millis(50);
-                    const GRACEFUL_BUDGET: Duration = Duration::from_secs(10);
 
-                    let deadline = Instant::now() + GRACEFUL_BUDGET;
+                    let deadline = Instant::now() + kill_timeout;
                     let mut still_running = true;
                     loop {
                         let alive = Command::new("kill")
@@ -219,6 +221,7 @@ impl ProcessManager {
 
         #[cfg(windows)]
         {
+            let _ = kill_timeout; // taskkill is immediate; timeout unused on Windows.
             use std::process::Command;
 
             let result = Command::new("taskkill")
@@ -232,6 +235,7 @@ impl ProcessManager {
 
         #[cfg(not(any(unix, windows)))]
         {
+            let _ = kill_timeout;
             false
         }
     }
@@ -267,6 +271,7 @@ impl ProcessManager {
         &mut self,
         path: P,
         auto_confirm: bool,
+        kill_timeout: Duration,
     ) -> Result<bool> {
         let processes = self.find_processes_in_directory(path)?;
 
@@ -275,7 +280,7 @@ impl ProcessManager {
             return Ok(true);
         }
 
-        self.terminate_processes(&processes, auto_confirm)
+        self.terminate_processes(&processes, auto_confirm, kill_timeout)
     }
 }
 
@@ -362,5 +367,37 @@ mod tests {
         assert_eq!(stats.total_memory, 3072);
         assert_eq!(stats.total_cpu, 20.0);
         assert_eq!(stats.high_cpu_count, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_single_process_respects_kill_timeout() {
+        use std::process::Command as StdCommand;
+
+        // Spawn a child that ignores SIGTERM so we exercise the SIGKILL path
+        // gated on kill_timeout. `sh -c "trap '' TERM; sleep 30"` will only
+        // exit on SIGKILL.
+        let mut child = StdCommand::new("sh")
+            .args(["-c", "trap '' TERM; sleep 30"])
+            .spawn()
+            .expect("spawn sleep child");
+        let pid = child.id();
+
+        let manager = ProcessManager::new();
+        let start = Instant::now();
+        let ok = manager.terminate_single_process(pid, Duration::from_millis(200));
+        let elapsed = start.elapsed();
+
+        assert!(ok, "terminate_single_process should report success");
+        // SIGTERM grace is 200 ms; total wall time must be well under the
+        // 30 s sleep. Cap generously to avoid CI flake.
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "expected fast SIGKILL fallback, took {:?}",
+            elapsed
+        );
+
+        // Reap the child so it doesn't leak as a zombie.
+        let _ = child.wait();
     }
 }

@@ -28,7 +28,15 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+/// Minimum allowed agent dashboard refresh interval. Faster than this and the
+/// dashboard churns the file system reading session state.
+const MIN_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+/// Fallback when the caller does not pass a configured refresh rate.
+const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
+
+fn clamp_refresh_interval(refresh_rate_ms: u64) -> Duration {
+    Duration::from_millis(refresh_rate_ms).max(MIN_REFRESH_INTERVAL)
+}
 
 struct TuiTerminalGuard {
     active: bool,
@@ -352,6 +360,7 @@ pub struct TuiApp {
     should_quit: bool,
     selected_index: usize,
     last_refresh: Instant,
+    refresh_interval: Duration,
     discovery: AgentDiscovery,
     sessions: Vec<AgentSessionSummary>,
     filters: DashboardFilters,
@@ -359,10 +368,16 @@ pub struct TuiApp {
 
 impl TuiApp {
     pub fn new(discovery: AgentDiscovery) -> Self {
+        Self::with_refresh_interval(discovery, DEFAULT_REFRESH_INTERVAL)
+    }
+
+    pub fn with_refresh_interval(discovery: AgentDiscovery, refresh_interval: Duration) -> Self {
+        let refresh_interval = refresh_interval.max(MIN_REFRESH_INTERVAL);
         Self {
             should_quit: false,
             selected_index: 0,
-            last_refresh: Instant::now() - REFRESH_INTERVAL,
+            last_refresh: Instant::now() - refresh_interval,
+            refresh_interval,
             discovery,
             sessions: Vec::new(),
             filters: DashboardFilters::default(),
@@ -409,7 +424,7 @@ impl TuiApp {
         terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<()> {
         loop {
-            if self.last_refresh.elapsed() >= REFRESH_INTERVAL {
+            if self.last_refresh.elapsed() >= self.refresh_interval {
                 self.refresh_sessions()?;
             }
 
@@ -1106,15 +1121,27 @@ where
 
 pub struct AgentsDashboard {
     discovery: AgentDiscovery,
+    refresh_interval: Duration,
 }
 
 impl AgentsDashboard {
+    #[allow(dead_code)] // Default constructor used by integration tests and embedders.
     pub fn new(discovery: AgentDiscovery) -> Self {
-        Self { discovery }
+        Self {
+            discovery,
+            refresh_interval: DEFAULT_REFRESH_INTERVAL,
+        }
+    }
+
+    pub fn with_refresh_rate(discovery: AgentDiscovery, refresh_rate_ms: u64) -> Self {
+        Self {
+            discovery,
+            refresh_interval: clamp_refresh_interval(refresh_rate_ms),
+        }
     }
 
     pub fn run(&self) -> Result<()> {
-        let mut app = TuiApp::new(self.discovery.clone());
+        let mut app = TuiApp::with_refresh_interval(self.discovery.clone(), self.refresh_interval);
         app.run()
     }
 }
@@ -1772,6 +1799,20 @@ mod tests {
             AgentsDashboard::new(AgentDiscovery::new(vec![PathBuf::from("/tmp/repo")]));
         let _cleanup_tui = CleanupTui::new();
         let _config_tui = ConfigTui::new();
+    }
+
+    #[test]
+    fn clamp_refresh_interval_enforces_minimum() {
+        assert_eq!(clamp_refresh_interval(0), MIN_REFRESH_INTERVAL);
+        assert_eq!(clamp_refresh_interval(50), MIN_REFRESH_INTERVAL);
+        assert_eq!(clamp_refresh_interval(249), MIN_REFRESH_INTERVAL);
+    }
+
+    #[test]
+    fn clamp_refresh_interval_preserves_configured() {
+        assert_eq!(clamp_refresh_interval(250), Duration::from_millis(250));
+        assert_eq!(clamp_refresh_interval(1000), Duration::from_millis(1000));
+        assert_eq!(clamp_refresh_interval(5000), Duration::from_millis(5000));
     }
 
     #[test]
