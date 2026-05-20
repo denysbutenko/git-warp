@@ -20,7 +20,7 @@ crossterm = "0.27.0"
 
 # Core Logic
 gix = "0.62.0"
-nix = { version = "0.28.0", features = ["fs"] }
+nix = { version = "0.28.0", features = ["fs", "signal"] }
 rayon = "1.10.0"
 ignore = "0.4.22"
 sysinfo = "0.30.12"

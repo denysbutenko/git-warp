@@ -82,7 +82,10 @@ version = "0.4.21"
 
 [dependencies.nix]
 version = "0.28.0"
-features = ["fs"]
+features = [
+    "fs",
+    "signal",
+]
 
 [dependencies.ratatui]
 version = "0.26.2"
