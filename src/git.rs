@@ -1,6 +1,8 @@
 use crate::config::GitConfig;
 use crate::error::{GitWarpError, Result};
 use gix::Repository;
+use rayon::prelude::*;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -607,84 +609,86 @@ impl GitRepository {
     ) -> Result<CleanupAnalysis> {
         use std::process::Command;
 
-        let mut candidates = Vec::new();
-        let mut skipped = Vec::new();
+        enum CleanupEntry {
+            Candidate(BranchStatus),
+            Skip(CleanupSkip),
+        }
+
         let cleanup_base_branch = self.cleanup_base_branch(worktrees, configured_default_branch)?;
+        let remotes = self.load_branch_remotes()?;
+        let repo_path: &Path = &self.repo_path;
+        let cleanup_base_branch_ref: &str = &cleanup_base_branch;
+        let remotes_ref = &remotes;
 
-        for worktree in worktrees {
-            if let Some(reason) =
-                cleanup_skip_reason(worktree, &cleanup_base_branch, protected_branches)
-            {
-                let branch_label = if worktree.branch.is_empty() {
-                    if worktree.is_detached {
-                        format!(
-                            "(detached {})",
-                            worktree.head.chars().take(7).collect::<String>()
-                        )
+        let entries: Vec<CleanupEntry> = worktrees
+            .par_iter()
+            .map(|worktree| {
+                if let Some(reason) =
+                    cleanup_skip_reason(worktree, cleanup_base_branch_ref, protected_branches)
+                {
+                    let branch_label = if worktree.branch.is_empty() {
+                        if worktree.is_detached {
+                            format!(
+                                "(detached {})",
+                                worktree.head.chars().take(7).collect::<String>()
+                            )
+                        } else {
+                            "(no branch)".to_string()
+                        }
                     } else {
-                        "(no branch)".to_string()
-                    }
-                } else {
-                    worktree.branch.clone()
-                };
-                skipped.push(CleanupSkip {
-                    branch_label,
-                    path: worktree.path.clone(),
-                    reason,
-                });
-                continue;
-            }
+                        worktree.branch.clone()
+                    };
+                    return CleanupEntry::Skip(CleanupSkip {
+                        branch_label,
+                        path: worktree.path.clone(),
+                        reason,
+                    });
+                }
 
-            let branch = &worktree.branch;
-            let path = &worktree.path;
+                let branch = &worktree.branch;
+                let path = &worktree.path;
 
-            // Check if branch has a remote
-            let has_remote = {
-                let output = Command::new("git")
-                    .args(["config", &format!("branch.{}.remote", branch)])
-                    .current_dir(&self.repo_path)
+                let has_remote = remotes_ref.contains(branch);
+
+                let is_merged = Command::new("git")
+                    .args(["merge-base", "--is-ancestor", branch, cleanup_base_branch_ref])
+                    .current_dir(repo_path)
                     .output()
-                    .map_err(|e| anyhow::anyhow!("Failed to check remote: {}", e))?;
+                    .map(|output| output.status.success())
+                    .unwrap_or(false);
 
-                output.status.success() && !output.stdout.is_empty()
-            };
+                let is_identical = Command::new("git")
+                    .args(["diff", "--quiet", cleanup_base_branch_ref, branch])
+                    .current_dir(repo_path)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
 
-            // Check if branch is merged to the repo's actual cleanup base branch
-            let is_merged = Command::new("git")
-                .args(["merge-base", "--is-ancestor", branch, &cleanup_base_branch])
-                .current_dir(&self.repo_path)
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false);
-
-            // Check if branch is identical to the repo's actual cleanup base branch
-            let is_identical = {
-                let output = Command::new("git")
-                    .args(["diff", "--quiet", &cleanup_base_branch, branch])
-                    .current_dir(&self.repo_path)
-                    .output();
-
-                output.map(|o| o.status.success()).unwrap_or(false)
-            };
-
-            // Check for uncommitted changes
-            let has_uncommitted_changes = {
-                let output = Command::new("git")
+                let has_uncommitted_changes = Command::new("git")
                     .args(["status", "--porcelain"])
                     .current_dir(path)
-                    .output();
+                    .output()
+                    .map(|o| !o.stdout.is_empty())
+                    .unwrap_or(false);
 
-                output.map(|o| !o.stdout.is_empty()).unwrap_or(false)
-            };
+                CleanupEntry::Candidate(BranchStatus {
+                    branch: branch.clone(),
+                    path: path.clone(),
+                    has_remote,
+                    is_merged,
+                    is_identical,
+                    has_uncommitted_changes,
+                })
+            })
+            .collect();
 
-            candidates.push(BranchStatus {
-                branch: branch.clone(),
-                path: path.clone(),
-                has_remote,
-                is_merged,
-                is_identical,
-                has_uncommitted_changes,
-            });
+        let mut candidates = Vec::new();
+        let mut skipped = Vec::new();
+        for entry in entries {
+            match entry {
+                CleanupEntry::Candidate(c) => candidates.push(c),
+                CleanupEntry::Skip(s) => skipped.push(s),
+            }
         }
 
         Ok(CleanupAnalysis {
@@ -692,6 +696,38 @@ impl GitRepository {
             skipped,
             base_branch: cleanup_base_branch,
         })
+    }
+
+    fn load_branch_remotes(&self) -> Result<HashSet<String>> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args(["config", "--get-regexp", r"^branch\..*\.remote$"])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to load branch remotes: {}", e))?;
+
+        if !output.status.success() {
+            return Ok(HashSet::new());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut branches = HashSet::new();
+        for line in stdout.lines() {
+            let key = match line.split_once(' ') {
+                Some((key, _value)) => key,
+                None => continue,
+            };
+            let branch = key
+                .strip_prefix("branch.")
+                .and_then(|rest| rest.strip_suffix(".remote"));
+            if let Some(branch) = branch
+                && !branch.is_empty()
+            {
+                branches.insert(branch.to_string());
+            }
+        }
+        Ok(branches)
     }
 
     fn remote_default_branch(&self) -> Result<Option<String>> {
