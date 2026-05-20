@@ -654,8 +654,37 @@ fn test_doctor_inside_repo_prints_repo_and_worktree_checks() {
     assert!(stdout.contains("Git-Warp Doctor"));
     assert!(stdout.contains("Git repository"));
     assert!(stdout.contains(temp_dir.path().to_string_lossy().as_ref()));
+    assert!(stdout.contains("Git binary"), "{stdout}");
+    assert!(stdout.contains("git version"), "{stdout}");
     assert!(stdout.contains("Worktree base path"));
     assert!(stdout.contains("Next steps"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_doctor_reports_missing_git_binary_when_not_on_path() {
+    let temp_dir = setup_test_repo();
+    let home_dir = tempdir().unwrap();
+    let empty_path_dir = tempdir().unwrap();
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", empty_path_dir.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", empty_path_dir.path())
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Git binary"), "{stdout}");
+    assert!(stdout.contains("git not found on PATH"), "{stdout}");
+    assert!(
+        stdout.contains("Install git (https://git-scm.com/downloads)"),
+        "{stdout}"
+    );
 }
 
 #[test]

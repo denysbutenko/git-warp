@@ -1696,8 +1696,22 @@ impl Cli {
                 .push("Run `warp config --edit` to create and review your config.".to_string());
         }
 
+        match &repo {
+            Some(repo) => {
+                Self::doctor_ok("Git repository", repo.root_path().display().to_string());
+            }
+            None => {
+                Self::doctor_warn("Git repository", "not detected from current directory");
+                next_steps.push(
+                    "Run this command inside a Git repository before creating worktrees."
+                        .to_string(),
+                );
+            }
+        }
+
+        Self::report_doctor_git_binary(&mut next_steps);
+
         let worktree_base = if let Some(repo) = &repo {
-            Self::doctor_ok("Git repository", repo.root_path().display().to_string());
             let sample_worktree =
                 repo.get_worktree_path_with_base("doctor-check", config.worktrees_path.as_deref());
             let base = sample_worktree
@@ -1707,10 +1721,6 @@ impl Cli {
             Self::doctor_info("Worktree base path", base.display().to_string());
             base
         } else {
-            Self::doctor_warn("Git repository", "not detected from current directory");
-            next_steps.push(
-                "Run this command inside a Git repository before creating worktrees.".to_string(),
-            );
             config
                 .worktrees_path
                 .clone()
@@ -1807,6 +1817,53 @@ impl Cli {
             }
         }
         candidate
+    }
+
+    fn report_doctor_git_binary(next_steps: &mut Vec<String>) {
+        use std::io::ErrorKind;
+        use std::process::Command;
+
+        match Command::new("git").arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let line = stdout
+                    .lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("git --version reported no output");
+                Self::doctor_ok("Git binary", line);
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let detail = stderr
+                    .lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("git --version exited with a non-zero status");
+                Self::doctor_warn("Git binary", format!("git --version failed: {detail}"));
+                next_steps.push(
+                    "Reinstall git so worktree, status, and diff commands keep working."
+                        .to_string(),
+                );
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                Self::doctor_warn("Git binary", "git not found on PATH");
+                next_steps.push(
+                    "Install git (https://git-scm.com/downloads) so warp can shell out to worktree, status, and diff commands."
+                        .to_string(),
+                );
+            }
+            Err(error) => {
+                Self::doctor_warn(
+                    "Git binary",
+                    format!("could not run git --version: {error}"),
+                );
+                next_steps
+                    .push("Repair the git installation so warp can shell out to git.".to_string());
+            }
+        }
     }
 
     fn report_doctor_install(next_steps: &mut Vec<String>) {
