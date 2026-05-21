@@ -406,6 +406,39 @@ fn test_analyze_branches_for_cleanup() {
 }
 
 #[test]
+fn test_analyze_branches_for_cleanup_preserves_input_order() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+
+    let names = ["alpha", "bravo", "charlie", "delta"];
+    let mut worktrees = Vec::new();
+    for name in names {
+        let path = repo_path.join("worktrees").join(name);
+        git_repo
+            .create_worktree_and_branch(name, &path, None)
+            .unwrap();
+    }
+
+    let listed = git_repo.list_worktrees().unwrap();
+    for name in names {
+        let info = listed
+            .iter()
+            .find(|w| w.branch == name)
+            .expect("expected listed worktree for feature branch")
+            .clone();
+        worktrees.push(info);
+    }
+
+    let statuses = git_repo.analyze_branches_for_cleanup(&worktrees).unwrap();
+    let observed: Vec<&str> = statuses.iter().map(|s| s.branch.as_str()).collect();
+    assert_eq!(observed, names.to_vec());
+}
+
+#[test]
 fn test_cleanup_analysis_uses_primary_worktree_branch_when_default_is_not_main() {
     let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo_with_initial_branch("trunk");
