@@ -141,8 +141,7 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
     }
     let exclude_path = info_dir.join("exclude");
     let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
-    let already: std::collections::HashSet<&str> =
-        existing.lines().map(|l| l.trim()).collect();
+    let already: std::collections::HashSet<&str> = existing.lines().map(|l| l.trim()).collect();
 
     let missing: Vec<&str> = ENTRIES
         .iter()

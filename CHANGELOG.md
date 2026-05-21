@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- `warp config --interactive` (`-i`) launches an in-process TUI for editing
+  every section of the config: section navigation, boolean toggles, inline
+  edits with validation, atomic save, and unsaved-change confirmation on quit.
+  List-valued fields render read-only and still require editing the TOML file
+  directly.
+
 ## v0.3.0 - 2026-05-06
 
 Second public Git-Warp release. Adds per-worktree cleanup eligibility output,

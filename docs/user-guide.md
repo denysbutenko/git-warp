@@ -233,6 +233,22 @@ Create or open the config file in `$VISUAL` or `$EDITOR`:
 warp config --edit
 ```
 
+Launch the interactive editor (in-process TUI; no external editor needed):
+
+```bash
+warp config --interactive
+# or the short alias
+warp config -i
+```
+
+The interactive editor lists every section on the left and the fields in the
+focused section on the right. `Tab` cycles sections, `Space` toggles booleans,
+`Enter`/`e` edits string and numeric fields, `s` saves to disk, `r` reverts
+to the last saved state, and `q` quits (with a confirmation prompt if there
+are unsaved changes). List-valued fields (`git.protected_branches`,
+`terminal.init_commands`) render read-only — edit the TOML file directly to
+change them.
+
 Default config path:
 
 ```text
