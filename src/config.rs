@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// Default terminal mode for worktree switching
     #[serde(default = "default_terminal_mode")]
@@ -46,7 +46,7 @@ pub struct Config {
     pub post_create: PostCreateConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitConfig {
     /// Default branch name (main, develop)
     #[serde(default = "default_main_branch")]
@@ -65,7 +65,7 @@ pub struct GitConfig {
     pub auto_prune: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessConfig {
     /// Whether to check for processes before cleanup
     #[serde(default = "default_true")]
@@ -80,7 +80,7 @@ pub struct ProcessConfig {
     pub kill_timeout: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalConfig {
     /// Preferred terminal application (iterm2, terminal, warp, auto)
     #[serde(default = "default_terminal_app")]
@@ -96,7 +96,7 @@ pub struct TerminalConfig {
     pub init_commands: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PostCreateConfig {
     /// Run `<manager> install` after creating a new worktree
     /// when a recognized JS lockfile (pnpm/yarn/bun/npm) is present
@@ -104,7 +104,7 @@ pub struct PostCreateConfig {
     pub auto_install: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Enable agent monitoring
     #[serde(default = "default_true")]
@@ -377,9 +377,14 @@ impl ConfigManager {
     }
 
     /// Save the configuration to file
-    #[allow(dead_code)] // Exercised by config_tests integration tests.
     pub fn save(&self) -> Result<()> {
         self.save_config(&self.config_path, &self.config)
+    }
+
+    /// Persist the in-memory `config` value to disk. Alias used by the editor TUI
+    /// after mutating `self.config` in place.
+    pub fn save_current(&self) -> Result<()> {
+        self.save()
     }
 
     /// Save configuration to a specific path

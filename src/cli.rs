@@ -86,11 +86,14 @@ pub enum Commands {
     /// Configure git-warp settings
     Config {
         /// Show current configuration
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["edit", "interactive"])]
         show: bool,
         /// Open the configuration file in your editor
-        #[arg(long)]
+        #[arg(long, conflicts_with = "interactive")]
         edit: bool,
+        /// Launch the interactive config editor TUI
+        #[arg(long, short, conflicts_with_all = ["show", "edit"])]
+        interactive: bool,
     },
 
     /// Live agent monitoring dashboard
@@ -391,7 +394,11 @@ impl Cli {
                 no_kill,
                 interactive,
             } => self.handle_cleanup(mode, *force, *kill, *no_kill, *interactive),
-            Commands::Config { show, edit } => self.handle_config(*show, *edit),
+            Commands::Config {
+                show,
+                edit,
+                interactive,
+            } => self.handle_config(*show, *edit, *interactive),
             Commands::Agents => self.handle_agents(),
             Commands::Doctor => self.handle_doctor(),
             Commands::ReleaseCheck {
@@ -565,9 +572,7 @@ impl Cli {
             }
         }
 
-        if auto_prune
-            && let Err(err) = git_repo.prune_worktrees()
-        {
+        if auto_prune && let Err(err) = git_repo.prune_worktrees() {
             log::warn!("Failed to prune worktrees: {}", err);
         }
 
@@ -644,9 +649,7 @@ impl Cli {
             }
         }
 
-        if auto_prune
-            && let Err(err) = git_repo.prune_worktrees()
-        {
+        if auto_prune && let Err(err) = git_repo.prune_worktrees() {
             log::warn!("Failed to prune worktrees: {}", err);
         }
 
@@ -1584,13 +1587,18 @@ impl Cli {
         Ok(())
     }
 
-    fn handle_config(&self, show: bool, edit: bool) -> Result<()> {
+    fn handle_config(&self, show: bool, edit: bool, interactive: bool) -> Result<()> {
         use crate::config::ConfigManager;
+        use crate::tui::ConfigTui;
 
         info!("Config command");
         if self.dry_run {
             println!("Would manage configuration");
             return Ok(());
+        }
+
+        if interactive {
+            return ConfigTui::new().run();
         }
 
         let config_manager = ConfigManager::new()?;
@@ -1651,8 +1659,9 @@ impl Cli {
             println!("⚙️  Configuration Management");
             println!();
             println!("Usage:");
-            println!("  warp config --show     Show current configuration");
-            println!("  warp config --edit     Open configuration in your editor");
+            println!("  warp config --show          Show current configuration");
+            println!("  warp config --edit          Open configuration in your editor");
+            println!("  warp config --interactive   Launch the interactive editor TUI");
             println!();
             println!("Configuration file location:");
             println!("  {}", config_manager.config_path().display());
