@@ -69,6 +69,9 @@ pub enum BranchSource {
     LocalBranch,
     /// Branch only exists on the remote; a local tracking branch will be created.
     RemoteBranch { remote_ref: String },
+    /// Target is a commit-ish (tag, SHA) that isn't a local or remote branch;
+    /// a local branch will be created at this commit.
+    CommitIsh { sha: String },
     /// Neither local nor remote branch exists; a brand new branch will be created from HEAD.
     NewBranch,
 }
@@ -239,7 +242,34 @@ impl GitRepository {
         if let Some(remote_ref) = self.find_remote_branch_ref(branch_name)? {
             return Ok(BranchSource::RemoteBranch { remote_ref });
         }
+        if let Some(sha) = self.resolve_commit_ish(branch_name)? {
+            return Ok(BranchSource::CommitIsh { sha });
+        }
         Ok(BranchSource::NewBranch)
+    }
+
+    /// Resolve a name to a commit SHA if it is a valid commit-ish (tag, SHA, etc.)
+    pub fn resolve_commit_ish(&self, name: &str) -> Result<Option<String>> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{}^{{commit}}", name),
+            ])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to resolve commit-ish: {}", e))?;
+
+        if output.status.success() {
+            Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Locate the first remote that carries `branch_name`, returning the short ref
@@ -352,6 +382,24 @@ impl GitRepository {
                     let error = String::from_utf8_lossy(&output.stderr);
                     return Err(anyhow::anyhow!(
                         "Failed to create worktree from remote branch '{remote_ref}': {}",
+                        error
+                    ));
+                }
+                Ok(())
+            }
+            BranchSource::CommitIsh { sha } => {
+                let output = Command::new("git")
+                    .args(["worktree", "add", "-b", branch_name])
+                    .arg(worktree_path)
+                    .arg(sha)
+                    .current_dir(&self.repo_path)
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("Failed to create worktree from commit-ish: {}", e))?;
+
+                if !output.status.success() {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow::anyhow!(
+                        "Failed to create worktree from commit-ish: {}",
                         error
                     ));
                 }
