@@ -327,6 +327,11 @@ impl Cli {
                 "🌐 Creating worktree from remote branch '{}' (new local '{}' tracking it)",
                 remote_ref, branch
             ),
+            crate::git::BranchSource::CommitIsh { sha } => format!(
+                "🔖 Creating worktree at commit '{}' (new local branch '{}')",
+                &sha[..7],
+                branch
+            ),
             crate::git::BranchSource::NewBranch => {
                 format!("✨ Creating new branch '{}' from HEAD", branch)
             }
@@ -345,6 +350,13 @@ impl Cli {
                 "Source: remote branch '{}' (would create local '{}' tracking it)",
                 remote_ref, branch
             ),
+            crate::git::BranchSource::CommitIsh { sha } => {
+                format!(
+                    "Source: commit-ish '{}' (would create local branch '{}')",
+                    &sha[..7],
+                    branch
+                )
+            }
             crate::git::BranchSource::NewBranch => {
                 format!("Source: new branch '{}' from HEAD", branch)
             }
