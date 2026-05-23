@@ -52,6 +52,16 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&tmp_path);
         return Err(e);
     }
+
+    #[cfg(unix)]
+    {
+        // Fsync the parent directory to ensure the rename is persisted.
+        // We open it read-only as that is sufficient for fsync on most Unix systems.
+        if let Ok(dir) = fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+
     Ok(())
 }
 
@@ -59,6 +69,14 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn write_atomic_full_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("full_cycle.txt");
+        write_atomic(&target, b"content").expect("Write should succeed");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "content");
+    }
 
     #[test]
     fn writes_new_file() {

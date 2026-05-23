@@ -10,6 +10,13 @@
   List-valued fields render read-only and still require editing the TOML file
   directly.
 
+### Fixed
+
+- Ensure durability of atomic writes on Unix systems by calling `fsync` on the
+  parent directory after renaming the temporary file. (#102)
+- Use atomic writes for path rewriting and git exclude updates to prevent file
+  corruption on crash.
+
 ## v0.3.0 - 2026-05-06
 
 Second public Git-Warp release. Adds per-worktree cleanup eligibility output,

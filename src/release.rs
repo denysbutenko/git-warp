@@ -8,19 +8,21 @@ pub struct ReleaseCheckOptions {
     pub metadata_only: bool,
 }
 
-struct ReleaseVersion {
-    number: String,
-    tag: String,
+#[derive(Debug, PartialEq)]
+pub struct ReleaseVersion {
+    pub number: String,
+    pub tag: String,
 }
 
-struct ReleaseCheck {
-    label: &'static str,
-    ok: bool,
-    detail: String,
+#[derive(Debug, PartialEq)]
+pub struct ReleaseCheck {
+    pub label: &'static str,
+    pub ok: bool,
+    pub detail: String,
 }
 
 impl ReleaseCheck {
-    fn pass(label: &'static str, detail: impl Into<String>) -> Self {
+    pub fn pass(label: &'static str, detail: impl Into<String>) -> Self {
         Self {
             label,
             ok: true,
@@ -28,7 +30,7 @@ impl ReleaseCheck {
         }
     }
 
-    fn fail(label: &'static str, detail: impl Into<String>) -> Self {
+    pub fn fail(label: &'static str, detail: impl Into<String>) -> Self {
         Self {
             label,
             ok: false,
@@ -67,7 +69,7 @@ pub fn run_release_check(options: ReleaseCheckOptions) -> Result<()> {
     run_release_commands(&repo_root, &expected)
 }
 
-fn resolve_version(version: Option<&str>, cargo_version: &str) -> Result<ReleaseVersion> {
+pub fn resolve_version(version: Option<&str>, cargo_version: &str) -> Result<ReleaseVersion> {
     let raw = version.unwrap_or(cargo_version).trim();
     let number = raw.strip_prefix('v').unwrap_or(raw);
 
@@ -81,7 +83,7 @@ fn resolve_version(version: Option<&str>, cargo_version: &str) -> Result<Release
     })
 }
 
-fn read_package_version(repo_root: &Path) -> Result<String> {
+pub fn read_package_version(repo_root: &Path) -> Result<String> {
     let cargo_toml_path = repo_root.join("Cargo.toml");
     let cargo_toml = fs::read_to_string(&cargo_toml_path)
         .with_context(|| format!("failed to read {}", cargo_toml_path.display()))?;
@@ -96,7 +98,7 @@ fn read_package_version(repo_root: &Path) -> Result<String> {
         .context("Cargo.toml is missing package.version")
 }
 
-fn collect_metadata_checks(
+pub fn collect_metadata_checks(
     repo_root: &Path,
     expected: &ReleaseVersion,
     cargo_version: &str,
@@ -126,9 +128,12 @@ fn collect_metadata_checks(
         ));
     }
 
-    if changelog.contains(&format!("## {} ", expected.tag))
-        || changelog.contains(&format!("## {}\n", expected.tag))
-    {
+    let tag_heading = format!("## {}", expected.tag);
+    let has_heading = changelog
+        .lines()
+        .any(|line| line == tag_heading || line.starts_with(&format!("{} ", tag_heading)));
+
+    if has_heading {
         checks.push(ReleaseCheck::pass(
             "CHANGELOG.md",
             format!("has a {} release heading", expected.tag),
