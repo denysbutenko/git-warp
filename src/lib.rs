@@ -12,6 +12,7 @@ pub mod git;
 pub mod hooks;
 pub mod post_create;
 pub mod process;
+pub mod release;
 pub mod rewrite;
 pub mod terminal;
 pub mod tui;
