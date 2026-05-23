@@ -95,7 +95,7 @@ impl PathRewriter {
 
         // Write back if content changed
         if new_content != content {
-            fs::write(file_path, new_content)?;
+            crate::fs_atomic::write_atomic(file_path, new_content.as_bytes())?;
             log::debug!("Rewrote paths in: {}", file_path.display());
         }
 

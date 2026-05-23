@@ -164,7 +164,7 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
         out.push_str(entry);
         out.push('\n');
     }
-    let _ = std::fs::write(&exclude_path, out);
+    let _ = crate::fs_atomic::write_atomic(&exclude_path, out.as_bytes());
 }
 
 fn detect_manager(worktree_path: &Path) -> Option<PackageManager> {

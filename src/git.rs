@@ -394,7 +394,9 @@ impl GitRepository {
                     .arg(sha)
                     .current_dir(&self.repo_path)
                     .output()
-                    .map_err(|e| anyhow::anyhow!("Failed to create worktree from commit-ish: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to create worktree from commit-ish: {}", e)
+                    })?;
 
                 if !output.status.success() {
                     let error = String::from_utf8_lossy(&output.stderr);
@@ -699,7 +701,12 @@ impl GitRepository {
                 let has_remote = remotes_ref.contains(branch);
 
                 let is_merged = Command::new("git")
-                    .args(["merge-base", "--is-ancestor", branch, cleanup_base_branch_ref])
+                    .args([
+                        "merge-base",
+                        "--is-ancestor",
+                        branch,
+                        cleanup_base_branch_ref,
+                    ])
                     .current_dir(repo_path)
                     .output()
                     .map(|output| output.status.success())

@@ -580,19 +580,49 @@ fn test_warp_switch_to_tag_creates_branch_at_tag() {
 
     // 1. Create a commit and a tag
     fs::write(repo_path.join("feature.txt"), "tag content").unwrap();
-    Command::new("git").args(["add", "."]).current_dir(repo_path).output().unwrap();
-    Command::new("git").args(["commit", "-m", "Feature commit"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "Feature commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
-    let rev_output = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo_path).output().unwrap();
-    let tag_sha = String::from_utf8_lossy(&rev_output.stdout).trim().to_string();
+    let rev_output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let tag_sha = String::from_utf8_lossy(&rev_output.stdout)
+        .trim()
+        .to_string();
 
-    Command::new("git").args(["tag", "v1.0.0-tag"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["tag", "v1.0.0-tag"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
     // 2. Go back to main so HEAD is different from the tag
-    Command::new("git").args(["checkout", "-f", "main"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["checkout", "-f", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
     fs::write(repo_path.join("README.md"), "# Updated README").unwrap();
-    Command::new("git").args(["add", "."]).current_dir(repo_path).output().unwrap();
-    Command::new("git").args(["commit", "-m", "Update main"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "Update main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
     // 3. Switch to the tag
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
@@ -609,7 +639,8 @@ fn test_warp_switch_to_tag_creates_branch_at_tag() {
     // 4. Extract the worktree path from stdout
     // It's in a line like "✅ Switch complete: /path/to/worktree"
     // or "⚠️  Switch incomplete: /path/to/worktree"
-    let worktree_path = stdout.lines()
+    let worktree_path = stdout
+        .lines()
         .find(|line| line.contains("Switch complete:") || line.contains("Switch incomplete:"))
         .map(|line| {
             if line.contains("Switch complete: ") {
@@ -627,9 +658,18 @@ fn test_warp_switch_to_tag_creates_branch_at_tag() {
         .current_dir(&worktree_path)
         .output()
         .unwrap();
-    let wt_sha = String::from_utf8_lossy(&wt_rev_output.stdout).trim().to_string();
+    let wt_sha = String::from_utf8_lossy(&wt_rev_output.stdout)
+        .trim()
+        .to_string();
 
-    assert_eq!(wt_sha, tag_sha, "Worktree at {} should be at SHA {}, but was at {}", worktree_path.display(), tag_sha, wt_sha);
+    assert_eq!(
+        wt_sha,
+        tag_sha,
+        "Worktree at {} should be at SHA {}, but was at {}",
+        worktree_path.display(),
+        tag_sha,
+        wt_sha
+    );
 
     // Also verify a branch named v1.0.0-tag was created
     let branch_output = Command::new("git")
@@ -637,7 +677,10 @@ fn test_warp_switch_to_tag_creates_branch_at_tag() {
         .current_dir(repo_path)
         .output()
         .unwrap();
-    assert!(branch_output.status.success(), "Branch v1.0.0-tag should have been created");
+    assert!(
+        branch_output.status.success(),
+        "Branch v1.0.0-tag should have been created"
+    );
 }
 
 #[test]
@@ -650,18 +693,44 @@ fn test_warp_switch_to_sha_creates_branch_at_sha() {
 
     // 1. Create a commit
     fs::write(repo_path.join("feature.txt"), "sha content").unwrap();
-    Command::new("git").args(["add", "."]).current_dir(repo_path).output().unwrap();
-    Command::new("git").args(["commit", "-m", "Feature commit"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "Feature commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
-    let rev_output = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(repo_path).output().unwrap();
-    let target_sha = String::from_utf8_lossy(&rev_output.stdout).trim().to_string();
+    let rev_output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    let target_sha = String::from_utf8_lossy(&rev_output.stdout)
+        .trim()
+        .to_string();
     let short_sha = &target_sha[..7];
 
     // 2. Go back to main
-    Command::new("git").args(["checkout", "-f", "main"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["checkout", "-f", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
     fs::write(repo_path.join("README.md"), "# Updated README").unwrap();
-    Command::new("git").args(["add", "."]).current_dir(repo_path).output().unwrap();
-    Command::new("git").args(["commit", "-m", "Update main"]).current_dir(repo_path).output().unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "Update main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
 
     // 3. Switch to the short SHA
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
@@ -671,10 +740,16 @@ fn test_warp_switch_to_sha_creates_branch_at_sha() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stdout={}\nstderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let worktree_path = stdout.lines()
+    let worktree_path = stdout
+        .lines()
         .find(|line| line.contains("Switch complete:"))
         .map(|line| line.split("Switch complete: ").nth(1).unwrap().trim())
         .map(PathBuf::from)
@@ -686,7 +761,13 @@ fn test_warp_switch_to_sha_creates_branch_at_sha() {
         .current_dir(&worktree_path)
         .output()
         .unwrap();
-    let wt_sha = String::from_utf8_lossy(&wt_rev_output.stdout).trim().to_string();
+    let wt_sha = String::from_utf8_lossy(&wt_rev_output.stdout)
+        .trim()
+        .to_string();
 
-    assert_eq!(wt_sha, target_sha, "Worktree should be at SHA {}, but was at {}", target_sha, wt_sha);
+    assert_eq!(
+        wt_sha, target_sha,
+        "Worktree should be at SHA {}, but was at {}",
+        target_sha, wt_sha
+    );
 }
