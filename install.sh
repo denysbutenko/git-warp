@@ -2,9 +2,7 @@
 set -eu
 
 repo_url="${GIT_WARP_REPO_URL:-https://github.com/denysbutenko/git-warp}"
-version="${GIT_WARP_VERSION:-v0.3.0}"
 method="${GIT_WARP_INSTALL_METHOD:-binary}"
-download_base="${GIT_WARP_DOWNLOAD_BASE:-${repo_url}/releases/download/${version}}"
 
 if [ -n "${GIT_WARP_INSTALL_DIR:-}" ]; then
   install_dir="$GIT_WARP_INSTALL_DIR"
@@ -117,6 +115,48 @@ download() {
     exit 1
   fi
 }
+
+fail_version_lookup() {
+  echo "error: $*" >&2
+  echo "Pin a version explicitly to skip the GitHub API lookup:" >&2
+  echo "  curl -fsSL ${repo_url}/raw/main/install.sh | GIT_WARP_VERSION=vX.Y.Z sh" >&2
+  cargo_fallback_hint
+  exit 1
+}
+
+resolve_latest_version() {
+  case "$repo_url" in
+    https://github.com/*) ;;
+    *) fail_version_lookup "GIT_WARP_REPO_URL ($repo_url) is not on github.com; cannot auto-resolve the latest release" ;;
+  esac
+
+  api_url="https://api.github.com/repos/${repo_url#https://github.com/}/releases/latest"
+
+  if command -v curl >/dev/null 2>&1; then
+    body="$(curl -fsSL "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+  elif command -v wget >/dev/null 2>&1; then
+    body="$(wget -qO- "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+  else
+    fail_version_lookup "curl or wget is required to resolve the latest Git-Warp release"
+  fi
+
+  tag="$(printf '%s' "$body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+
+  if [ -z "$tag" ]; then
+    fail_version_lookup "could not parse tag_name from $api_url response"
+  fi
+
+  printf '%s\n' "$tag"
+}
+
+if [ -n "${GIT_WARP_VERSION:-}" ]; then
+  version="$GIT_WARP_VERSION"
+else
+  version="$(resolve_latest_version)"
+  echo "Resolved latest Git-Warp release: ${version}"
+fi
+
+download_base="${GIT_WARP_DOWNLOAD_BASE:-${repo_url}/releases/download/${version}}"
 
 verify_checksum() {
   dir="$1"
