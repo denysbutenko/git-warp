@@ -7,6 +7,7 @@ pub enum PackageManager {
     Yarn,
     Bun,
     Npm,
+    Cargo,
 }
 
 impl PackageManager {
@@ -16,6 +17,7 @@ impl PackageManager {
             PackageManager::Yarn => "yarn",
             PackageManager::Bun => "bun",
             PackageManager::Npm => "npm",
+            PackageManager::Cargo => "cargo",
         }
     }
 
@@ -25,6 +27,16 @@ impl PackageManager {
             PackageManager::Yarn => "yarn install",
             PackageManager::Bun => "bun install",
             PackageManager::Npm => "npm install",
+            PackageManager::Cargo => "cargo check",
+        }
+    }
+
+    pub fn install_args(self) -> &'static [&'static str] {
+        match self {
+            PackageManager::Pnpm | PackageManager::Yarn | PackageManager::Bun | PackageManager::Npm => {
+                &["install"]
+            }
+            PackageManager::Cargo => &["check"],
         }
     }
 }
@@ -47,6 +59,7 @@ const LOCKFILES: &[(&str, PackageManager)] = &[
     ("bun.lock", PackageManager::Bun),
     ("bun.lockb", PackageManager::Bun),
     ("package-lock.json", PackageManager::Npm),
+    ("Cargo.toml", PackageManager::Cargo),
 ];
 
 pub fn run_post_create_setup<P: AsRef<Path>>(
@@ -86,7 +99,7 @@ where
 
     let binary = resolve_binary(manager);
     match Command::new(&binary)
-        .arg("install")
+        .args(manager.install_args())
         .current_dir(worktree_path)
         .output()
     {
@@ -508,6 +521,28 @@ mod tests {
         assert_eq!(
             status,
             PostCreateSetupStatus::Installed(PackageManager::Npm)
+        );
+    }
+
+    #[test]
+    fn test_runs_cargo_when_cargo_toml_present() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "").unwrap();
+
+        let bin = temp.path().join("fake-cargo");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Cargo, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Cargo)
         );
     }
 
