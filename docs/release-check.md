@@ -17,7 +17,9 @@ commands. It stops at the first failing command.
 - `CHANGELOG.md` has a `v0.3.0` release heading.
 - `docs/releases/v0.3.0.md` exists.
 - `docs/install.md` mentions `GIT_WARP_VERSION=v0.3.0`.
-- `install.sh` defaults `GIT_WARP_VERSION` to `v0.3.0`.
+- `install.sh` keeps the `${GIT_WARP_VERSION:-...}` env override and resolves
+  the latest tag via `api.github.com/repos/.../releases/latest`. This is a
+  shape check, independent of the prepared tag.
 
 Use the fast metadata-only mode while preparing notes:
 

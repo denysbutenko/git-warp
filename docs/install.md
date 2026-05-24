@@ -63,12 +63,20 @@ curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.
 
 ## Install A Specific Version
 
-The installer defaults to the latest documented release. Pin a version with
-`GIT_WARP_VERSION`:
+With no env override, the installer resolves the latest published release from
+the GitHub releases API
+(`https://api.github.com/repos/denysbutenko/git-warp/releases/latest`) and
+installs that tag. The resolved tag is printed before the download starts.
+
+Pin a specific version with `GIT_WARP_VERSION` to skip the API lookup:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_VERSION=v0.3.0 sh
 ```
+
+If the API lookup fails (no network, rate-limited, custom non-`github.com`
+`GIT_WARP_REPO_URL`), the installer aborts and points at the `GIT_WARP_VERSION`
+pin or the Cargo fallback.
 
 ## Supported Prebuilt Binaries
 

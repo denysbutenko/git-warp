@@ -82,10 +82,11 @@ fn test_collect_metadata_checks_all_pass() {
     )
     .unwrap();
 
-    // 4. install.sh with version default
+    // 4. install.sh with env override + GitHub API lookup
     fs::write(
         temp.path().join("install.sh"),
-        format!("version=\"${{GIT_WARP_VERSION:-{tag}}}\""),
+        "version=\"${GIT_WARP_VERSION:-}\"\n\
+         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n",
     )
     .unwrap();
 
@@ -133,8 +134,31 @@ fn test_collect_metadata_checks_failures() {
     assert!(
         checks[4]
             .detail
-            .contains("install.sh default GIT_WARP_VERSION is not v0.3.0")
+            .contains("api.github.com/repos/.../releases/latest")
     );
+}
+
+#[test]
+fn test_install_script_partial_lookup_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.sh keeps env override but lost the API lookup line.
+    fs::write(
+        temp.path().join("install.sh"),
+        "version=\"${GIT_WARP_VERSION:-v0.3.0}\"\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+    assert!(
+        !checks[4].ok,
+        "install.sh missing API lookup should fail the check"
+    );
+    assert_eq!(checks[4].label, "install.sh");
 }
 
 #[test]

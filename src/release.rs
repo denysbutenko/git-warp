@@ -178,21 +178,18 @@ pub fn collect_metadata_checks(
         ));
     }
 
-    if install_script.contains(&format!(
-        "version=\"${{GIT_WARP_VERSION:-{}}}\"",
-        expected.tag
-    )) {
+    let has_env_override = install_script.contains("${GIT_WARP_VERSION:-");
+    let has_api_lookup = install_script.contains("api.github.com/repos/");
+
+    if has_env_override && has_api_lookup {
         checks.push(ReleaseCheck::pass(
             "install.sh",
-            format!("defaults to {}", expected.tag),
+            "resolves GIT_WARP_VERSION dynamically from the GitHub releases API",
         ));
     } else {
         checks.push(ReleaseCheck::fail(
             "install.sh",
-            format!(
-                "install.sh default GIT_WARP_VERSION is not {}",
-                expected.tag
-            ),
+            "install.sh must keep the ${GIT_WARP_VERSION:-...} override and call api.github.com/repos/.../releases/latest",
         ));
     }
 
