@@ -1683,6 +1683,14 @@ impl Cli {
             println!("  GIT_WARP_USE_COW=true|false");
             println!("  GIT_WARP_AUTO_CONFIRM=true|false");
             println!("  GIT_WARP_WORKTREES_PATH=/custom/path");
+            println!();
+            println!("Nested sections use `__` (double underscore) as the separator:");
+            println!("  GIT_WARP_GIT__DEFAULT_BRANCH=develop");
+            println!("  GIT_WARP_GIT__AUTO_FETCH=false");
+            println!("  GIT_WARP_PROCESS__AUTO_KILL=true");
+            println!("  GIT_WARP_TERMINAL__APP=iterm2");
+            println!("  GIT_WARP_AGENT__REFRESH_RATE=2000");
+            println!("  GIT_WARP_POST_CREATE__AUTO_INSTALL=false");
         }
 
         Ok(())

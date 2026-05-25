@@ -305,13 +305,22 @@ creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` →
 `yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json`; the first match wins. Set
 `auto_install = false` to skip the install step entirely.
 
-Environment variables override config file values:
+Environment variables override config file values. Top-level keys map
+directly; nested sections use `__` (double underscore) as the path
+separator (`GIT_WARP_<section>__<field>`):
 
 ```bash
 export GIT_WARP_TERMINAL_MODE=window
 export GIT_WARP_USE_COW=false
 export GIT_WARP_AUTO_CONFIRM=false
 export GIT_WARP_WORKTREES_PATH=/Users/me/dev/worktrees
+
+export GIT_WARP_GIT__DEFAULT_BRANCH=develop
+export GIT_WARP_GIT__AUTO_FETCH=false
+export GIT_WARP_PROCESS__AUTO_KILL=true
+export GIT_WARP_TERMINAL__APP=iterm2
+export GIT_WARP_AGENT__REFRESH_RATE=2000
+export GIT_WARP_POST_CREATE__AUTO_INSTALL=false
 ```
 
 Command-line options have the highest priority:
@@ -362,7 +371,7 @@ auto_install = false
 ```
 
 in `~/.config/git-warp/config.toml`, or export
-`GIT_WARP_POST_CREATE_AUTO_INSTALL=false`.
+`GIT_WARP_POST_CREATE__AUTO_INSTALL=false`.
 
 ### Cleanup Is Blocked
 
