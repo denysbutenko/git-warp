@@ -189,13 +189,19 @@ claude_hooks = true
 for the per-key semantics. `[process].auto_kill` defers to `--kill` /
 `--no-kill` when those flags are present (`--no-kill` always wins).
 
-Environment overrides use the `GIT_WARP_` prefix:
+Environment overrides use the `GIT_WARP_` prefix. Top-level keys map
+directly; nested sections use `__` (double underscore) as the separator
+(`GIT_WARP_<section>__<field>`):
 
 ```bash
 export GIT_WARP_TERMINAL_MODE=window
 export GIT_WARP_USE_COW=false
 export GIT_WARP_AUTO_CONFIRM=true
 export GIT_WARP_WORKTREES_PATH=/custom/worktrees
+
+export GIT_WARP_GIT__DEFAULT_BRANCH=develop
+export GIT_WARP_PROCESS__AUTO_KILL=true
+export GIT_WARP_POST_CREATE__AUTO_INSTALL=false
 ```
 
 `terminal.init_commands` run after Git-Warp changes into the worktree for
@@ -205,7 +211,7 @@ terminal handoff modes that print or send shell commands.
 `<manager> install` after creating a new worktree. Lockfile detection order is
 `pnpm-lock.yaml` → `yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json`; the first
 match wins. Set `auto_install = false` (or
-`GIT_WARP_POST_CREATE_AUTO_INSTALL=false`) to skip the install step entirely.
+`GIT_WARP_POST_CREATE__AUTO_INSTALL=false`) to skip the install step entirely.
 
 ## Shell Integration
 

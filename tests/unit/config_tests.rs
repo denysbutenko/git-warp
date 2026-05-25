@@ -174,6 +174,49 @@ fn test_nested_config_structures() {
 }
 
 #[test]
+fn test_env_nested_overrides_via_figment() {
+    unsafe {
+        std::env::set_var("GIT_WARP_GIT__DEFAULT_BRANCH", "develop");
+        std::env::set_var("GIT_WARP_POST_CREATE__AUTO_INSTALL", "false");
+        std::env::set_var("GIT_WARP_AGENT__REFRESH_RATE", "2500");
+    }
+
+    let figment =
+        figment::Figment::new().merge(figment::providers::Env::prefixed("GIT_WARP_").split("__"));
+    let config: Config = figment.extract().unwrap();
+
+    assert_eq!(config.git.default_branch, "develop");
+    assert!(!config.post_create.auto_install);
+    assert_eq!(config.agent.refresh_rate, 2500);
+
+    unsafe {
+        std::env::remove_var("GIT_WARP_GIT__DEFAULT_BRANCH");
+        std::env::remove_var("GIT_WARP_POST_CREATE__AUTO_INSTALL");
+        std::env::remove_var("GIT_WARP_AGENT__REFRESH_RATE");
+    }
+}
+
+#[test]
+fn test_env_flat_top_level_still_works() {
+    unsafe {
+        std::env::set_var("GIT_WARP_TERMINAL_MODE", "inplace");
+        std::env::set_var("GIT_WARP_USE_COW", "false");
+    }
+
+    let figment =
+        figment::Figment::new().merge(figment::providers::Env::prefixed("GIT_WARP_").split("__"));
+    let config: Config = figment.extract().unwrap();
+
+    assert_eq!(config.terminal_mode, "inplace");
+    assert!(!config.use_cow);
+
+    unsafe {
+        std::env::remove_var("GIT_WARP_TERMINAL_MODE");
+        std::env::remove_var("GIT_WARP_USE_COW");
+    }
+}
+
+#[test]
 fn test_config_validation() {
     // Test that invalid values are handled gracefully
     let toml_str = r#"

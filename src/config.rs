@@ -222,30 +222,6 @@ impl Default for AgentConfig {
 }
 
 impl Config {
-    /// Update configuration from environment variables
-    #[allow(dead_code)] // Exercised by config_tests integration tests.
-    pub fn apply_env_overrides(&mut self) {
-        // Terminal mode
-        if let Ok(mode) = std::env::var("GIT_WARP_TERMINAL_MODE") {
-            self.terminal_mode = mode;
-        }
-
-        // Auto-confirm
-        if let Ok(confirm) = std::env::var("GIT_WARP_AUTO_CONFIRM") {
-            self.auto_confirm = confirm.parse().unwrap_or(false);
-        }
-
-        // CoW usage
-        if let Ok(cow) = std::env::var("GIT_WARP_USE_COW") {
-            self.use_cow = cow.parse().unwrap_or(true);
-        }
-
-        // Worktrees path
-        if let Ok(path) = std::env::var("GIT_WARP_WORKTREES_PATH") {
-            self.worktrees_path = Some(PathBuf::from(path));
-        }
-    }
-
     /// Generate a sample configuration file content
     #[allow(dead_code)] // Exercised by config_tests integration tests.
     pub fn sample_config() -> String {
@@ -357,11 +333,12 @@ impl ConfigManager {
 
     /// Load configuration from file, environment, and defaults
     fn load_config(config_path: &PathBuf) -> Result<Config> {
+        // `__` splits env keys into nested fields:
+        // GIT_WARP_GIT__DEFAULT_BRANCH=develop -> git.default_branch.
+        // Single-segment vars (GIT_WARP_TERMINAL_MODE) still hit top-level fields.
         let figment = Figment::new()
-            // Override with config file if it exists
             .merge(Toml::file(config_path))
-            // Override with environment variables
-            .merge(Env::prefixed("GIT_WARP_"));
+            .merge(Env::prefixed("GIT_WARP_").split("__"));
 
         figment.extract().map_err(|e| {
             GitWarpError::ConfigError {
@@ -471,28 +448,6 @@ mod tests {
         };
 
         assert_eq!(manager.get().terminal_mode, "tab");
-    }
-
-    #[test]
-    fn test_config_environment_overrides() {
-        let mut config = Config::default();
-
-        // Set environment variable
-        unsafe {
-            std::env::set_var("GIT_WARP_TERMINAL_MODE", "window");
-            std::env::set_var("GIT_WARP_AUTO_CONFIRM", "true");
-        }
-
-        config.apply_env_overrides();
-
-        assert_eq!(config.terminal_mode, "window");
-        assert!(config.auto_confirm);
-
-        // Clean up
-        unsafe {
-            std::env::remove_var("GIT_WARP_TERMINAL_MODE");
-            std::env::remove_var("GIT_WARP_AUTO_CONFIRM");
-        }
     }
 
     #[test]
