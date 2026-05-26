@@ -66,9 +66,6 @@ clap = "4.5.4"          # Modern CLI argument parsing
 ratatui = "0.26.2"      # Rich Terminal User Interfaces
 crossterm = "0.27.0"    # Cross-platform terminal manipulation
 
-# Git Operations
-gix = "0.62.0"          # Pure Rust Git implementation
-
 # System Integration
 nix = "0.28.0"          # Unix system calls (CoW support)
 sysinfo = "0.30.12"     # System process information
@@ -96,10 +93,10 @@ chrono = "0.4.38"       # Date/time handling
 - **Concurrency**: Excellent parallel processing capabilities
 - **Ecosystem**: Rich crate ecosystem for system integration
 
-**Why gix over git2?**
-- **Pure Rust**: No C dependencies, easier deployment
-- **Modern API**: Better error handling and type safety
-- **Performance**: Optimized for Rust idioms
+**Why the `git` CLI?**
+- **No C dependencies**: avoids libgit2 / FFI
+- **Worktree coverage**: every `git worktree …` subcommand is available, including features new releases add
+- **Battle-tested**: the same binary the user already trusts for daily work
 
 ---
 
@@ -595,24 +592,15 @@ mod benches {
 
 ## Architectural Decisions
 
-### Why Not Use libgit2?
+### Why the `git` CLI everywhere?
 
-**Decision**: Use `gix` (pure Rust) + git CLI hybrid approach
-
-**Rationale**:
-- **Pure Rust**: No C dependencies, easier cross-compilation
-- **Worktree Support**: git CLI has better worktree operations
-- **Maintenance**: Less FFI complexity
-- **Performance**: No marshalling overhead for simple operations
-
-### Why Hybrid CLI + Library Approach?
-
-**Decision**: Use git CLI for worktree operations, gix for repository discovery
+**Decision**: Shell out to the `git` binary for every Git operation, including repository discovery (`git rev-parse --show-toplevel`).
 
 **Rationale**:
-- **Reliability**: git CLI is battle-tested for worktree operations
-- **Feature Coverage**: git CLI supports all worktree features
-- **Future-Proof**: Automatically gets new git features
+- **No FFI / C deps**: keeps cross-compilation simple and the binary lean.
+- **Feature coverage**: all worktree subcommands are first-class.
+- **Future-proof**: new `git` features are picked up automatically.
+- **Single source of truth**: `warp doctor` already requires `git` on `PATH`; relying on it everywhere keeps the runtime contract small.
 
 ### Why figment for Configuration?
 

@@ -1,9 +1,9 @@
 use crate::config::GitConfig;
 use crate::error::{GitWarpError, Result};
-use gix::Repository;
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
@@ -77,8 +77,6 @@ pub enum BranchSource {
 }
 
 pub struct GitRepository {
-    #[allow(dead_code)] // Held to keep gix repository state alive; commands shell out to `git`.
-    repo: Repository,
     repo_path: PathBuf,
 }
 
@@ -115,23 +113,34 @@ impl GitRepository {
     /// Find and open the Git repository
     pub fn find() -> Result<Self> {
         let current_dir = std::env::current_dir()?;
-        let repo = gix::discover(current_dir).map_err(|_| GitWarpError::NotInGitRepository)?;
-
-        let repo_path = repo
-            .work_dir()
-            .ok_or(GitWarpError::NotInGitRepository)?
-            .to_path_buf();
-
-        Ok(Self { repo, repo_path })
+        Self::resolve_toplevel(&current_dir)
     }
 
     /// Open a specific Git repository
     #[allow(dead_code)] // Public constructor used by inline tests/embedders.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let repo_path = path.as_ref().to_path_buf();
-        let repo = gix::open(&repo_path).map_err(|_| GitWarpError::NotInGitRepository)?;
+        Self::resolve_toplevel(path.as_ref())
+    }
 
-        Ok(Self { repo, repo_path })
+    fn resolve_toplevel(start_dir: &Path) -> Result<Self> {
+        let output = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(start_dir)
+            .output()
+            .map_err(|_| GitWarpError::NotInGitRepository)?;
+
+        if !output.status.success() {
+            return Err(GitWarpError::NotInGitRepository.into());
+        }
+
+        let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if toplevel.is_empty() {
+            return Err(GitWarpError::NotInGitRepository.into());
+        }
+
+        Ok(Self {
+            repo_path: PathBuf::from(toplevel),
+        })
     }
 
     /// Get the repository root path
@@ -143,7 +152,6 @@ impl GitRepository {
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
         use std::process::Command;
 
-        // Use git command to list worktrees since gix doesn't have full worktree support yet
         let output = Command::new("git")
             .args(["worktree", "list", "--porcelain"])
             .current_dir(&self.repo_path)
