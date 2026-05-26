@@ -104,7 +104,7 @@ version = "1.0.117"
 version = "0.30.12"
 
 [dependencies.thiserror]
-version = "1.0.61"
+version = "2.0.18"
 
 [dependencies.toml]
 version = "0.8.13"
