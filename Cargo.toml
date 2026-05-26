@@ -71,9 +71,6 @@ features = [
     "env",
 ]
 
-[dependencies.gix]
-version = "0.62.0"
-
 [dependencies.ignore]
 version = "0.4.22"
 
