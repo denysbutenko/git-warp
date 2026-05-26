@@ -1,7 +1,7 @@
 # Git-Warp Documentation
 
-This directory contains user-facing guides, technical notes, historical planning
-material, and original reference documents for Git-Warp.
+This directory contains user-facing guides, technical notes, and historical
+planning material for Git-Warp.
 
 ## Start Here
 
@@ -22,14 +22,12 @@ material, and original reference documents for Git-Warp.
 
 ## Reference Documents
 
-- [autowt.txt](autowt.txt): UX-focused Python predecessor reference.
-- [coworktree.txt](coworktree.txt): CoW-focused Go predecessor reference.
 - [implement-plan-v1.md](implement-plan-v1.md): early implementation plan.
 - [implement-plan-v2.md](implement-plan-v2.md): later implementation plan.
 
-The implementation plans and predecessor references are historical context. The
-current CLI behavior is best checked with `warp --help`, `warp <command> --help`,
-and the current README/user guide.
+The implementation plans are historical context. The current CLI behavior is
+best checked with `warp --help`, `warp <command> --help`, and the current
+README/user guide.
 
 ## Common Paths
 
