@@ -1594,23 +1594,9 @@ impl CleanupTui {
     pub fn run(&self) -> Result<Vec<String>> {
         use crate::config::ConfigManager;
         use crate::git::GitRepository;
-        use crossterm::{
-            event::{self, Event, KeyCode, KeyEventKind},
-            execute,
-            terminal::{
-                EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-            },
-        };
-        use ratatui::{
-            Terminal,
-            backend::CrosstermBackend,
-            layout::{Alignment, Constraint, Direction, Layout},
-            style::{Color, Style},
-            widgets::{Block, Borders, List, ListItem, Paragraph},
-        };
+        use ratatui::{Terminal, backend::CrosstermBackend};
         use std::io;
 
-        // Get the git repository and worktrees
         let git_repo =
             GitRepository::find().map_err(|_| anyhow::anyhow!("Not in a git repository"))?;
         let config_manager = ConfigManager::new()?;
@@ -1626,14 +1612,69 @@ impl CleanupTui {
             return Ok(vec![]);
         }
 
-        // Setup terminal
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
-        let backend = CrosstermBackend::new(stdout);
+        let mut terminal_guard = TuiTerminalGuard::enter()?;
+        let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::new(backend)?;
 
-        let mut selected_index = 0;
+        let run_result = self.interactive_select(&mut terminal, &branch_statuses);
+        let cleanup_result = terminal_guard.restore();
+        let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
+        drop(terminal);
+
+        let (confirmed, selected_branches) = match run_result {
+            Err(err) => {
+                let mut follow_on_errors = Vec::new();
+                if let Err(cleanup_err) = cleanup_result {
+                    follow_on_errors.push(cleanup_err);
+                }
+                if let Err(cursor_err) = cursor_result {
+                    follow_on_errors.push(cursor_err);
+                }
+                return if follow_on_errors.is_empty() {
+                    Err(err)
+                } else {
+                    Err(combine_errors(err, follow_on_errors))
+                };
+            }
+            Ok(result) => {
+                cleanup_result?;
+                cursor_result?;
+                result
+            }
+        };
+
+        if !confirmed {
+            return Ok(vec![]);
+        }
+
+        let selected: Vec<String> = branch_statuses
+            .iter()
+            .enumerate()
+            .filter_map(|(i, status)| {
+                if selected_branches[i] {
+                    Some(status.branch.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(selected)
+    }
+
+    fn interactive_select(
+        &self,
+        terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+        branch_statuses: &[BranchStatus],
+    ) -> Result<(bool, Vec<bool>)> {
+        use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+        use ratatui::{
+            layout::{Alignment, Constraint, Direction, Layout},
+            style::{Color, Style},
+            widgets::{Block, Borders, List, ListItem, Paragraph},
+        };
+
+        let mut selected_index = 0usize;
         let mut selected_branches: Vec<bool> = vec![false; branch_statuses.len()];
         let mut should_quit = false;
         let mut confirmed = false;
@@ -1650,7 +1691,6 @@ impl CleanupTui {
                     ])
                     .split(f.size());
 
-                // Header
                 let header = Paragraph::new(format!(
                     "Worktree cleanup ({} candidates)",
                     branch_statuses.len()
@@ -1660,8 +1700,7 @@ impl CleanupTui {
                     .block(Block::default().borders(Borders::ALL));
                 f.render_widget(header, chunks[0]);
 
-                // Branch list
-                let rows = build_cleanup_rows(&branch_statuses, &selected_branches);
+                let rows = build_cleanup_rows(branch_statuses, &selected_branches);
                 let items: Vec<ListItem> = rows
                     .iter()
                     .enumerate()
@@ -1683,7 +1722,6 @@ impl CleanupTui {
                 );
                 f.render_widget(list, chunks[1]);
 
-                // Footer with controls
                 let selected_count = selected_branches.iter().filter(|&&x| x).count();
                 let footer_text = format!(
                     "↑↓/jk: Navigate | Space: Toggle | a: Toggle all | Enter: Confirm ({} selected) | q/Esc: Cancel",
@@ -1696,7 +1734,6 @@ impl CleanupTui {
                 f.render_widget(footer, chunks[2]);
             })?;
 
-            // Handle input
             if let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
@@ -1729,29 +1766,11 @@ impl CleanupTui {
             }
         }
 
-        // Cleanup terminal
-        disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-        terminal.show_cursor()?;
-
-        if should_quit || !confirmed {
-            return Ok(vec![]);
+        if should_quit {
+            confirmed = false;
         }
 
-        // Return selected branches
-        let selected: Vec<String> = branch_statuses
-            .iter()
-            .enumerate()
-            .filter_map(|(i, status)| {
-                if selected_branches[i] {
-                    Some(status.branch.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(selected)
+        Ok((confirmed, selected_branches))
     }
 }
 
