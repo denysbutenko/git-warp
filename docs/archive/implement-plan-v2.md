@@ -1,3 +1,9 @@
+> **Historical document.** This plan predates the v0.1.0 implementation and is
+> retained only for context. Specific milestones, dependencies, and API choices
+> here do not reflect the shipped surface — see
+> [`docs/technical-overview.md`](../technical-overview.md) and
+> [`CHANGELOG.md`](../../CHANGELOG.md) for the current state.
+
 ### Project: Git-Warp v0.1.0 - A High-Performance, UX-Focused Worktree Manager
 
 **Mission:** To combine the instantaneous, Copy-on-Write worktree creation of `coworktree` with the rich user experience, terminal integration, and advanced features of `autowt`. The result will be a single, statically-linked binary written in Rust.
