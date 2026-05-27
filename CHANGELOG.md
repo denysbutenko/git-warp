@@ -4,18 +4,76 @@
 
 ### Added
 
+- `warp switch` accepts tags and SHAs; commit-ish targets create a local
+  branch at the resolved commit so the worktree pins exactly that revision.
+  (#88)
 - `warp config --interactive` (`-i`) launches an in-process TUI for editing
   every section of the config: section navigation, boolean toggles, inline
   edits with validation, atomic save, and unsaved-change confirmation on quit.
   List-valued fields render read-only and still require editing the TOML file
-  directly.
+  directly. (#87)
+- Post-create auto-install detects npm, yarn, bun, and Cargo lockfiles in
+  addition to pnpm. Detection order is `pnpm-lock.yaml`, `yarn.lock`,
+  `bun.lock` (Bun 1.2+), `bun.lockb`, `package-lock.json`, `Cargo.toml`.
+  A new `[post_create] auto_install` config knob (also
+  `GIT_WARP_POST_CREATE__AUTO_INSTALL`) opts out. (#57, #77, #119)
+- `warp doctor` reports whether the `git` binary is on `PATH` and prints
+  the version line on success or a reinstall hint on failure. (#84)
+- `[process]`, `[git].auto_fetch`/`auto_prune`, and `[agent].enabled`/
+  `[agent].refresh_rate` config keys now drive runtime behavior:
+  `process.kill_timeout` controls SIGTERM grace, `process.auto_kill` resolves
+  the cleanup kill flag, `process.check_processes` toggles the busy preview,
+  `git.auto_fetch`/`git.auto_prune` gate the cleanup fetch and prune steps,
+  `agent.enabled` short-circuits `warp agents`, and `agent.refresh_rate`
+  replaces the hardcoded 2 s dashboard interval. (#82)
+- Nested `GIT_WARP_*__*` environment variables can override any nested
+  config section (e.g. `GIT_WARP_POST_CREATE__AUTO_INSTALL=false`). (#92)
+
+### Changed
+
+- `warp cleanup` parallelizes per-worktree probes via rayon and loads branch
+  remotes in one bulk `git config --get-regexp` pass instead of per-branch
+  shellouts. Candidate order is preserved. (#86)
+- Default `protected_branches` is now `["main", "develop"]`; `master` is
+  no longer in the offline fallback list. Repos still using `master`
+  continue to resolve via `origin/HEAD`; opt back in by adding `master`
+  to `config.toml`. (#74)
 
 ### Fixed
 
-- Ensure durability of atomic writes on Unix systems by calling `fsync` on the
-  parent directory after renaming the temporary file. (#102)
-- Use atomic writes for path rewriting and git exclude updates to prevent file
-  corruption on crash.
+- Atomic writes now `fsync` the parent directory on Unix after rename so the
+  rename itself survives a crash. Applied to hooks settings, config save,
+  path rewriting, and post-create marker writes. (#68, #102)
+- Process termination uses `nix::sys::signal::kill` for SIGTERM, liveness
+  probes, and SIGKILL instead of shelling out to `kill(1)`. Removes three
+  subprocess spawns per terminated PID and surfaces `ESRCH`/`EPERM` distinctly.
+  (#83)
+- `warp cleanup` polls for graceful exit on a 50 ms cadence with a 10 s
+  SIGKILL budget instead of a fixed 2 s sleep, so processes that flush state
+  for longer than 2 s are no longer force-killed. (#70)
+- `warp cleanup --kill --no-kill` is now rejected at parse time instead of
+  silently falling through to the default. (#67)
+- `install.sh` verifies the release archive's `.sha256` companion via
+  `shasum`/`sha256sum` before extracting; mismatches abort with both digests
+  printed. `GIT_WARP_SKIP_CHECKSUM=1` opts out. (#78)
+- `install.sh` resolves the latest release tag from the GitHub API when
+  `GIT_WARP_VERSION` is unset instead of pinning a stale literal default.
+  (#91)
+- `warp release-check` runs `cargo fmt --all -- --check`,
+  `cargo clippy --all-targets --locked -- -D warnings`, and
+  `cargo test --locked` so the local gate matches CI exactly. (#79)
+- Agent heartbeat files (`.claude/git-warp/status`, `.codex/git-warp/status`)
+  are added to `.git/info/exclude` on every switch so they stop producing
+  per-branch diff churn and merge conflicts. (#94)
+- `warp shell-config` derives the completion subcommand list from the clap
+  command tree, so the bash/zsh/fish snippets no longer drift; `release-check`
+  is now listed. (#66)
+- Cleanup selector TUI restores raw mode and the alt screen via the shared
+  `TuiTerminalGuard` so `?` early-return and panic unwinds no longer leave
+  the terminal scrambled. (#103)
+- `PathRewriter` only replaces matches at a path boundary and skips files
+  larger than 2 MiB, fixing prefix-collision corruption (e.g. rewriting
+  `/foo/repo` inside `/foo/repo-archive`) and bounding memory use. (#58)
 
 ## v0.3.0 - 2026-05-06
 
