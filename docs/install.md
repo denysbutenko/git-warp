@@ -114,10 +114,13 @@ Remove the default install with the bundled uninstaller:
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/uninstall.sh | sh
 ```
 
-The uninstaller removes `~/.local/bin/warp` (or `$GIT_WARP_INSTALL_DIR/warp`),
-lists any other detected `warp` installs without touching them, and warns if
-`warp` is still on `PATH` after the removal. Use `--dry-run` to preview the
-removal without changing anything.
+The uninstaller:
+- Removes agent hook entries from Claude/Codex settings using the `warp` binary before its deletion (opt out with `GIT_WARP_KEEP_HOOKS=1`).
+- Removes `~/.local/bin/warp` (or `$GIT_WARP_INSTALL_DIR/warp`).
+- Scans `~/.bashrc`, `~/.zshrc`, and `~/.config/fish/config.fish` for leftover shell-config snippets and prints cleanup instructions if found.
+- Lists any other detected `warp` installs without touching them.
+
+Use `--dry-run` to preview the changes without modifying your system.
 
 If you installed Git-Warp with Cargo, also run:
 
