@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 const GIT_WARP_HOOK_PREFIX: &str = "agent_status_";
 
 const EXPECTED_EVENTS: &[&str] = &[
+    "SessionStart",
     "UserPromptSubmit",
     "Stop",
     "PreToolUse",
@@ -420,6 +421,7 @@ impl HooksManager {
 
     fn get_hooks_config(runtime: HookRuntime) -> Value {
         let hooks = json!({
+            "SessionStart": [Self::build_hook_entry(runtime, "starting", "agent_status_sessionstart")],
             "UserPromptSubmit": [Self::build_hook_entry(runtime, "processing", "agent_status_userpromptsubmit")],
             "Stop": [Self::build_hook_entry(runtime, "waiting", "agent_status_stop")],
             "PreToolUse": [Self::build_hook_entry(runtime, "working", "agent_status_pretooluse")],
@@ -571,6 +573,7 @@ mod tests {
         assert!(config.get("hooks").is_some());
 
         let hooks = &config["hooks"];
+        assert!(hooks.get("SessionStart").is_some());
         assert!(hooks.get("UserPromptSubmit").is_some());
         assert!(
             hooks["Stop"][0]["hooks"][0]["command"]
@@ -584,6 +587,7 @@ mod tests {
     fn test_codex_hooks_config_generation() {
         let config = HooksManager::get_hooks_config(HookRuntime::Codex);
         assert!(config.get("hooks").is_none());
+        assert!(config.get("SessionStart").is_some());
         assert!(config.get("PreToolUse").is_some());
         assert!(
             config["Stop"][0]["hooks"][0]["command"]
@@ -618,7 +622,7 @@ mod tests {
 
         let settings: Value =
             serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
-        assert_eq!(settings["SessionStart"].as_array().unwrap().len(), 1);
+        assert_eq!(settings["SessionStart"].as_array().unwrap().len(), 2);
         assert_eq!(settings["PreToolUse"].as_array().unwrap().len(), 2);
         assert!(
             settings["PreToolUse"]
