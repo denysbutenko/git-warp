@@ -18,6 +18,7 @@ pub enum AgentRuntime {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AgentSessionState {
+    Starting,
     Working,
     Processing,
     Waiting,
@@ -67,6 +68,7 @@ fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
 
 fn map_status(value: &str) -> AgentSessionState {
     match value {
+        "starting" => AgentSessionState::Starting,
         "working" => AgentSessionState::Working,
         "processing" => AgentSessionState::Processing,
         "waiting" => AgentSessionState::Waiting,
