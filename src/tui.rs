@@ -1827,7 +1827,6 @@ pub enum ConfigFieldId {
     AgentEnabled,
     AgentRefreshRate,
     AgentMaxActivities,
-    AgentClaudeHooks,
     PostCreateAutoInstall,
 }
 
@@ -1984,13 +1983,6 @@ fn config_field_specs() -> Vec<ConfigFieldSpec> {
                 min: 1,
                 max: 10_000,
             },
-        },
-        ConfigFieldSpec {
-            id: AgentClaudeHooks,
-            section: Agent,
-            label: "claude_hooks",
-            help: "Install Claude Code hooks for agent activity tracking.",
-            kind: Bool,
         },
         ConfigFieldSpec {
             id: PostCreateAutoInstall,
@@ -2198,9 +2190,6 @@ impl ConfigEditorModel {
                 self.working.terminal.auto_activate = !self.working.terminal.auto_activate
             }
             ConfigFieldId::AgentEnabled => self.working.agent.enabled = !self.working.agent.enabled,
-            ConfigFieldId::AgentClaudeHooks => {
-                self.working.agent.claude_hooks = !self.working.agent.claude_hooks
-            }
             ConfigFieldId::PostCreateAutoInstall => {
                 self.working.post_create.auto_install = !self.working.post_create.auto_install
             }
@@ -2358,7 +2347,6 @@ fn render_field_value(config: &Config, field: &ConfigFieldSpec) -> String {
         AgentEnabled => config.agent.enabled.to_string(),
         AgentRefreshRate => config.agent.refresh_rate.to_string(),
         AgentMaxActivities => config.agent.max_activities.to_string(),
-        AgentClaudeHooks => config.agent.claude_hooks.to_string(),
         PostCreateAutoInstall => config.post_create.auto_install.to_string(),
     }
 }

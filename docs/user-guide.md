@@ -286,7 +286,6 @@ auto_install = true
 enabled = true
 refresh_rate = 1000
 max_activities = 100
-claude_hooks = true
 ```
 
 `[git].auto_fetch` controls whether `warp cleanup` runs `git fetch --all --prune`
