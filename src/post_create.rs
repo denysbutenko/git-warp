@@ -33,9 +33,10 @@ impl PackageManager {
 
     pub fn install_args(self) -> &'static [&'static str] {
         match self {
-            PackageManager::Pnpm | PackageManager::Yarn | PackageManager::Bun | PackageManager::Npm => {
-                &["install"]
-            }
+            PackageManager::Pnpm
+            | PackageManager::Yarn
+            | PackageManager::Bun
+            | PackageManager::Npm => &["install"],
             PackageManager::Cargo => &["check"],
         }
     }

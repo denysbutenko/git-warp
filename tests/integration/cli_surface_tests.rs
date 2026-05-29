@@ -853,6 +853,24 @@ fn test_ls_orders_current_then_primary_then_dirty_with_summary() {
 }
 
 #[test]
+fn test_ls_interactive_triggers_switcher_dry_run() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    create_worktree(repo_path, "feature/interactive-ls");
+
+    let output = warp_command(repo_path)
+        .args(["ls", "--interactive", "--dry-run"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("Would open interactive worktree switcher"));
+    assert!(stdout.contains("main"));
+    assert!(stdout.contains("feature/interactive-ls"));
+}
+
+#[test]
 fn test_bare_warp_dry_run_previews_interactive_switcher() {
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
