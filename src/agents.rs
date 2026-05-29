@@ -18,6 +18,7 @@ pub enum AgentRuntime {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AgentSessionState {
+    Starting,
     Working,
     Processing,
     Waiting,
@@ -67,6 +68,7 @@ fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
 
 fn map_status(value: &str) -> AgentSessionState {
     match value {
+        "starting" => AgentSessionState::Starting,
         "working" => AgentSessionState::Working,
         "processing" => AgentSessionState::Processing,
         "waiting" => AgentSessionState::Waiting,
@@ -604,4 +606,19 @@ pub fn parse_claude_session_event_line(line: &str) -> Option<AgentSessionSummary
         is_live: false,
         source: AgentSessionSource::SessionStore,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_status() {
+        assert!(matches!(map_status("starting"), AgentSessionState::Starting));
+        assert!(matches!(map_status("working"), AgentSessionState::Working));
+        assert!(matches!(map_status("processing"), AgentSessionState::Processing));
+        assert!(matches!(map_status("waiting"), AgentSessionState::Waiting));
+        assert!(matches!(map_status("subagent_complete"), AgentSessionState::Completed));
+        assert!(matches!(map_status("unknown"), AgentSessionState::Unknown));
+    }
 }

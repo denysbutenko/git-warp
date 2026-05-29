@@ -958,6 +958,7 @@ pub fn session_detail_lines(session: &AgentSessionSummary) -> Vec<String> {
 
 fn session_state_symbol(state: AgentSessionState) -> &'static str {
     match state {
+        AgentSessionState::Starting => "â—‹",
         AgentSessionState::Working => "●",
         AgentSessionState::Processing => "◔",
         AgentSessionState::Waiting => "!",
@@ -969,6 +970,7 @@ fn session_state_symbol(state: AgentSessionState) -> &'static str {
 
 fn session_state_label(state: AgentSessionState) -> &'static str {
     match state {
+        AgentSessionState::Starting => "starting",
         AgentSessionState::Working => "working",
         AgentSessionState::Processing => "processing",
         AgentSessionState::Waiting => "waiting",
@@ -980,6 +982,7 @@ fn session_state_label(state: AgentSessionState) -> &'static str {
 
 fn session_state_color(state: AgentSessionState) -> Color {
     match state {
+        AgentSessionState::Starting => Color::White,
         AgentSessionState::Working => Color::Green,
         AgentSessionState::Processing => Color::Cyan,
         AgentSessionState::Waiting => Color::Yellow,
