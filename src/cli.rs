@@ -62,6 +62,9 @@ pub enum Commands {
         /// Show debug information
         #[arg(long)]
         debug: bool,
+        /// Interactive mode
+        #[arg(long, short)]
+        interactive: bool,
     },
 
     /// Clean up worktrees
@@ -398,7 +401,7 @@ impl Cli {
                 *waiting,
                 *no_cow,
             ),
-            Commands::Ls { debug } => self.handle_ls(*debug),
+            Commands::Ls { debug, interactive } => self.handle_ls(*debug, *interactive),
             Commands::Cleanup {
                 mode,
                 force,
@@ -1089,11 +1092,16 @@ impl Cli {
         Ok(monitored_paths)
     }
 
-    fn handle_ls(&self, debug: bool) -> Result<()> {
+    fn handle_ls(&self, debug: bool, interactive: bool) -> Result<()> {
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
+        use std::io::IsTerminal;
 
         info!("Listing worktrees");
+
+        if interactive || (std::io::stdout().is_terminal() && !self.dry_run) {
+            return self.handle_default_switcher();
+        }
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
 
