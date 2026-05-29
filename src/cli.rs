@@ -2023,10 +2023,22 @@ impl Cli {
                 let rc_label = rc_path.display().to_string();
                 let configured = Self::shell_rc_has_warp_integration(rc_path);
                 if configured {
-                    Self::doctor_ok(
-                        "Shell integration",
-                        format!("warp_cd helper detected in {rc_label}"),
-                    );
+                    if active.is_none() {
+                        Self::doctor_warn(
+                            "Shell integration",
+                            format!(
+                                "warp_cd helper detected in {rc_label} but 'warp' is not on PATH"
+                            ),
+                        );
+                        next_steps.push(format!(
+                            "Remove Git-Warp snippets from {rc_label} or fix your PATH."
+                        ));
+                    } else {
+                        Self::doctor_ok(
+                            "Shell integration",
+                            format!("warp_cd helper detected in {rc_label}"),
+                        );
+                    }
                 } else {
                     Self::doctor_warn(
                         "Shell integration",
