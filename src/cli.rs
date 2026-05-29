@@ -1663,7 +1663,6 @@ impl Cli {
             println!("  Enabled: {}", config.agent.enabled);
             println!("  Refresh rate: {}ms", config.agent.refresh_rate);
             println!("  Max activities: {}", config.agent.max_activities);
-            println!("  Claude hooks: {}", config.agent.claude_hooks);
         } else if edit {
             if !config_manager.config_exists() {
                 config_manager.create_default_config()?;

@@ -212,7 +212,6 @@ init_commands = ["npm install", "source .env", "echo setup"]
 enabled = true
 refresh_rate = 1000
 max_activities = 100
-claude_hooks = true
 "#;
 
     fs::write(&config_path, config_content).unwrap();
