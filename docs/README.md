@@ -20,14 +20,18 @@ planning material for Git-Warp.
   `v0.2.0` GitHub release.
 - [Root README](../README.md): short project overview and verified quick start.
 
-## Reference Documents
+## Historical Planning
 
-- [implement-plan-v1.md](implement-plan-v1.md): early implementation plan.
-- [implement-plan-v2.md](implement-plan-v2.md): later implementation plan.
+- [archive/implement-plan-v1.md](archive/implement-plan-v1.md): early
+  pre-v0.1.0 implementation plan.
+- [archive/implement-plan-v2.md](archive/implement-plan-v2.md): later
+  pre-v0.1.0 implementation plan.
 
-The implementation plans are historical context. The current CLI behavior is
-best checked with `warp --help`, `warp <command> --help`, and the current
-README/user guide.
+These predate v0.1.0 and are kept for historical context only. Specific
+milestones, dependencies, and API choices in them no longer reflect the
+shipped surface. For current behavior, check `warp --help`,
+`warp <command> --help`, [Technical Overview](technical-overview.md), and the
+[Changelog](../CHANGELOG.md).
 
 ## Common Paths
 

@@ -1,3 +1,9 @@
+> **Historical document.** This plan predates the v0.1.0 implementation and is
+> retained only for context. Specific milestones, dependencies, and API choices
+> here do not reflect the shipped surface — see
+> [`docs/technical-overview.md`](../technical-overview.md) and
+> [`CHANGELOG.md`](../../CHANGELOG.md) for the current state.
+
 ### Project Name Idea: **Git-Warp**
 
 This name evokes speed, instantaneous action, and moving between different contexts (worktrees). It's short, memorable, and hints at the "sci-fi" level of speed that Copy-on-Write provides. The CLI command could be `warp`.
