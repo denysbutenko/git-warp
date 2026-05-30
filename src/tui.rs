@@ -505,7 +505,7 @@ impl TuiApp {
                 Constraint::Min(8),    // Main content
                 Constraint::Length(3), // Help
             ])
-            .split(f.size());
+            .split(f.area());
 
         let preview_model = build_dashboard_model_filtered_windowed(
             &self.sessions,
@@ -1361,7 +1361,7 @@ fn draw_worktree_switcher(
             Constraint::Length(7),
             Constraint::Length(3),
         ])
-        .split(f.size());
+        .split(f.area());
 
     let selected_count = selected_indices.len();
     let header_text = if selected_count == 0 {
@@ -1692,7 +1692,7 @@ impl CleanupTui {
                         Constraint::Min(0),
                         Constraint::Length(4),
                     ])
-                    .split(f.size());
+                    .split(f.area());
 
                 let header = Paragraph::new(format!(
                     "Worktree cleanup ({} candidates)",
@@ -2571,7 +2571,7 @@ fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit: bo
             Constraint::Length(3),
             Constraint::Length(2),
         ])
-        .split(f.size());
+        .split(f.area());
 
     let dirty_tag = if model.is_dirty() { " [unsaved]" } else { "" };
     let header_text = format!(

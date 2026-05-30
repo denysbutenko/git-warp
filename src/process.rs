@@ -45,8 +45,9 @@ impl ProcessManager {
 
     /// Refresh process information
     pub fn refresh(&mut self) {
+        use sysinfo::ProcessesToUpdate;
         self.system
-            .refresh_processes_specifics(ProcessRefreshKind::new());
+            .refresh_processes_specifics(ProcessesToUpdate::All, false, ProcessRefreshKind::new());
     }
 
     /// Find all processes running in a specific directory
@@ -54,6 +55,7 @@ impl ProcessManager {
         &mut self,
         path: P,
     ) -> Result<Vec<ProcessInfo>> {
+        use std::ffi::OsStr;
         let requested_path = path.as_ref();
         let target_path =
             requested_path
@@ -71,8 +73,12 @@ impl ProcessManager {
             {
                 processes.push(ProcessInfo {
                     pid: pid.as_u32(),
-                    name: process.name().to_string(),
-                    cmd: process.cmd().join(" "),
+                    name: process.name().to_string_lossy().into_owned(),
+                    cmd: process
+                        .cmd()
+                        .join(OsStr::new(" "))
+                        .to_string_lossy()
+                        .into_owned(),
                     working_dir: cwd.to_path_buf(),
                     cpu_usage: process.cpu_usage(),
                     memory_usage: process.memory(),

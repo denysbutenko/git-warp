@@ -43,26 +43,26 @@ path = "benches/performance_benchmarks.rs"
 harness = false
 
 [dependencies.anyhow]
-version = "1.0.86"
+version = "1.0.102"
 
 [dependencies.chrono]
-version = "0.4.38"
+version = "0.4.44"
 
 [dependencies.clap]
-version = "4.5.4"
+version = "4.6.1"
 features = [
     "derive",
     "env",
 ]
 
 [dependencies.crossterm]
-version = "0.27.0"
+version = "0.28.1"
 
 [dependencies.dirs]
-version = "5.0.1"
+version = "6.0.0"
 
 [dependencies.env_logger]
-version = "0.11.3"
+version = "0.11.10"
 
 [dependencies.figment]
 version = "0.10.19"
@@ -75,36 +75,36 @@ features = [
 version = "0.4.22"
 
 [dependencies.log]
-version = "0.4.21"
+version = "0.4.30"
 
 [dependencies.nix]
-version = "0.28.0"
+version = "0.29.0"
 features = [
     "fs",
     "signal",
 ]
 
 [dependencies.ratatui]
-version = "0.26.2"
+version = "0.29.0"
 
 [dependencies.rayon]
 version = "1.10.0"
 
 [dependencies.serde]
-version = "1.0.203"
+version = "1.0.228"
 features = ["derive"]
 
 [dependencies.serde_json]
-version = "1.0.117"
+version = "1.0.150"
 
 [dependencies.sysinfo]
-version = "0.30.12"
+version = "0.32.0"
 
 [dependencies.thiserror]
 version = "2.0.18"
 
 [dependencies.toml]
-version = "0.8.13"
+version = "0.8.23"
 
 [dev-dependencies.criterion]
 version = "0.5"
