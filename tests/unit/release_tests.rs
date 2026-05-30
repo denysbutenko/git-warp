@@ -198,3 +198,25 @@ fn test_changelog_heading_variants() {
     let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
     assert!(!checks[1].ok, "should fail on wrong version");
 }
+
+#[test]
+fn test_collect_metadata_checks_partial_success() {
+    let temp = tempdir().unwrap();
+    let version = "0.3.0";
+    let tag = "v0.3.0";
+    let expected = ReleaseVersion {
+        number: version.to_string(),
+        tag: tag.to_string(),
+    };
+
+    // Only Cargo.toml version matches (it's passed as an argument to the function)
+    // All other files are missing.
+    let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
+
+    assert_eq!(checks.len(), 5);
+    assert!(checks[0].ok, "Cargo.toml check should pass");
+    assert!(!checks[1].ok, "CHANGELOG.md check should fail");
+    assert!(!checks[2].ok, "release notes check should fail");
+    assert!(!checks[3].ok, "docs/install.md check should fail");
+    assert!(!checks[4].ok, "install.sh check should fail");
+}
