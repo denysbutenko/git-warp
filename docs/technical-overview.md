@@ -168,41 +168,55 @@ match terminal_mode {
 
 ## Copy-on-Write Implementation
 
-CoW cloning runs on macOS/APFS only. On Linux, Windows, and any other platform,
-`is_cow_supported` returns `false` and worktree creation falls back to `git
-worktree add` without attempting a clone.
+CoW cloning runs on macOS/APFS and Linux with Btrfs/XFS/OCFS2. On Windows and
+other platforms, `is_cow_supported` returns `false` and worktree creation falls
+back to `git worktree add` without attempting a clone.
 
-### APFS CoW Engine
+### APFS and Linux CoW Engine
 
-The CoW implementation leverages macOS APFS's native clonefile capability:
+The CoW implementation leverages native filesystem clone capabilities:
 
 ```rust
 // src/cow.rs
-fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
-    // Verify APFS filesystem
-    if !is_apfs(&src)? {
-        return Err(GitWarpError::CoWNotSupported.into());
+pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    // ...
+    #[cfg(target_os = "macos")]
+    {
+        clone_directory_apfs(src, dest)
     }
-    
-    // Use cp -c for CoW cloning
-    let output = Command::new("cp")
-        .arg("-c")  // Clone files (CoW) if possible
-        .arg("-R")  // Recursive
-        .arg(src.as_ref())
-        .arg(dest.as_ref())
-        .output()?;
+
+    #[cfg(target_os = "linux")]
+    {
+        clone_directory_reflink(src, dest)
+    }
+    // ...
+}
+
+#[cfg(target_os = "macos")]
+fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    // ... use cp -c for APFS
+}
+
+#[cfg(target_os = "linux")]
+fn clone_directory_reflink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    // ... use cp --reflink=always for Linux
 }
 ```
 
 ### Filesystem Detection
 
 ```rust
-fn is_apfs<P: AsRef<Path>>(path: P) -> Result<bool> {
-    use nix::sys::statfs::statfs;
-    
-    let statfs = statfs(path.as_ref())?;
-    let fs_type = statfs.filesystem_type_name();
-    Ok(fs_type == "apfs")
+pub fn is_cow_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        is_apfs(path)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        is_linux_reflink_supported(path)
+    }
+    // ...
 }
 ```
 

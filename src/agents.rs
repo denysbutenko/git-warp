@@ -614,11 +614,20 @@ mod tests {
 
     #[test]
     fn test_map_status() {
-        assert!(matches!(map_status("starting"), AgentSessionState::Starting));
+        assert!(matches!(
+            map_status("starting"),
+            AgentSessionState::Starting
+        ));
         assert!(matches!(map_status("working"), AgentSessionState::Working));
-        assert!(matches!(map_status("processing"), AgentSessionState::Processing));
+        assert!(matches!(
+            map_status("processing"),
+            AgentSessionState::Processing
+        ));
         assert!(matches!(map_status("waiting"), AgentSessionState::Waiting));
-        assert!(matches!(map_status("subagent_complete"), AgentSessionState::Completed));
+        assert!(matches!(
+            map_status("subagent_complete"),
+            AgentSessionState::Completed
+        ));
         assert!(matches!(map_status("unknown"), AgentSessionState::Unknown));
     }
 }
