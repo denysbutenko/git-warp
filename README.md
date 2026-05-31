@@ -180,7 +180,6 @@ auto_install = true
 enabled = true
 refresh_rate = 1000
 max_activities = 100
-claude_hooks = true
 ```
 
 `[git].auto_fetch`, `[git].auto_prune`, `[process].check_processes`,
@@ -256,8 +255,6 @@ cargo run -- --dry-run cleanup --mode merged
 - [Changelog](CHANGELOG.md)
 - [Release Notes (v0.3.0)](docs/releases/v0.3.0.md)
 - [Release Notes (v0.2.0)](docs/releases/v0.2.0.md)
-- [Original autowt reference](docs/autowt.txt)
-- [Original coworktree reference](docs/coworktree.txt)
 
 ## Status
 

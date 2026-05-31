@@ -65,6 +65,44 @@ list_other_installs() {
   done
 }
 
+remove_hooks() {
+  [ -x "$target" ] || return 0
+  [ "${GIT_WARP_KEEP_HOOKS:-0}" = "1" ] && return 0
+
+  if [ "$dry_run" -eq 1 ]; then
+    echo "Would remove user hooks with: $target hooks-remove --level user --runtime all"
+    if [ -d .git ]; then
+      echo "Would remove project hooks with: $target hooks-remove --level project --runtime all"
+    fi
+  else
+    echo "Removing agent hooks..."
+    "$target" hooks-remove --level user --runtime all >/dev/null 2>&1 || echo "warning: failed to remove user hooks"
+    if [ -d .git ]; then
+      "$target" hooks-remove --level project --runtime all >/dev/null 2>&1 || echo "warning: failed to remove project hooks"
+    fi
+  fi
+}
+
+check_shell_rc() {
+  # Common shell RC files
+  files="${HOME}/.bashrc ${HOME}/.zshrc ${HOME}/.config/fish/config.fish"
+  found=0
+  for f in $files; do
+    [ -f "$f" ] || continue
+    if grep -q "warp_cd" "$f" || grep -q "warp __complete" "$f"; then
+      [ "$found" -eq 0 ] && echo && echo "Leftover shell-config snippets detected:"
+      echo "  - $f"
+      found=1
+    fi
+  done
+
+  if [ "$found" -eq 1 ]; then
+    echo "To clean up shell integration, remove lines containing 'warp_cd' or 'warp __complete' from these files."
+  fi
+}
+
+remove_hooks
+
 if [ ! -e "$target" ]; then
   echo "No Git-Warp binary found at ${target}; nothing to remove."
 else
@@ -78,6 +116,8 @@ else
     echo "Removed ${target}"
   fi
 fi
+
+check_shell_rc
 
 others="$(list_other_installs)"
 if [ -n "$others" ]; then

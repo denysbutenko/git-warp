@@ -57,7 +57,6 @@ fn test_config_with_custom_values() {
             enabled: false,
             refresh_rate: 2000,
             max_activities: 50,
-            claude_hooks: false,
         },
         post_create: PostCreateConfig {
             auto_install: false,

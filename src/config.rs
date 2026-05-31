@@ -117,10 +117,6 @@ pub struct AgentConfig {
     /// Maximum number of activities to track
     #[serde(default = "default_max_activities")]
     pub max_activities: usize,
-
-    /// Enable Claude Code hooks integration
-    #[serde(default = "default_true")]
-    pub claude_hooks: bool,
 }
 
 // Default value functions
@@ -216,7 +212,6 @@ impl Default for AgentConfig {
             enabled: true,
             refresh_rate: default_refresh_rate(),
             max_activities: default_max_activities(),
-            claude_hooks: true,
         }
     }
 }
@@ -290,9 +285,6 @@ refresh_rate = {}
 
 # Maximum activities to track
 max_activities = {}
-
-# Enable Claude Code hooks integration
-claude_hooks = {}
 "#,
             config.terminal_mode,
             config.use_cow,
@@ -310,7 +302,6 @@ claude_hooks = {}
             config.agent.enabled,
             config.agent.refresh_rate,
             config.agent.max_activities,
-            config.agent.claude_hooks,
         )
     }
 }

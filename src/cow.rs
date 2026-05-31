@@ -9,7 +9,12 @@ pub fn is_cow_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
         is_apfs(path)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        is_linux_reflink_supported(path)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = path;
         Ok(false)
@@ -33,7 +38,12 @@ pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resul
         clone_directory_apfs(src, dest)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        clone_directory_reflink(src, dest)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = dest;
         Err(GitWarpError::CoWNotSupported.into())
@@ -50,6 +60,24 @@ fn is_apfs<P: AsRef<Path>>(path: P) -> Result<bool> {
     // APFS filesystem type name
     let fs_type = statfs.filesystem_type_name();
     Ok(fs_type == "apfs")
+}
+
+#[cfg(target_os = "linux")]
+fn is_linux_reflink_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
+    use nix::sys::statfs::statfs;
+
+    let statfs =
+        statfs(path.as_ref()).map_err(|e| anyhow::anyhow!("Failed to check filesystem: {}", e))?;
+
+    // On Linux, f_type is a numeric value.
+    // We check for known reflink-capable filesystems.
+    // BTRFS_SUPER_MAGIC = 0x9123683e
+    // XFS_SUPER_MAGIC = 0x58465342
+    // OCFS2_SUPER_MAGIC = 0x7461636f
+    match statfs.filesystem_type().0 {
+        0x9123683e | 0x58465342 | 0x7461636f => Ok(true),
+        _ => Ok(false),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -86,22 +114,48 @@ fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resu
     Ok(())
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn clone_directory_reflink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    use std::process::Command;
+
+    // Remove destination if it exists
+    if dest.as_ref().exists() {
+        std::fs::remove_dir_all(&dest)?;
+    }
+
+    // Use cp with Linux reflink flags
+    let output = Command::new("cp")
+        .arg("--reflink=always") // Force reflink (CoW)
+        .arg("-R") // Recursive
+        .arg(src.as_ref())
+        .arg(dest.as_ref())
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to execute cp command: {}", e))?;
+
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "Failed to clone directory with CoW (reflink): {}",
+            error
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
 
     #[test]
-    #[cfg(target_os = "macos")]
     fn test_cow_support_check() {
         let result = is_cow_supported(".");
         assert!(result.is_ok());
-        // Result depends on whether we're on APFS
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
     fn test_cow_clone() {
         let temp_dir = tempdir().unwrap();
         let src_dir = temp_dir.path().join("src");

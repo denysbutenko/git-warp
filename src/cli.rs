@@ -62,6 +62,9 @@ pub enum Commands {
         /// Show debug information
         #[arg(long)]
         debug: bool,
+        /// Interactive mode
+        #[arg(long, short)]
+        interactive: bool,
     },
 
     /// Clean up worktrees
@@ -398,7 +401,7 @@ impl Cli {
                 *waiting,
                 *no_cow,
             ),
-            Commands::Ls { debug } => self.handle_ls(*debug),
+            Commands::Ls { debug, interactive } => self.handle_ls(*debug, *interactive),
             Commands::Cleanup {
                 mode,
                 force,
@@ -1089,11 +1092,16 @@ impl Cli {
         Ok(monitored_paths)
     }
 
-    fn handle_ls(&self, debug: bool) -> Result<()> {
+    fn handle_ls(&self, debug: bool, interactive: bool) -> Result<()> {
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
+        use std::io::IsTerminal;
 
         info!("Listing worktrees");
+
+        if interactive || (std::io::stdout().is_terminal() && !self.dry_run) {
+            return self.handle_default_switcher();
+        }
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
 
@@ -1655,7 +1663,6 @@ impl Cli {
             println!("  Enabled: {}", config.agent.enabled);
             println!("  Refresh rate: {}ms", config.agent.refresh_rate);
             println!("  Max activities: {}", config.agent.max_activities);
-            println!("  Claude hooks: {}", config.agent.claude_hooks);
         } else if edit {
             if !config_manager.config_exists() {
                 config_manager.create_default_config()?;
@@ -2015,10 +2022,22 @@ impl Cli {
                 let rc_label = rc_path.display().to_string();
                 let configured = Self::shell_rc_has_warp_integration(rc_path);
                 if configured {
-                    Self::doctor_ok(
-                        "Shell integration",
-                        format!("warp_cd helper detected in {rc_label}"),
-                    );
+                    if active.is_none() {
+                        Self::doctor_warn(
+                            "Shell integration",
+                            format!(
+                                "warp_cd helper detected in {rc_label} but 'warp' is not on PATH"
+                            ),
+                        );
+                        next_steps.push(format!(
+                            "Remove Git-Warp snippets from {rc_label} or fix your PATH."
+                        ));
+                    } else {
+                        Self::doctor_ok(
+                            "Shell integration",
+                            format!("warp_cd helper detected in {rc_label}"),
+                        );
+                    }
                 } else {
                     Self::doctor_warn(
                         "Shell integration",

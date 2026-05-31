@@ -66,9 +66,6 @@ clap = "4.5.4"          # Modern CLI argument parsing
 ratatui = "0.26.2"      # Rich Terminal User Interfaces
 crossterm = "0.27.0"    # Cross-platform terminal manipulation
 
-# Git Operations
-gix = "0.62.0"          # Pure Rust Git implementation
-
 # System Integration
 nix = "0.28.0"          # Unix system calls (CoW support)
 sysinfo = "0.30.12"     # System process information
@@ -96,10 +93,10 @@ chrono = "0.4.38"       # Date/time handling
 - **Concurrency**: Excellent parallel processing capabilities
 - **Ecosystem**: Rich crate ecosystem for system integration
 
-**Why gix over git2?**
-- **Pure Rust**: No C dependencies, easier deployment
-- **Modern API**: Better error handling and type safety
-- **Performance**: Optimized for Rust idioms
+**Why the `git` CLI?**
+- **No C dependencies**: avoids libgit2 / FFI
+- **Worktree coverage**: every `git worktree …` subcommand is available, including features new releases add
+- **Battle-tested**: the same binary the user already trusts for daily work
 
 ---
 
@@ -171,41 +168,55 @@ match terminal_mode {
 
 ## Copy-on-Write Implementation
 
-CoW cloning runs on macOS/APFS only. On Linux, Windows, and any other platform,
-`is_cow_supported` returns `false` and worktree creation falls back to `git
-worktree add` without attempting a clone.
+CoW cloning runs on macOS/APFS and Linux with Btrfs/XFS/OCFS2. On Windows and
+other platforms, `is_cow_supported` returns `false` and worktree creation falls
+back to `git worktree add` without attempting a clone.
 
-### APFS CoW Engine
+### APFS and Linux CoW Engine
 
-The CoW implementation leverages macOS APFS's native clonefile capability:
+The CoW implementation leverages native filesystem clone capabilities:
 
 ```rust
 // src/cow.rs
-fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
-    // Verify APFS filesystem
-    if !is_apfs(&src)? {
-        return Err(GitWarpError::CoWNotSupported.into());
+pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    // ...
+    #[cfg(target_os = "macos")]
+    {
+        clone_directory_apfs(src, dest)
     }
-    
-    // Use cp -c for CoW cloning
-    let output = Command::new("cp")
-        .arg("-c")  // Clone files (CoW) if possible
-        .arg("-R")  // Recursive
-        .arg(src.as_ref())
-        .arg(dest.as_ref())
-        .output()?;
+
+    #[cfg(target_os = "linux")]
+    {
+        clone_directory_reflink(src, dest)
+    }
+    // ...
+}
+
+#[cfg(target_os = "macos")]
+fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    // ... use cp -c for APFS
+}
+
+#[cfg(target_os = "linux")]
+fn clone_directory_reflink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
+    // ... use cp --reflink=always for Linux
 }
 ```
 
 ### Filesystem Detection
 
 ```rust
-fn is_apfs<P: AsRef<Path>>(path: P) -> Result<bool> {
-    use nix::sys::statfs::statfs;
-    
-    let statfs = statfs(path.as_ref())?;
-    let fs_type = statfs.filesystem_type_name();
-    Ok(fs_type == "apfs")
+pub fn is_cow_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        is_apfs(path)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        is_linux_reflink_supported(path)
+    }
+    // ...
 }
 ```
 
@@ -595,24 +606,15 @@ mod benches {
 
 ## Architectural Decisions
 
-### Why Not Use libgit2?
+### Why the `git` CLI everywhere?
 
-**Decision**: Use `gix` (pure Rust) + git CLI hybrid approach
-
-**Rationale**:
-- **Pure Rust**: No C dependencies, easier cross-compilation
-- **Worktree Support**: git CLI has better worktree operations
-- **Maintenance**: Less FFI complexity
-- **Performance**: No marshalling overhead for simple operations
-
-### Why Hybrid CLI + Library Approach?
-
-**Decision**: Use git CLI for worktree operations, gix for repository discovery
+**Decision**: Shell out to the `git` binary for every Git operation, including repository discovery (`git rev-parse --show-toplevel`).
 
 **Rationale**:
-- **Reliability**: git CLI is battle-tested for worktree operations
-- **Feature Coverage**: git CLI supports all worktree features
-- **Future-Proof**: Automatically gets new git features
+- **No FFI / C deps**: keeps cross-compilation simple and the binary lean.
+- **Feature coverage**: all worktree subcommands are first-class.
+- **Future-proof**: new `git` features are picked up automatically.
+- **Single source of truth**: `warp doctor` already requires `git` on `PATH`; relying on it everywhere keeps the runtime contract small.
 
 ### Why figment for Configuration?
 

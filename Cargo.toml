@@ -7,8 +7,6 @@ description = "High-performance, UX-focused Git worktree manager combining CoW s
 license = "MIT"
 repository = "https://github.com/denysbutenko/git-warp"
 readme = "README.md"
-# The integration suite is organized through tests/mod.rs; tests/support.rs is shared support code.
-autotests = false
 
 [lib]
 name = "git_warp"
@@ -18,6 +16,15 @@ path = "src/lib.rs"
 name = "warp"
 path = "src/main.rs"
 
+[[test]]
+name = "mod"
+path = "tests/mod.rs"
+
+[[bench]]
+name = "performance_benchmarks"
+path = "benches/performance_benchmarks.rs"
+harness = false
+
 [dependencies]
 # CLI & TUI
 clap = { version = "4.5.4", features = ["derive", "env"] }
@@ -25,7 +32,6 @@ ratatui = "0.26.2"
 crossterm = "0.27.0"
 
 # Core Logic
-gix = "0.62.0"
 nix = { version = "0.28.0", features = ["fs", "signal"] }
 rayon = "1.10.0"
 ignore = "0.4.22"
@@ -39,7 +45,7 @@ toml = "0.8.13"
 
 # Utilities
 anyhow = "1.0.86"
-thiserror = "1.0.61"
+thiserror = "2.0.18"
 log = "0.4.21"
 env_logger = "0.11.3"
 dirs = "5.0.1"
@@ -49,11 +55,3 @@ chrono = "0.4.38"
 tempfile = "3.10.1"
 criterion = "0.5"
 rand = "0.8"
-
-[[test]]
-name = "mod"
-path = "tests/mod.rs"
-
-[[bench]]
-name = "performance_benchmarks"
-harness = false

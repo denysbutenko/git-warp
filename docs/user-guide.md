@@ -23,8 +23,8 @@ session visibility.
 
 - Git.
 - `curl` or `wget` and `tar` for the one-command installer.
-- macOS/APFS for Copy-on-Write acceleration. Other platforms and filesystems use
-  traditional Git worktree creation.
+- macOS/APFS or Linux with Btrfs/XFS/OCFS2 for Copy-on-Write acceleration. Other
+  platforms and filesystems use traditional Git worktree creation.
 - Rust, latest stable toolchain, only when building from source or using the
   Cargo fallback.
 
@@ -286,7 +286,6 @@ auto_install = true
 enabled = true
 refresh_rate = 1000
 max_activities = 100
-claude_hooks = true
 ```
 
 `[git].auto_fetch` controls whether `warp cleanup` runs `git fetch --all --prune`
