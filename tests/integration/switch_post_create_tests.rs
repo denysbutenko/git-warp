@@ -54,11 +54,38 @@ fn setup_git_repo() -> tempfile::TempDir {
 }
 
 fn create_fake_pnpm(bin_dir: &Path, script_body: &str) -> PathBuf {
+    #[cfg(windows)]
+    let pnpm_path = bin_dir.join("pnpm.cmd");
+    #[cfg(not(windows))]
     let pnpm_path = bin_dir.join("pnpm");
-    fs::write(&pnpm_path, script_body).unwrap();
+
+    fs::write(
+        &pnpm_path,
+        #[cfg(windows)]
+        script_body
+            .replace("#!/bin/sh\n", "@echo off\r\n")
+            .replace("printf \"%s\\n\" \"$PWD\" >>", "echo %CD%>>")
+            .replace("echo \"install failed\" >&2", "echo install failed 1>&2")
+            .replace("exit 0", "exit /b 0")
+            .replace("exit 1", "exit /b 1"),
+        #[cfg(not(windows))]
+        script_body,
+    )
+    .unwrap();
     #[cfg(unix)]
     make_executable(&pnpm_path);
     pnpm_path
+}
+
+fn prepend_path_env(dir: &Path) -> String {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn run_warp_switch(repo_path: &Path, branch: &str, path_env: &str) -> std::process::Output {
@@ -85,8 +112,7 @@ fn test_warp_switch_runs_pnpm_install_only_for_new_worktree() {
         ),
     );
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let first_run = run_warp_switch(repo_path, "feature/pnpm-once", &path_env);
     assert!(first_run.status.success());
@@ -117,8 +143,7 @@ fn test_warp_switch_warns_when_pnpm_install_fails_but_still_succeeds() {
         "#!/bin/sh\necho \"install failed\" >&2\nexit 1\n",
     );
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = run_warp_switch(repo_path, "feature/pnpm-warn", &path_env);
     assert!(output.status.success());

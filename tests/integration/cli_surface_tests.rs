@@ -98,11 +98,12 @@ fn create_detached_worktree(repo_path: &Path, name: &str) -> PathBuf {
 fn write_codex_session(home: &Path, cwd: &Path, session_id: &str, branch: &str, timestamp: &str) {
     let sessions_dir = home.join(".codex").join("sessions");
     fs::create_dir_all(&sessions_dir).unwrap();
+    let cwd = cwd.display().to_string().replace('\\', "\\\\");
     fs::write(
         sessions_dir.join(format!("{session_id}.jsonl")),
         format!(
             r#"{{"timestamp":"{timestamp}","type":"session_meta","payload":{{"id":"{session_id}","timestamp":"{timestamp}","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"{branch}"}}}}}}"#,
-            cwd.display()
+            cwd
         ),
     )
     .unwrap();
@@ -122,6 +123,56 @@ fn warp_command(repo_path: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_warp"));
     command.current_dir(repo_path);
     command
+}
+
+fn normalized_path_text(value: impl AsRef<str>) -> String {
+    value
+        .as_ref()
+        .replace('\\', "/")
+        .trim_start_matches("//?/")
+        .to_string()
+}
+
+fn output_contains_path(output: &str, path: &Path) -> bool {
+    let output = normalized_path_text(output);
+    let display = normalized_path_text(path.display().to_string());
+    let canonical = path
+        .canonicalize()
+        .ok()
+        .map(|path| normalized_path_text(path.display().to_string()));
+
+    output.contains(&display) || canonical.is_some_and(|path| output.contains(&path))
+}
+
+fn write_fake_editor(path: &Path, marker_path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let editor_path = path.with_extension("cmd");
+    #[cfg(not(windows))]
+    let editor_path = path.to_path_buf();
+
+    fs::write(
+        &editor_path,
+        #[cfg(windows)]
+        format!(
+            "@echo off\r\n<nul set /p dummy=%~1>\"{}\"\r\n",
+            marker_path.display()
+        ),
+        #[cfg(not(windows))]
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n",
+            marker_path.display()
+        ),
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&editor_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&editor_path, permissions).unwrap();
+    }
+
+    editor_path
 }
 
 fn expected_config_path(home: &Path) -> PathBuf {
@@ -610,7 +661,7 @@ fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
         "{stderr}"
     );
     assert!(
-        stderr.contains("docs/releases/v0.4.0.md is missing"),
+        normalized_path_text(&stderr).contains("docs/releases/v0.4.0.md is missing"),
         "{stderr}"
     );
 }
@@ -653,7 +704,7 @@ fn test_doctor_inside_repo_prints_repo_and_worktree_checks() {
     assert!(output.status.success(), "{stdout}");
     assert!(stdout.contains("Git-Warp Doctor"));
     assert!(stdout.contains("Git repository"));
-    assert!(stdout.contains(temp_dir.path().to_string_lossy().as_ref()));
+    assert!(output_contains_path(&stdout, temp_dir.path()), "{stdout}");
     assert!(stdout.contains("Git binary"), "{stdout}");
     assert!(stdout.contains("git version"), "{stdout}");
     assert!(stdout.contains("Worktree base path"));
@@ -696,7 +747,8 @@ fn test_switch_help_hides_removed_flags_and_allows_selector_without_branch() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("Usage: warp switch [OPTIONS] [BRANCH]"));
+    assert!(stdout.contains("Usage:"), "{stdout}");
+    assert!(stdout.contains("switch [OPTIONS] [BRANCH]"), "{stdout}");
     assert!(stdout.contains("--latest"));
     assert!(stdout.contains("--waiting"));
     assert!(!stdout.contains("--init"));
@@ -813,14 +865,8 @@ fn test_ls_shows_primary_current_dirty_and_detached_statuses() {
     assert!(stdout.contains("main [primary"), "{stdout}");
     assert!(stdout.contains("feature-status [current dirty"), "{stdout}");
     assert!(stdout.contains("[detached]"), "{stdout}");
-    assert!(
-        stdout.contains(&repo_path.canonicalize().unwrap().display().to_string()),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(&detached_path.canonicalize().unwrap().display().to_string()),
-        "{stdout}"
-    );
+    assert!(output_contains_path(&stdout, repo_path), "{stdout}");
+    assert!(output_contains_path(&stdout, &detached_path), "{stdout}");
 }
 
 #[test]
@@ -1027,25 +1073,7 @@ fn test_config_edit_creates_config_and_launches_editor() {
     let home_dir = tempdir().unwrap();
     let config_path = expected_config_path(home_dir.path());
     let marker_path = home_dir.path().join("editor-marker.txt");
-    let editor_path = home_dir.path().join("fake-editor.sh");
-
-    fs::write(
-        &editor_path,
-        format!(
-            "#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n",
-            marker_path.display()
-        ),
-    )
-    .unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = fs::metadata(&editor_path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&editor_path, permissions).unwrap();
-    }
+    let editor_path = write_fake_editor(&home_dir.path().join("fake-editor"), &marker_path);
 
     let output = warp_command(repo_path)
         .env("HOME", home_dir.path())
@@ -1060,8 +1088,8 @@ fn test_config_edit_creates_config_and_launches_editor() {
     assert!(output.status.success(), "{stdout}");
     assert!(config_path.exists());
     assert_eq!(
-        fs::read_to_string(&marker_path).unwrap(),
-        config_path.display().to_string()
+        normalized_path_text(fs::read_to_string(&marker_path).unwrap()),
+        normalized_path_text(config_path.display().to_string())
     );
 }
 
@@ -1826,15 +1854,9 @@ fn test_switch_dry_run_labels_existing_worktree_source() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "{stdout}");
-    let canonical = worktree_path.canonicalize().unwrap();
     assert!(
-        stdout.contains(&format!(
-            "Source: existing worktree at {}",
-            canonical.display()
-        )) || stdout.contains(&format!(
-            "Source: existing worktree at {}",
-            worktree_path.display()
-        )),
+        stdout.contains("Source: existing worktree at")
+            && output_contains_path(&stdout, &worktree_path),
         "{stdout}"
     );
 }

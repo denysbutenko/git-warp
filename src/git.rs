@@ -86,6 +86,23 @@ fn is_protected_branch(branch: &str, protected_branches: &[String]) -> bool {
         .any(|protected_branch| protected_branch.trim() == branch)
 }
 
+#[cfg(windows)]
+fn git_compatible_path(path: &Path) -> PathBuf {
+    let raw = path.as_os_str().to_string_lossy();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{stripped}"));
+    }
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path.to_path_buf()
+}
+
+#[cfg(not(windows))]
+fn git_compatible_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 fn cleanup_skip_reason(
     worktree: &WorktreeInfo,
     cleanup_base_branch: &str,
@@ -355,6 +372,7 @@ impl GitRepository {
         use std::process::Command;
 
         let worktree_path = worktree_path.as_ref();
+        let git_worktree_path = git_compatible_path(worktree_path);
 
         match source {
             BranchSource::ExistingWorktree { .. } => Err(anyhow::anyhow!(
@@ -363,7 +381,7 @@ impl GitRepository {
             BranchSource::LocalBranch => {
                 let output = Command::new("git")
                     .args(["worktree", "add"])
-                    .arg(worktree_path)
+                    .arg(&git_worktree_path)
                     .arg(branch_name)
                     .current_dir(&self.repo_path)
                     .output()
@@ -378,7 +396,7 @@ impl GitRepository {
             BranchSource::RemoteBranch { remote_ref } => {
                 let output = Command::new("git")
                     .args(["worktree", "add", "-b", branch_name])
-                    .arg(worktree_path)
+                    .arg(&git_worktree_path)
                     .arg(remote_ref)
                     .current_dir(&self.repo_path)
                     .output()
@@ -398,7 +416,7 @@ impl GitRepository {
             BranchSource::CommitIsh { sha } => {
                 let output = Command::new("git")
                     .args(["worktree", "add", "-b", branch_name])
-                    .arg(worktree_path)
+                    .arg(&git_worktree_path)
                     .arg(sha)
                     .current_dir(&self.repo_path)
                     .output()
@@ -418,7 +436,7 @@ impl GitRepository {
             BranchSource::NewBranch => {
                 let output = Command::new("git")
                     .args(["worktree", "add", "-b", branch_name])
-                    .arg(worktree_path)
+                    .arg(&git_worktree_path)
                     .arg("HEAD")
                     .current_dir(&self.repo_path)
                     .output()
@@ -447,13 +465,14 @@ impl GitRepository {
         use std::process::Command;
 
         let worktree_path = worktree_path.as_ref();
+        let git_worktree_path = git_compatible_path(worktree_path);
 
         // Check if branch already exists
         if self.branch_exists(branch_name)? {
             // Create worktree from existing branch
             let mut cmd = Command::new("git");
             cmd.args(["worktree", "add"])
-                .arg(worktree_path)
+                .arg(&git_worktree_path)
                 .arg(branch_name)
                 .current_dir(&self.repo_path);
 
@@ -469,7 +488,7 @@ impl GitRepository {
             // Track remote branch as new local branch
             let mut cmd = Command::new("git");
             cmd.args(["worktree", "add", "-b", branch_name])
-                .arg(worktree_path)
+                .arg(&git_worktree_path)
                 .arg(&remote_ref)
                 .current_dir(&self.repo_path);
 
@@ -488,7 +507,7 @@ impl GitRepository {
             // Create new branch and worktree
             let mut cmd = Command::new("git");
             cmd.args(["worktree", "add", "-b", branch_name])
-                .arg(worktree_path);
+                .arg(&git_worktree_path);
 
             if let Some(commit) = from_commit {
                 cmd.arg(commit);
@@ -520,13 +539,14 @@ impl GitRepository {
         use std::process::Command;
 
         let worktree_path = worktree_path.as_ref();
+        let git_worktree_path = git_compatible_path(worktree_path);
 
         let mut cmd = Command::new("git");
         cmd.args(["worktree", "remove"]);
         if force {
             cmd.arg("--force");
         }
-        cmd.arg(worktree_path).current_dir(&self.repo_path);
+        cmd.arg(git_worktree_path).current_dir(&self.repo_path);
 
         let output = cmd
             .output()
