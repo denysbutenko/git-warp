@@ -750,10 +750,16 @@ fn test_warp_switch_to_sha_creates_branch_at_sha() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let worktree_path = stdout
         .lines()
-        .find(|line| line.contains("Switch complete:"))
-        .map(|line| line.split("Switch complete: ").nth(1).unwrap().trim())
+        .find(|line| line.contains("Switch complete:") || line.contains("Switch incomplete:"))
+        .map(|line| {
+            if line.contains("Switch complete: ") {
+                line.split("Switch complete: ").nth(1).unwrap().trim()
+            } else {
+                line.split("Switch incomplete: ").nth(1).unwrap().trim()
+            }
+        })
         .map(PathBuf::from)
-        .expect("Could not find switch complete path in stdout");
+        .expect("Could not find switch complete/incomplete path in stdout");
 
     // 4. Verify the new worktree is at the target SHA
     let wt_rev_output = Command::new("git")

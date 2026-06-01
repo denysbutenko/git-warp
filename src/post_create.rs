@@ -220,27 +220,57 @@ mod tests {
     }
 
     fn write_marker_script(path: &Path, marker: &Path) {
+        #[cfg(unix)]
+        let script_path = path.to_path_buf();
+        #[cfg(windows)]
+        let script_path = path.with_extension("cmd");
+
         fs::write(
-            path,
+            script_path.as_path(),
+            #[cfg(unix)]
             format!(
                 "#!/bin/sh\nprintf \"%s\" \"$PWD\" > \"{}\"\nexit 0\n",
+                marker.display()
+            ),
+            #[cfg(windows)]
+            format!(
+                "@echo off\r\n<nul set /p dummy=%CD%>\"{}\"\r\nexit /b 0\r\n",
                 marker.display()
             ),
         )
         .unwrap();
         #[cfg(unix)]
-        make_executable(path);
+        make_executable(script_path.as_path());
     }
 
     fn write_failing_script(path: &Path) {
-        fs::write(path, "#!/bin/sh\necho \"install failed\" >&2\nexit 1\n").unwrap();
         #[cfg(unix)]
-        make_executable(path);
+        let script_path = path.to_path_buf();
+        #[cfg(windows)]
+        let script_path = path.with_extension("cmd");
+
+        fs::write(
+            script_path.as_path(),
+            #[cfg(unix)]
+            "#!/bin/sh\necho \"install failed\" >&2\nexit 1\n",
+            #[cfg(windows)]
+            "@echo off\r\necho install failed 1>&2\r\nexit /b 1\r\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        make_executable(script_path.as_path());
     }
 
     fn resolver_for(manager: PackageManager, path: PathBuf) -> impl Fn(PackageManager) -> PathBuf {
         move |m| {
             assert_eq!(m, manager);
+            #[cfg(windows)]
+            {
+                let cmd_path = path.with_extension("cmd");
+                if cmd_path.exists() {
+                    return cmd_path;
+                }
+            }
             path.clone()
         }
     }
