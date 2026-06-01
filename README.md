@@ -208,7 +208,7 @@ terminal handoff modes that print or send shell commands.
 
 `post_create.auto_install` controls whether Git-Warp runs the matching
 `<manager> install` after creating a new worktree. Lockfile detection order is
-`pnpm-lock.yaml` → `yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json`; the first
+`pnpm-lock.yaml` â†’ `yarn.lock` â†’ `bun.lock` â†’ `bun.lockb` â†’ `package-lock.json` â†’ `Cargo.toml`; the first
 match wins. Set `auto_install = false` (or
 `GIT_WARP_POST_CREATE__AUTO_INSTALL=false`) to skip the install step entirely.
 
