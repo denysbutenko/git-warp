@@ -31,6 +31,8 @@ pub struct TerminalLaunchOptions {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub auto_activate: bool,
     pub init_commands: Vec<String>,
+    pub branch: Option<String>,
+    pub repo: Option<String>,
 }
 
 impl Default for TerminalLaunchOptions {
@@ -38,6 +40,8 @@ impl Default for TerminalLaunchOptions {
         Self {
             auto_activate: true,
             init_commands: Vec::new(),
+            branch: None,
+            repo: None,
         }
     }
 }
@@ -360,16 +364,27 @@ fn shell_quote(input: &str) -> String {
     format!("'{}'", input.replace('\'', "'\\''"))
 }
 
+fn replace_placeholders(command: &str, branch: &str, repo: &str, path: &str) -> String {
+    command
+        .replace("{{branch}}", branch)
+        .replace("{{repo}}", repo)
+        .replace("{{path}}", path)
+}
+
 #[cfg(target_os = "macos")]
 fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<String> {
     let mut commands = vec![format!("cd {}", shell_quote(&path.to_string_lossy()))];
+    let branch = options.branch.as_deref().unwrap_or("");
+    let repo = options.repo.as_deref().unwrap_or("");
+    let path_str = path.to_string_lossy();
+
     commands.extend(
         options
             .init_commands
             .iter()
             .map(|command| command.trim())
             .filter(|command| !command.is_empty())
-            .map(ToString::to_string),
+            .map(|command| replace_placeholders(command, branch, repo, &path_str)),
     );
     commands
 }
@@ -464,7 +479,16 @@ fn enter_current_shell(path: &Path, options: &TerminalLaunchOptions) -> Result<(
     command.current_dir(path);
 
     if !options.init_commands.is_empty() {
-        let mut init_script = options.init_commands.join("\n");
+        let branch = options.branch.as_deref().unwrap_or("");
+        let repo = options.repo.as_deref().unwrap_or("");
+        let path_str = path.to_string_lossy();
+
+        let mut init_script = options
+            .init_commands
+            .iter()
+            .map(|command| replace_placeholders(command, branch, repo, &path_str))
+            .collect::<Vec<_>>()
+            .join("\n");
         init_script.push_str(&format!("\nexec {}", shell_quote(&shell)));
         command.args(["-lc", &init_script]);
     }
@@ -586,5 +610,32 @@ impl TerminalManager {
             TerminalMode::Echo => terminal.echo_commands(path, options),
             TerminalMode::Current => unreachable!("current mode is handled before terminal lookup"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_replace_placeholders() {
+        let command = "echo branch: {{branch}}, repo: {{repo}}, path: {{path}}";
+        let branch = "feature/test";
+        let repo = "git-warp";
+        let path = "/tmp/git-warp/feature-test";
+        
+        let replaced = replace_placeholders(command, branch, repo, path);
+        assert_eq!(replaced, "echo branch: feature/test, repo: git-warp, path: /tmp/git-warp/feature-test");
+    }
+
+    #[test]
+    fn test_replace_placeholders_no_match() {
+        let command = "ls -la";
+        let branch = "main";
+        let repo = "warp";
+        let path = "/work";
+        
+        let replaced = replace_placeholders(command, branch, repo, path);
+        assert_eq!(replaced, "ls -la");
     }
 }

@@ -127,3 +127,68 @@ fn test_warp_switch_warns_when_pnpm_install_fails_but_still_succeeds() {
     assert!(stdout.contains("Detected pnpm repo but `pnpm install` failed: install failed"));
     assert!(stdout.contains("Worktree creation: created"));
 }
+
+#[test]
+fn test_warp_switch_runs_cargo_check_for_rust_repo() {
+    let temp_dir = tempdir().unwrap();
+    let repo_path = temp_dir.path();
+
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    fs::write(repo_path.join("Cargo.toml"), "[package]\nname = \"test\"\n").unwrap();
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    let bin_dir = tempdir().unwrap();
+    let marker_path = temp_dir.path().join("cargo-runs.txt");
+
+    let cargo_path = bin_dir.path().join("cargo");
+    fs::write(
+        &cargo_path,
+        format!(
+            "#!/bin/sh\nprintf \"%s\\n\" \"$PWD\" >> \"{}\"\nexit 0\n",
+            marker_path.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    make_executable(&cargo_path);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+
+    let output = run_warp_switch(repo_path, "feature/cargo-check", &path_env);
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Detected cargo repo, ran `cargo check`"));
+
+    let marker_contents = fs::read_to_string(marker_path).unwrap();
+    assert_eq!(marker_contents.lines().count(), 1);
+}

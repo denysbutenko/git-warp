@@ -78,6 +78,18 @@ If the API lookup fails (no network, rate-limited, custom non-`github.com`
 `GIT_WARP_REPO_URL`), the installer aborts and points at the `GIT_WARP_VERSION`
 pin or the Cargo fallback.
 
+## Copy-on-Write (CoW) Support
+
+Git-Warp uses Copy-on-Write (CoW) to create worktrees almost instantaneously. This
+feature is supported on:
+
+- **macOS**: APFS filesystems.
+- **Linux**: Btrfs, XFS, and OCFS2 filesystems (via `cp --reflink=always`).
+
+Git-Warp automatically detects CoW support. If your filesystem does not support
+it, Git-Warp falls back to traditional Git worktree creation. Run `warp doctor`
+to check CoW status for your repository.
+
 ## Supported Prebuilt Binaries
 
 Release binaries are published for:
