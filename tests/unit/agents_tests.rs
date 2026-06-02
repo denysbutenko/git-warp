@@ -66,6 +66,10 @@ fn home_guard() -> std::sync::MutexGuard<'static, ()> {
     HOME_GUARD.get_or_init(|| Mutex::new(())).lock().unwrap()
 }
 
+fn json_path(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "\\\\")
+}
+
 #[test]
 fn test_parse_live_status_file() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -300,7 +304,7 @@ fn test_discover_keeps_distinct_recent_history_rows_without_live_status() {
         format!(
             r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-            worktree_root.display()
+            json_path(&worktree_root)
         ),
     )
     .unwrap();
@@ -309,7 +313,7 @@ fn test_discover_keeps_distinct_recent_history_rows_without_live_status() {
         format!(
             r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat-2"}}}}}}
 {{"timestamp":"2026-04-22T10:30:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-            worktree_root.display()
+            json_path(&worktree_root)
         ),
     )
     .unwrap();
@@ -356,7 +360,7 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
         format!(
             r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-            worktree_root.display()
+            json_path(&worktree_root)
         ),
     )
     .unwrap();
@@ -365,7 +369,7 @@ fn test_discover_merges_live_row_with_newest_of_multiple_history_rows() {
         format!(
             r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat-2"}}}}}}
 {{"timestamp":"2026-04-22T10:30:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-            worktree_root.display()
+            json_path(&worktree_root)
         ),
     )
     .unwrap();
@@ -414,7 +418,7 @@ fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps()
         format!(
             r#"{{"timestamp":"2026-04-22T10:00:00.000Z","type":"session_meta","payload":{{"id":"session-2","timestamp":"2026-04-22T10:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Zulu","agent_role":"worker","git":{{"branch":"feat-z"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-            worktree_root.display()
+            json_path(&worktree_root)
         ),
     )
     .unwrap();
@@ -423,7 +427,7 @@ fn test_discover_merges_live_row_deterministically_on_equal_history_timestamps()
         format!(
             r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-1","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Alpha","agent_role":"worker","git":{{"branch":"feat-a"}}}}}}
 {{"timestamp":"2026-04-22T11:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-            worktree_root.display()
+            json_path(&worktree_root)
         ),
     )
     .unwrap();
@@ -498,7 +502,7 @@ fn test_discover_caps_recent_history_to_default_max_activities() {
             format!(
                 r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"session-{index:03}","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"agents-{index:03}"}}}}}}
 {{"timestamp":"2026-04-22T10:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
-                worktree_root.display()
+                json_path(&worktree_root)
             ),
         )
         .unwrap();

@@ -1,3 +1,4 @@
+use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
 use crate::{
     agents::{
         AgentDiscovery, AgentRuntime, AgentSessionSource, AgentSessionState, AgentSessionSummary,
@@ -5,7 +6,6 @@ use crate::{
     },
     error::Result,
 };
-use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use crossterm::event::{self, Event, KeyCode, poll};
 use ratatui::{
@@ -418,6 +418,7 @@ impl TuiApp {
     }
 }
 
+#[allow(dead_code)] // Convenience wrappers used by unit tests via the library crate.
 pub fn build_dashboard_model(
     sessions: &[AgentSessionSummary],
     now: DateTime<Local>,
@@ -427,6 +428,7 @@ pub fn build_dashboard_model(
     build_dashboard_model_windowed(&ordered_sessions, now, 0, ordered_sessions.len().max(1))
 }
 
+#[allow(dead_code)]
 pub fn build_dashboard_model_windowed(
     sessions: &[AgentSessionSummary],
     now: DateTime<Local>,

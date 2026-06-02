@@ -1,10 +1,7 @@
-use crate::{
-    error::Result,
-    git::WorktreeInfo,
-    config::GitConfig,
-};
 use crate::tui::agents::truncate_label;
 use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
+use crate::{config::GitConfig, error::Result, git::WorktreeInfo};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     Frame, Terminal as RatatuiTerminal,
     backend::CrosstermBackend,
@@ -13,13 +10,7 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use std::{
-    collections::BTreeSet,
-    io,
-    path::PathBuf,
-    time::SystemTime,
-};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use std::{collections::BTreeSet, io, path::PathBuf, time::SystemTime};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WorktreeRuntimeStatus {
@@ -501,9 +492,8 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
     }
 
     if batch.targets.iter().any(|target| target.force) {
-        parts.push(
-            "⚠  dirty worktrees will be force-removed; uncommitted changes lost".to_string(),
-        );
+        parts
+            .push("⚠  dirty worktrees will be force-removed; uncommitted changes lost".to_string());
     }
 
     if !batch.skipped.is_empty() {
@@ -519,6 +509,7 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
     format!("{}? y/N", parts.join("; "))
 }
 
+#[allow(dead_code)] // Convenience wrapper used by unit tests via the library crate.
 pub fn build_worktree_switch_model(
     worktrees: &[WorktreeInfo],
     statuses: &[WorktreeRuntimeStatus],
