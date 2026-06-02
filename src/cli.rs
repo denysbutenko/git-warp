@@ -969,12 +969,21 @@ impl Cli {
         terminal_app: &str,
         terminal_config: &crate::config::TerminalConfig,
     ) {
+        use crate::git::GitRepository;
         use crate::terminal::{TerminalLaunchOptions, TerminalManager};
+
+        let branch =
+            Self::current_branch_at_path(worktree_path).unwrap_or_else(|_| "unknown".to_string());
+        let repo = GitRepository::find()
+            .map(|r| r.repo_name())
+            .unwrap_or_else(|_| "unknown".to_string());
 
         let terminal_manager = TerminalManager;
         let launch_options = TerminalLaunchOptions {
             auto_activate: terminal_config.auto_activate,
             init_commands: terminal_config.init_commands.clone(),
+            branch: Some(branch),
+            repo: Some(repo),
         };
 
         match terminal_manager.switch_to_worktree_with_options(

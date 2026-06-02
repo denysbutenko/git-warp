@@ -165,6 +165,15 @@ impl GitRepository {
         &self.repo_path
     }
 
+    /// Get the repository name (base name of the root path)
+    pub fn repo_name(&self) -> String {
+        self.repo_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string()
+    }
+
     /// List all worktrees
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
         use std::process::Command;

@@ -47,7 +47,7 @@ pub struct AgentSessionSummary {
     pub source: AgentSessionSource,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentDiscovery {
     monitored_paths: Vec<PathBuf>,
     max_history_sessions: usize,
