@@ -63,14 +63,35 @@ const LOCKFILES: &[(&str, PackageManager)] = &[
     ("Cargo.toml", PackageManager::Cargo),
 ];
 
+fn resolve_package_manager_binary(manager: PackageManager) -> PathBuf {
+    let name = manager.binary();
+    #[cfg(windows)]
+    {
+        if let Some(path) = std::env::var_os("PATH")
+            .map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|dir| dir.join(format!("{name}.cmd")))
+            .find(|candidate| candidate.is_file())
+        {
+            return path;
+        }
+    }
+
+    PathBuf::from(name)
+}
+
 pub fn run_post_create_setup<P: AsRef<Path>>(
     worktree_path: P,
     newly_created: bool,
     auto_install: bool,
 ) -> PostCreateSetupStatus {
-    run_post_create_setup_with_resolver(worktree_path.as_ref(), newly_created, auto_install, |m| {
-        PathBuf::from(m.binary())
-    })
+    run_post_create_setup_with_resolver(
+        worktree_path.as_ref(),
+        newly_created,
+        auto_install,
+        resolve_package_manager_binary,
+    )
 }
 
 fn run_post_create_setup_with_resolver<F>(

@@ -111,12 +111,10 @@ fn prepend_path_env(dir: &Path) -> String {
 }
 
 fn run_warp_switch(repo_path: &Path, branch: &str, path_env: &str) -> std::process::Output {
-    let isolated_config = tempfile::tempdir().unwrap();
     Command::new(env!("CARGO_BIN_EXE_warp"))
         .args(["--terminal", "echo", "switch", "--no-cow", branch])
         .current_dir(repo_path)
         .env("PATH", path_env)
-        .env("XDG_CONFIG_HOME", isolated_config.path())
         .env("GIT_WARP_POST_CREATE__AUTO_INSTALL", "true")
         .output()
         .unwrap()
