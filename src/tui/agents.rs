@@ -304,7 +304,7 @@ impl TuiApp {
                 Constraint::Min(8),    // Main content
                 Constraint::Length(3), // Help
             ])
-            .split(f.size());
+            .split(f.area());
 
         let preview_model = build_dashboard_model_filtered_windowed(
             &self.sessions,

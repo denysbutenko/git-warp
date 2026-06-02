@@ -369,7 +369,7 @@ fn draw_worktree_switcher(
             Constraint::Length(7),
             Constraint::Length(3),
         ])
-        .split(f.size());
+        .split(f.area());
 
     let selected_count = selected_indices.len();
     let header_text = if selected_count == 0 {

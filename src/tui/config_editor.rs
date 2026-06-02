@@ -811,7 +811,7 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
             Constraint::Length(3),
             Constraint::Length(2),
         ])
-        .split(f.size());
+        .split(f.area());
 
     let dirty_tag = if model.is_dirty() { " [unsaved]" } else { "" };
     let header_text = format!(

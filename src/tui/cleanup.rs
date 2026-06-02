@@ -131,7 +131,7 @@ impl CleanupTui {
                         Constraint::Min(0),
                         Constraint::Length(4),
                     ])
-                    .split(f.size());
+                    .split(f.area());
 
                 let header = Paragraph::new(format!(
                     "Worktree cleanup ({} candidates)",

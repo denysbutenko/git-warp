@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
-use sysinfo::{ProcessRefreshKind, System};
+use sysinfo::System;
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
@@ -47,8 +47,7 @@ impl ProcessManager {
 
     /// Refresh process information
     pub fn refresh(&mut self) {
-        self.system
-            .refresh_processes_specifics(ProcessRefreshKind::new());
+        self.system.refresh_all();
     }
 
     /// Find all processes running in a specific directory
@@ -73,8 +72,13 @@ impl ProcessManager {
             {
                 processes.push(ProcessInfo {
                     pid: pid.as_u32(),
-                    name: process.name().to_string(),
-                    cmd: process.cmd().join(" "),
+                    name: process.name().to_string_lossy().to_string(),
+                    cmd: process
+                        .cmd()
+                        .iter()
+                        .map(|s| s.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" "),
                     working_dir: cwd.to_path_buf(),
                     cpu_usage: process.cpu_usage(),
                     memory_usage: process.memory(),
