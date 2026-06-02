@@ -176,19 +176,7 @@ fn write_fake_editor(path: &Path, marker_path: &Path) -> PathBuf {
 }
 
 fn expected_config_path(home: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home.join("Library")
-            .join("Application Support")
-            .join("git-warp")
-            .join("config.toml")
-    } else if cfg!(target_os = "windows") {
-        home.join("AppData")
-            .join("Roaming")
-            .join("git-warp")
-            .join("config.toml")
-    } else {
-        home.join(".config").join("git-warp").join("config.toml")
-    }
+    home.join(".config").join("git-warp").join("config.toml")
 }
 
 #[cfg(unix)]
@@ -1081,8 +1069,6 @@ fn test_config_edit_creates_config_and_launches_editor() {
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("EDITOR", &editor_path)
         .env_remove("VISUAL");
-    #[cfg(windows)]
-    command.env("APPDATA", home_dir.path().join("AppData").join("Roaming"));
     let output = command.args(["config", "--edit"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 

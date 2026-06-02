@@ -4,7 +4,6 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal as RatatuiTerminal, backend::CrosstermBackend};
 use std::io;
 
 /// Guard that handles terminal initialization and restoration.

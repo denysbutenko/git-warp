@@ -53,11 +53,19 @@ fn setup_git_repo() -> tempfile::TempDir {
     temp_dir
 }
 
+fn create_fake_cargo(bin_dir: &Path, script_body: &str) -> PathBuf {
+    create_fake_path_shim(bin_dir, "cargo", script_body)
+}
+
 fn create_fake_pnpm(bin_dir: &Path, script_body: &str) -> PathBuf {
+    create_fake_path_shim(bin_dir, "pnpm", script_body)
+}
+
+fn create_fake_path_shim(bin_dir: &Path, name: &str, script_body: &str) -> PathBuf {
     #[cfg(windows)]
-    let pnpm_path = bin_dir.join("pnpm.cmd");
+    let shim_path = bin_dir.join(format!("{name}.cmd"));
     #[cfg(not(windows))]
-    let pnpm_path = bin_dir.join("pnpm");
+    let shim_path = bin_dir.join(name);
 
     #[cfg(windows)]
     let script_body = if script_body.contains("install failed") {
@@ -68,10 +76,10 @@ fn create_fake_pnpm(bin_dir: &Path, script_body: &str) -> PathBuf {
         "@echo off\r\nexit /b 0\r\n".to_string()
     };
 
-    fs::write(&pnpm_path, script_body).unwrap();
+    fs::write(&shim_path, script_body).unwrap();
     #[cfg(unix)]
-    make_executable(&pnpm_path);
-    pnpm_path
+    make_executable(&shim_path);
+    shim_path
 }
 
 fn prepend_path_env(dir: &Path) -> String {
@@ -190,20 +198,15 @@ fn test_warp_switch_runs_cargo_check_for_rust_repo() {
     let bin_dir = tempdir().unwrap();
     let marker_path = temp_dir.path().join("cargo-runs.txt");
 
-    let cargo_path = bin_dir.path().join("cargo");
-    fs::write(
-        &cargo_path,
-        format!(
+    create_fake_cargo(
+        bin_dir.path(),
+        &format!(
             "#!/bin/sh\nprintf \"%s\\n\" \"$PWD\" >> \"{}\"\nexit 0\n",
             marker_path.display()
         ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    make_executable(&cargo_path);
+    );
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = run_warp_switch(repo_path, "feature/cargo-check", &path_env);
     assert!(output.status.success());

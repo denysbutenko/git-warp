@@ -1,9 +1,7 @@
-use crate::{
-    error::Result,
-    git::BranchStatus,
-};
 use crate::tui::agents::truncate_label;
 use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
+use crate::{error::Result, git::BranchStatus};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     Terminal as RatatuiTerminal,
     backend::CrosstermBackend,
@@ -12,8 +10,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use std::io;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
+#[allow(dead_code)] // Row metadata is asserted in unit tests via `display_line` only.
 pub struct CleanupRow {
     pub branch: String,
     pub path_label: String,

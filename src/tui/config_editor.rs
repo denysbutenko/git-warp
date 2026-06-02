@@ -1,8 +1,9 @@
-use crate::{
-    error::Result,
-    config::{Config, ConfigManager},
-};
 use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
+use crate::{
+    config::{Config, ConfigManager},
+    error::Result,
+};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     Frame, Terminal as RatatuiTerminal,
     backend::CrosstermBackend,
@@ -15,7 +16,6 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigSectionId {
@@ -948,7 +948,8 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
     } else if model.editing() {
         "Enter save field  Esc cancel  Backspace delete".to_string()
     } else {
-        "â†‘â†“/jk move  Tab section  Space toggle  Enter/e edit  s save  r revert  q quit".to_string()
+        "â†‘â†“/jk move  Tab section  Space toggle  Enter/e edit  s save  r revert  q quit"
+            .to_string()
     };
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::Gray))
