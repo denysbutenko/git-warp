@@ -14,6 +14,7 @@ use ratatui::{
 use std::io;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
+#[allow(dead_code)] // Row metadata is asserted in unit tests via `display_line` only.
 pub struct CleanupRow {
     pub branch: String,
     pub path_label: String,
@@ -133,7 +134,7 @@ impl CleanupTui {
                         Constraint::Min(0),
                         Constraint::Length(4),
                     ])
-                    .split(f.size());
+                    .split(f.area());
 
                 let header = Paragraph::new(format!(
                     "Worktree cleanup ({} candidates)",

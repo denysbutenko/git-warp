@@ -304,7 +304,7 @@ impl TuiApp {
                 Constraint::Min(8),    // Main content
                 Constraint::Length(3), // Help
             ])
-            .split(f.size());
+            .split(f.area());
 
         let preview_model = build_dashboard_model_filtered_windowed(
             &self.sessions,
@@ -418,6 +418,7 @@ impl TuiApp {
     }
 }
 
+#[allow(dead_code)] // Convenience wrappers used by unit tests via the library crate.
 pub fn build_dashboard_model(
     sessions: &[AgentSessionSummary],
     now: DateTime<Local>,
@@ -427,6 +428,7 @@ pub fn build_dashboard_model(
     build_dashboard_model_windowed(&ordered_sessions, now, 0, ordered_sessions.len().max(1))
 }
 
+#[allow(dead_code)]
 pub fn build_dashboard_model_windowed(
     sessions: &[AgentSessionSummary],
     now: DateTime<Local>,

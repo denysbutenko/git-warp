@@ -378,7 +378,7 @@ fn draw_worktree_switcher(
             Constraint::Length(7),
             Constraint::Length(3),
         ])
-        .split(f.size());
+        .split(f.area());
 
     let selected_count = selected_indices.len();
     let header_text = if selected_count == 0 {
@@ -519,6 +519,7 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
     format!("{}? y/N", parts.join("; "))
 }
 
+#[allow(dead_code)] // Convenience wrapper used by unit tests via the library crate.
 pub fn build_worktree_switch_model(
     worktrees: &[WorktreeInfo],
     statuses: &[WorktreeRuntimeStatus],
