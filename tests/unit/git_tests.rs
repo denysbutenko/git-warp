@@ -685,10 +685,15 @@ fn test_relative_worktrees_path_generation_uses_primary_root_from_linked_worktre
         Some(std::path::Path::new(".worktrees")),
     );
 
-    assert_eq!(
-        worktree_path,
-        repo_path.join(".worktrees").join("feature-from-linked")
-    );
+    let expected = repo_path.join(".worktrees").join("feature-from-linked");
+    let normalize = |path: &std::path::Path| {
+        path.display()
+            .to_string()
+            .replace('\\', "/")
+            .trim_start_matches("//?/")
+            .to_string()
+    };
+    assert_eq!(normalize(&worktree_path), normalize(&expected));
 }
 
 fn setup_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {

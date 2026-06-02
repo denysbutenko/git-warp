@@ -1075,14 +1075,15 @@ fn test_config_edit_creates_config_and_launches_editor() {
     let marker_path = home_dir.path().join("editor-marker.txt");
     let editor_path = write_fake_editor(&home_dir.path().join("fake-editor"), &marker_path);
 
-    let output = warp_command(repo_path)
+    let mut command = warp_command(repo_path);
+    command
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("EDITOR", &editor_path)
-        .env_remove("VISUAL")
-        .args(["config", "--edit"])
-        .output()
-        .unwrap();
+        .env_remove("VISUAL");
+    #[cfg(windows)]
+    command.env("APPDATA", home_dir.path().join("AppData").join("Roaming"));
+    let output = command.args(["config", "--edit"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "{stdout}");

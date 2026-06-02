@@ -59,19 +59,16 @@ fn create_fake_pnpm(bin_dir: &Path, script_body: &str) -> PathBuf {
     #[cfg(not(windows))]
     let pnpm_path = bin_dir.join("pnpm");
 
-    fs::write(
-        &pnpm_path,
-        #[cfg(windows)]
-        script_body
-            .replace("#!/bin/sh\n", "@echo off\r\n")
-            .replace("printf \"%s\\n\" \"$PWD\" >>", "echo %CD%>>")
-            .replace("echo \"install failed\" >&2", "echo install failed 1>&2")
-            .replace("exit 0", "exit /b 0")
-            .replace("exit 1", "exit /b 1"),
-        #[cfg(not(windows))]
-        script_body,
-    )
-    .unwrap();
+    #[cfg(windows)]
+    let script_body = if script_body.contains("install failed") {
+        "@echo off\r\necho install failed 1>&2\r\nexit /b 1\r\n".to_string()
+    } else if let Some(marker) = script_body.split('"').nth(1) {
+        format!("@echo off\r\necho %CD%>>\"{}\"\r\nexit /b 0\r\n", marker)
+    } else {
+        "@echo off\r\nexit /b 0\r\n".to_string()
+    };
+
+    fs::write(&pnpm_path, script_body).unwrap();
     #[cfg(unix)]
     make_executable(&pnpm_path);
     pnpm_path
