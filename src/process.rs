@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
-use sysinfo::{ProcessRefreshKind, System};
+use sysinfo::System;
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
