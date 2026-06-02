@@ -154,7 +154,7 @@ fn write_fake_editor(path: &Path, marker_path: &Path) -> PathBuf {
         &editor_path,
         #[cfg(windows)]
         format!(
-            "@echo off\r\n<nul set /p dummy=%~1>\"{}\"\r\n",
+            "@echo off\r\necho %~1>\"{}\"\r\nexit /b 0\r\n",
             marker_path.display()
         ),
         #[cfg(not(windows))]
