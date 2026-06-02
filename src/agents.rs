@@ -85,7 +85,31 @@ fn status_file_path(root: &Path, runtime: AgentRuntime) -> PathBuf {
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    normalize_verbatim_path(fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+#[cfg(windows)]
+fn normalize_verbatim_path(path: PathBuf) -> PathBuf {
+    let raw = path.as_os_str().to_string_lossy();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{stripped}"));
+    }
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn normalize_verbatim_path(path: PathBuf) -> PathBuf {
+    path
+}
+
+fn agent_home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
 }
 
 fn is_path_within_root(path: &Path, root: &Path) -> bool {
@@ -232,7 +256,7 @@ impl AgentDiscovery {
         &self,
         now: DateTime<Local>,
     ) -> Result<Vec<AgentSessionSummary>> {
-        let Some(home_dir) = dirs::home_dir() else {
+        let Some(home_dir) = agent_home_dir() else {
             return Ok(Vec::new());
         };
 

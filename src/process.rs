@@ -1,7 +1,9 @@
 use crate::error::{GitWarpError, Result};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
-use sysinfo::System;
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
+use sysinfo::{ProcessRefreshKind, System};
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
