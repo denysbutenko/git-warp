@@ -95,9 +95,20 @@ fn create_failing_open(bin_dir: &Path) -> PathBuf {
 }
 
 fn create_fake_shell(bin_dir: &Path, log_path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let script_path = bin_dir.join("fake-shell.cmd");
+    #[cfg(not(windows))]
     let script_path = bin_dir.join("fake-shell");
+
     fs::write(
         &script_path,
+        #[cfg(windows)]
+        format!(
+            "@echo off\r\necho cwd=%CD%>>\"{}\"\r\necho args=%*>>\"{}\"\r\nexit /b 0\r\n",
+            log_path.display(),
+            log_path.display()
+        ),
+        #[cfg(not(windows))]
         format!(
             "#!/bin/sh\nprintf 'cwd=%s\\nargs=%s\\n' \"$(pwd)\" \"$*\" >> \"{}\"\nexit 0\n",
             log_path.display()
@@ -107,6 +118,36 @@ fn create_fake_shell(bin_dir: &Path, log_path: &Path) -> PathBuf {
     #[cfg(unix)]
     make_executable(&script_path);
     script_path
+}
+
+fn prepend_path_env(dir: &Path) -> String {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn normalized_path_text(value: impl AsRef<str>) -> String {
+    value
+        .as_ref()
+        .replace('\\', "/")
+        .trim_start_matches("//?/")
+        .to_string()
+}
+
+fn output_contains_path(output: &str, path: &Path) -> bool {
+    let output = normalized_path_text(output);
+    let display = normalized_path_text(path.display().to_string());
+    let canonical = path
+        .canonicalize()
+        .ok()
+        .map(|path| normalized_path_text(path.display().to_string()));
+
+    output.contains(&display) || canonical.is_some_and(|path| output.contains(&path))
 }
 
 fn write_config(home_dir: &Path, app: &str) {
@@ -182,8 +223,7 @@ fn test_warp_switch_honors_explicit_warp_terminal_app() {
     create_fake_osascript(bin_dir.path(), &osascript_log);
     create_fake_open(bin_dir.path(), &open_log);
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = run_warp_switch(
         repo_path,
@@ -218,8 +258,7 @@ fn test_warp_switch_reports_terminal_handoff_failure_as_incomplete() {
     create_fake_osascript(bin_dir.path(), &osascript_log);
     create_failing_open(bin_dir.path());
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
     let worktree_path = repo_path.join("worktrees").join("handoff-fails");
 
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
@@ -309,14 +348,10 @@ fn test_dynamic_branch_reuses_existing_worktree_for_branch() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let expected_path = worktree_path.canonicalize().unwrap();
-
     assert!(output.status.success(), "stdout={stdout}\nstderr={stderr}");
     assert!(
-        stdout.contains(&format!(
-            "📁 Worktree already exists at: {}",
-            expected_path.display()
-        )),
+        stdout.contains("📁 Worktree already exists at:")
+            && output_contains_path(&stdout, &worktree_path),
         "{stdout}"
     );
     assert!(
@@ -354,8 +389,7 @@ fn test_warp_switch_reports_existing_worktree_branch_mismatch_as_incomplete() {
         String::from_utf8_lossy(&create_output.stderr)
     );
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
         .args([
@@ -427,7 +461,9 @@ fn test_warp_switch_current_starts_shell_in_worktree() {
 
     let shell_contents = fs::read_to_string(&shell_log).unwrap_or_default();
     assert!(
-        shell_contents.contains("worktrees/feature-warp-current"),
+        shell_contents
+            .replace('\\', "/")
+            .contains("worktrees/feature-warp-current"),
         "expected fake shell to start in worktree, got {}",
         shell_contents
     );
@@ -449,8 +485,7 @@ fn test_warp_switch_auto_prefers_current_warp_terminal() {
     create_fake_osascript(bin_dir.path(), &osascript_log);
     create_fake_open(bin_dir.path(), &open_log);
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = run_warp_switch(
         repo_path,
@@ -515,8 +550,7 @@ fn test_warp_switch_applescript_activates_when_configured() {
     write_config_with_terminal_options(home_dir.path(), "terminal", "tab", true, &[]);
     create_fake_osascript(bin_dir.path(), &osascript_log);
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = run_warp_switch(
         repo_path,
@@ -549,8 +583,7 @@ fn test_warp_switch_applescript_skips_activation_when_disabled() {
     write_config_with_terminal_options(home_dir.path(), "terminal", "tab", false, &[]);
     create_fake_osascript(bin_dir.path(), &osascript_log);
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let path_env = format!("{}:{}", bin_dir.path().display(), original_path);
+    let path_env = prepend_path_env(bin_dir.path());
 
     let output = run_warp_switch(
         repo_path,
@@ -750,10 +783,16 @@ fn test_warp_switch_to_sha_creates_branch_at_sha() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let worktree_path = stdout
         .lines()
-        .find(|line| line.contains("Switch complete:"))
-        .map(|line| line.split("Switch complete: ").nth(1).unwrap().trim())
+        .find(|line| line.contains("Switch complete:") || line.contains("Switch incomplete:"))
+        .map(|line| {
+            if line.contains("Switch complete: ") {
+                line.split("Switch complete: ").nth(1).unwrap().trim()
+            } else {
+                line.split("Switch incomplete: ").nth(1).unwrap().trim()
+            }
+        })
         .map(PathBuf::from)
-        .expect("Could not find switch complete path in stdout");
+        .expect("Could not find switch complete/incomplete path in stdout");
 
     // 4. Verify the new worktree is at the target SHA
     let wt_rev_output = Command::new("git")

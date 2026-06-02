@@ -1075,7 +1075,7 @@ fn test_config_edit_creates_config_and_launches_editor() {
     assert!(output.status.success(), "{stdout}");
     assert!(config_path.exists());
     assert_eq!(
-        normalized_path_text(fs::read_to_string(&marker_path).unwrap()),
+        normalized_path_text(fs::read_to_string(&marker_path).unwrap().trim()),
         normalized_path_text(config_path.display().to_string())
     );
 }
