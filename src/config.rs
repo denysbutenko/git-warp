@@ -395,9 +395,12 @@ impl ConfigManager {
 
 /// Get the path to the configuration file
 fn get_config_path() -> Result<PathBuf> {
-    let config_dir = config_dir().ok_or_else(|| GitWarpError::ConfigError {
-        message: "Could not determine config directory".to_string(),
-    })?;
+    let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(config_dir)
+        .ok_or_else(|| GitWarpError::ConfigError {
+            message: "Could not determine config directory".to_string(),
+        })?;
 
     Ok(config_dir.join("git-warp").join("config.toml"))
 }

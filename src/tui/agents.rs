@@ -1,3 +1,4 @@
+use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
 use crate::{
     agents::{
         AgentDiscovery, AgentRuntime, AgentSessionSource, AgentSessionState, AgentSessionSummary,
@@ -5,7 +6,6 @@ use crate::{
     },
     error::Result,
 };
-use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use crossterm::event::{self, Event, KeyCode, poll};
 use ratatui::{

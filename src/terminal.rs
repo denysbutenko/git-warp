@@ -623,9 +623,12 @@ mod tests {
         let branch = "feature/test";
         let repo = "git-warp";
         let path = "/tmp/git-warp/feature-test";
-        
+
         let replaced = replace_placeholders(command, branch, repo, path);
-        assert_eq!(replaced, "echo branch: feature/test, repo: git-warp, path: /tmp/git-warp/feature-test");
+        assert_eq!(
+            replaced,
+            "echo branch: feature/test, repo: git-warp, path: /tmp/git-warp/feature-test"
+        );
     }
 
     #[test]
@@ -634,7 +637,7 @@ mod tests {
         let branch = "main";
         let repo = "warp";
         let path = "/work";
-        
+
         let replaced = replace_placeholders(command, branch, repo, path);
         assert_eq!(replaced, "ls -la");
     }
