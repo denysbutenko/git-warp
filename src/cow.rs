@@ -64,19 +64,47 @@ fn is_apfs<P: AsRef<Path>>(path: P) -> Result<bool> {
 
 #[cfg(target_os = "linux")]
 fn is_linux_reflink_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
-    use nix::sys::statfs::statfs;
+    use std::fs;
+    use std::process::Command;
 
-    let statfs =
-        statfs(path.as_ref()).map_err(|e| anyhow::anyhow!("Failed to check filesystem: {}", e))?;
+    let path = path.as_ref();
+    if !path.exists() {
+        return Ok(false);
+    }
 
-    // On Linux, f_type is a numeric value.
-    // We check for known reflink-capable filesystems.
-    // BTRFS_SUPER_MAGIC = 0x9123683e
-    // XFS_SUPER_MAGIC = 0x58465342
-    // OCFS2_SUPER_MAGIC = 0x7461636f
-    match statfs.filesystem_type().0 {
-        0x9123683e | 0x58465342 | 0x7461636f => Ok(true),
-        _ => Ok(false),
+    // Attempt to create a temp file in the target directory to test reflink
+    let temp_dir = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent().unwrap_or(Path::new(".")).to_path_buf()
+    };
+
+    let test_file = temp_dir.join(".reflink_test_src");
+    let test_dest = temp_dir.join(".reflink_test_dest");
+
+    // Clean up if they somehow exist
+    let _ = fs::remove_file(&test_file);
+    let _ = fs::remove_file(&test_dest);
+
+    // Create a small source file
+    if fs::write(&test_file, "reflink test").is_err() {
+        return Ok(false);
+    }
+
+    // Attempt reflink
+    let status = Command::new("cp")
+        .arg("--reflink=always")
+        .arg(&test_file)
+        .arg(&test_dest)
+        .status();
+
+    // Clean up
+    let _ = fs::remove_file(&test_file);
+    let _ = fs::remove_file(&test_dest);
+
+    match status {
+        Ok(s) => Ok(s.success()),
+        Err(_) => Ok(false),
     }
 }
 
