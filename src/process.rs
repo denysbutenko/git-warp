@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
-use sysinfo::System;
+use sysinfo::{ProcessesToUpdate, System};
 
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
@@ -41,16 +41,22 @@ impl Default for ProcessManager {
 impl ProcessManager {
     pub fn new() -> Self {
         let mut system = System::new();
-        system.refresh_all();
+        system.refresh_processes(ProcessesToUpdate::All, true);
         Self { system }
     }
 
-    /// Refresh process information
+    /// Refresh process information. Call once before iterating many directories
+    /// — `find_processes_in_directory` does not refresh on its own.
     pub fn refresh(&mut self) {
-        self.system.refresh_all();
+        log::debug!("ProcessManager: refreshing process list");
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
     }
 
-    /// Find all processes running in a specific directory
+    /// Find all processes whose cwd lives under `path`.
+    ///
+    /// Reads from the currently-cached `sysinfo` state. Callers that walk many
+    /// worktrees should `refresh()` once before the loop instead of paying for
+    /// a refresh per call.
     pub fn find_processes_in_directory<P: AsRef<Path>>(
         &mut self,
         path: P,
@@ -63,7 +69,6 @@ impl ProcessManager {
                     path: requested_path.display().to_string(),
                 })?;
 
-        self.refresh();
         let mut processes = Vec::new();
 
         for (pid, process) in self.system.processes() {
@@ -256,6 +261,7 @@ impl ProcessManager {
     /// Get detailed process statistics for a directory
     #[allow(dead_code)] // Public helper used by tests/embedders.
     pub fn get_directory_process_stats<P: AsRef<Path>>(&mut self, path: P) -> Result<ProcessStats> {
+        self.refresh();
         let processes = self.find_processes_in_directory(path)?;
 
         let total_count = processes.len();
@@ -280,6 +286,7 @@ impl ProcessManager {
         auto_confirm: bool,
         kill_timeout: Duration,
     ) -> Result<bool> {
+        self.refresh();
         let processes = self.find_processes_in_directory(path)?;
 
         if processes.is_empty() {
