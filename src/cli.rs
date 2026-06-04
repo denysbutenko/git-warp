@@ -367,12 +367,6 @@ impl Cli {
     }
 
     pub fn run(&self) -> Result<()> {
-        if self.debug {
-            unsafe {
-                std::env::set_var("RUST_LOG", "debug");
-            }
-        }
-
         match &self.command {
             Some(command) => self.handle_command(command),
             None => {
