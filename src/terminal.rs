@@ -59,8 +59,6 @@ pub trait Terminal {
         session_id: Option<&str>,
         options: &TerminalLaunchOptions,
     ) -> Result<()>;
-    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
-    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()>;
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn is_supported(&self) -> bool;
 }
@@ -163,17 +161,6 @@ end tell
         self.run_applescript(&script)
     }
 
-    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
-        print_shell_commands(path, options);
-        Ok(())
-    }
-
-    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
-        println!("# Navigate to worktree:");
-        print_shell_commands(path, options);
-        Ok(())
-    }
-
     fn is_supported(&self) -> bool {
         // Check if iTerm2 is available
         Command::new("osascript")
@@ -248,17 +235,6 @@ end tell
         self.run_applescript(&script)
     }
 
-    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
-        print_shell_commands(path, options);
-        Ok(())
-    }
-
-    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
-        println!("# Navigate to worktree:");
-        print_shell_commands(path, options);
-        Ok(())
-    }
-
     fn is_supported(&self) -> bool {
         true // Terminal.app is always available on macOS
     }
@@ -302,17 +278,6 @@ impl Terminal for WarpTerminal {
         _options: &TerminalLaunchOptions,
     ) -> Result<()> {
         self.open_uri("new_window", path)
-    }
-
-    fn switch_to_directory(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
-        print_shell_commands(path, options);
-        Ok(())
-    }
-
-    fn echo_commands(&self, path: &Path, options: &TerminalLaunchOptions) -> Result<()> {
-        println!("# Navigate to worktree:");
-        print_shell_commands(path, options);
-        Ok(())
     }
 
     fn is_supported(&self) -> bool {
@@ -371,7 +336,6 @@ fn replace_placeholders(command: &str, branch: &str, repo: &str, path: &str) -> 
         .replace("{{path}}", path)
 }
 
-#[cfg(target_os = "macos")]
 fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<String> {
     let mut commands = vec![format!("cd {}", shell_quote(&path.to_string_lossy()))];
     let branch = options.branch.as_deref().unwrap_or("");
@@ -389,7 +353,6 @@ fn shell_command_sequence(path: &Path, options: &TerminalLaunchOptions) -> Vec<S
     commands
 }
 
-#[cfg(target_os = "macos")]
 fn print_shell_commands(path: &Path, options: &TerminalLaunchOptions) {
     for command in shell_command_sequence(path, options) {
         println!("{command}");
@@ -597,8 +560,18 @@ impl TerminalManager {
     ) -> Result<()> {
         let path = path.as_ref();
 
-        if matches!(mode, TerminalMode::Current) {
-            return enter_current_shell(path, options);
+        match mode {
+            TerminalMode::Current => return enter_current_shell(path, options),
+            TerminalMode::InPlace => {
+                print_shell_commands(path, options);
+                return Ok(());
+            }
+            TerminalMode::Echo => {
+                println!("# Navigate to worktree:");
+                print_shell_commands(path, options);
+                return Ok(());
+            }
+            TerminalMode::Tab | TerminalMode::Window => {}
         }
 
         let terminal = Self::get_terminal(preferred_app)?;
@@ -606,9 +579,9 @@ impl TerminalManager {
         match mode {
             TerminalMode::Tab => terminal.open_tab(path, session_id, options),
             TerminalMode::Window => terminal.open_window(path, session_id, options),
-            TerminalMode::InPlace => terminal.switch_to_directory(path, options),
-            TerminalMode::Echo => terminal.echo_commands(path, options),
-            TerminalMode::Current => unreachable!("current mode is handled before terminal lookup"),
+            TerminalMode::InPlace | TerminalMode::Echo | TerminalMode::Current => {
+                unreachable!("stdout-only modes are handled before terminal lookup")
+            }
         }
     }
 }
@@ -640,5 +613,57 @@ mod tests {
 
         let replaced = replace_placeholders(command, branch, repo, path);
         assert_eq!(replaced, "ls -la");
+    }
+
+    #[test]
+    fn shell_command_sequence_emits_cd_and_init_commands() {
+        let options = TerminalLaunchOptions {
+            init_commands: vec![
+                "echo branch={{branch}}".to_string(),
+                "  ".to_string(),
+                "ls {{path}}".to_string(),
+            ],
+            branch: Some("feature/x".to_string()),
+            repo: Some("git-warp".to_string()),
+            ..TerminalLaunchOptions::default()
+        };
+        let path = Path::new("/tmp/git-warp/feature-x");
+
+        let commands = shell_command_sequence(path, &options);
+
+        assert_eq!(
+            commands,
+            vec![
+                "cd '/tmp/git-warp/feature-x'".to_string(),
+                "echo branch=feature/x".to_string(),
+                "ls /tmp/git-warp/feature-x".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_manager_inplace_succeeds_on_all_targets() {
+        let path = Path::new("/tmp/git-warp/feature-x");
+        let result = TerminalManager.switch_to_worktree_with_options(
+            path,
+            TerminalMode::InPlace,
+            None,
+            None,
+            &TerminalLaunchOptions::default(),
+        );
+        assert!(result.is_ok(), "InPlace must not require a GUI terminal");
+    }
+
+    #[test]
+    fn terminal_manager_echo_succeeds_on_all_targets() {
+        let path = Path::new("/tmp/git-warp/feature-x");
+        let result = TerminalManager.switch_to_worktree_with_options(
+            path,
+            TerminalMode::Echo,
+            None,
+            None,
+            &TerminalLaunchOptions::default(),
+        );
+        assert!(result.is_ok(), "Echo must not require a GUI terminal");
     }
 }
