@@ -502,6 +502,7 @@ impl Cli {
         worktrees: &[crate::git::WorktreeInfo],
         mut process_manager: crate::process::ProcessManager,
     ) -> Vec<crate::tui::WorktreeRuntimeStatus> {
+        process_manager.refresh();
         let current_dir = std::env::current_dir().unwrap_or_else(|_| git_repo.root_path().into());
         let current_dir =
             std::fs::canonicalize(&current_dir).unwrap_or_else(|_| current_dir.clone());
@@ -1127,6 +1128,7 @@ impl Cli {
             return Ok(());
         }
 
+        process_manager.refresh();
         let mut rows: Vec<LsRow> = worktrees
             .into_iter()
             .map(|worktree| {
@@ -1427,6 +1429,9 @@ impl Cli {
 
         // Show what would be cleaned up
         println!("🧹 Cleanup candidates:");
+        if check_processes {
+            process_manager.refresh();
+        }
         let mut process_busy = Vec::new();
         for candidate in &candidates {
             let remote = if candidate.has_remote {
@@ -1518,6 +1523,9 @@ impl Cli {
         let mut cleaned = 0;
         let mut failed = 0;
 
+        if check_processes {
+            process_manager.refresh();
+        }
         for candidate in candidates {
             println!("🗑️  Removing worktree: {}", candidate.branch);
 

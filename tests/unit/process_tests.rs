@@ -385,3 +385,34 @@ wait "$child_pid"
         }
     }
 }
+
+#[test]
+fn find_processes_in_directory_works_without_caller_refresh() {
+    // ProcessManager::new() refreshes once internally; a follow-up query
+    // against a known-empty directory must still return Ok and a stable
+    // result without an explicit caller refresh.
+    let temp_dir = tempdir().unwrap();
+    let mut manager = ProcessManager::new();
+
+    let first = manager
+        .find_processes_in_directory(temp_dir.path())
+        .unwrap();
+    let second = manager
+        .find_processes_in_directory(temp_dir.path())
+        .unwrap();
+
+    assert_eq!(first.len(), second.len());
+}
+
+#[test]
+fn get_directory_process_stats_refreshes_internally() {
+    // One-shot embedder entry point: must succeed against a fresh manager
+    // without the caller arranging a refresh.
+    let temp_dir = tempdir().unwrap();
+    let mut manager = ProcessManager::new();
+
+    let stats = manager
+        .get_directory_process_stats(temp_dir.path())
+        .expect("stats query succeeds");
+    assert_eq!(stats.total_count, stats.processes.len());
+}
