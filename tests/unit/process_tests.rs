@@ -394,8 +394,12 @@ fn find_processes_in_directory_works_without_caller_refresh() {
     let temp_dir = tempdir().unwrap();
     let mut manager = ProcessManager::new();
 
-    let first = manager.find_processes_in_directory(temp_dir.path()).unwrap();
-    let second = manager.find_processes_in_directory(temp_dir.path()).unwrap();
+    let first = manager
+        .find_processes_in_directory(temp_dir.path())
+        .unwrap();
+    let second = manager
+        .find_processes_in_directory(temp_dir.path())
+        .unwrap();
 
     assert_eq!(first.len(), second.len());
 }
