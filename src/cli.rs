@@ -28,8 +28,8 @@ pub struct Cli {
     pub dry_run: bool,
 
     /// Terminal mode: tab, window, current, inplace, echo
-    #[arg(long, global = true)]
-    pub terminal: Option<String>,
+    #[arg(long, global = true, value_enum)]
+    pub terminal: Option<crate::terminal::TerminalMode>,
 
     /// Auto-confirm operations
     #[arg(long, short = 'y', global = true)]
@@ -675,15 +675,10 @@ impl Cli {
 
     fn handle_existing_worktree_jump(&self, worktree_path: &Path) -> Result<()> {
         use crate::config::ConfigManager;
-        use crate::terminal::TerminalMode;
 
         let config_manager = ConfigManager::new()?;
         let config = config_manager.get();
-        let terminal_mode = if let Some(mode_str) = &self.terminal {
-            TerminalMode::from_str(mode_str).unwrap_or(TerminalMode::Tab)
-        } else {
-            TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
-        };
+        let terminal_mode = self.resolve_terminal_mode(&config.terminal_mode)?;
 
         let mut report = SwitchOutcomeReport::new(worktree_path.to_path_buf());
         report.skipped("Worktree creation", "already existed");
@@ -712,7 +707,6 @@ impl Cli {
         use crate::git::GitRepository;
         use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
         use crate::rewrite::PathRewriter;
-        use crate::terminal::TerminalMode;
 
         // Find the Git repository
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
@@ -872,11 +866,7 @@ impl Cli {
             | PostCreateSetupStatus::SkippedNoLockfile => {}
         }
 
-        let terminal_mode = if let Some(mode_str) = &self.terminal {
-            TerminalMode::from_str(mode_str).unwrap_or(TerminalMode::Tab)
-        } else {
-            TerminalMode::from_str(&config.terminal_mode).unwrap_or(TerminalMode::Tab)
-        };
+        let terminal_mode = self.resolve_terminal_mode(&config.terminal_mode)?;
 
         self.record_terminal_handoff(
             &mut report,
@@ -888,6 +878,20 @@ impl Cli {
         report.finish();
 
         Ok(())
+    }
+
+    fn resolve_terminal_mode(&self, config_mode: &str) -> Result<crate::terminal::TerminalMode> {
+        use crate::terminal::TerminalMode;
+        if let Some(mode) = self.terminal {
+            return Ok(mode);
+        }
+        TerminalMode::from_str(config_mode).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid terminal_mode '{}' in config. Supported modes: {}",
+                config_mode,
+                TerminalMode::SUPPORTED.join(", "),
+            )
+        })
     }
 
     fn record_branch_checkout(

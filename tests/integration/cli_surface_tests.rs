@@ -569,6 +569,28 @@ chmod 755 "$dest/warp"
 }
 
 #[test]
+fn test_unknown_terminal_flag_value_is_rejected() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["--terminal", "nonsense", "switch", "foo"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "warp should reject unknown terminal mode; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("tab")
+            && stderr.contains("window")
+            && stderr.contains("inplace")
+            && stderr.contains("echo")
+            && stderr.contains("current"),
+        "stderr should list supported terminal modes; got: {stderr}"
+    );
+}
+
+#[test]
 fn test_root_help_hides_removed_global_flag() {
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
         .arg("--help")

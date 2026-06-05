@@ -2,16 +2,19 @@ use crate::error::{GitWarpError, Result};
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum TerminalMode {
     Tab,
     Window,
+    #[value(name = "inplace")]
     InPlace,
     Echo,
     Current,
 }
 
 impl TerminalMode {
+    pub const SUPPORTED: &'static [&'static str] = &["tab", "window", "inplace", "echo", "current"];
+
     // Returns Option, not Result — we deliberately don't implement std::str::FromStr.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
