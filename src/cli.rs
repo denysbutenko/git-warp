@@ -1,9 +1,35 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use log::info;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum CleanupMode {
+    All,
+    Merged,
+    Remoteless,
+    Interactive,
+}
+
+impl CleanupMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CleanupMode::All => "all",
+            CleanupMode::Merged => "merged",
+            CleanupMode::Remoteless => "remoteless",
+            CleanupMode::Interactive => "interactive",
+        }
+    }
+}
+
+impl fmt::Display for CleanupMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -70,8 +96,8 @@ pub enum Commands {
     /// Clean up worktrees
     Cleanup {
         /// Cleanup mode: all, merged, remoteless, interactive
-        #[arg(long, default_value = "merged")]
-        mode: String,
+        #[arg(long, value_enum, default_value_t = CleanupMode::Merged)]
+        mode: CleanupMode,
         /// Force removal even with uncommitted changes
         #[arg(long)]
         force: bool,
@@ -402,7 +428,7 @@ impl Cli {
                 kill,
                 no_kill,
                 interactive,
-            } => self.handle_cleanup(mode, *force, *kill, *no_kill, *interactive),
+            } => self.handle_cleanup(*mode, *force, *kill, *no_kill, *interactive),
             Commands::Config {
                 show,
                 edit,
@@ -1298,7 +1324,7 @@ impl Cli {
 
     fn handle_cleanup(
         &self,
-        mode: &str,
+        mode: CleanupMode,
         force: bool,
         kill: bool,
         no_kill: bool,
@@ -1309,11 +1335,6 @@ impl Cli {
         use crate::process::ProcessManager;
 
         info!("Cleaning up worktrees with mode: {}", mode);
-
-        if !matches!(mode, "all" | "merged" | "remoteless" | "interactive") {
-            println!("❌ Unknown cleanup mode: {}", mode);
-            return Ok(());
-        }
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
@@ -1366,10 +1387,9 @@ impl Cli {
 
         for status in analysis.candidates {
             let matches_mode = match mode {
-                "all" | "interactive" => true,
-                "merged" => status.is_merged,
-                "remoteless" => !status.has_remote,
-                _ => unreachable!(),
+                CleanupMode::All | CleanupMode::Interactive => true,
+                CleanupMode::Merged => status.is_merged,
+                CleanupMode::Remoteless => !status.has_remote,
             };
 
             if !matches_mode {
@@ -1391,7 +1411,7 @@ impl Cli {
                     "  • {} at {} [{}; {}; {}]",
                     status.branch,
                     status.path.display(),
-                    crate::tui::cleanup_reason_label_for_mode(status, mode),
+                    crate::tui::cleanup_reason_label_for_mode(status, mode.as_str()),
                     if status.has_remote {
                         "remote"
                     } else {
@@ -1458,7 +1478,7 @@ impl Cli {
                 "  • {} at {} [{}; {}; {}{}]",
                 candidate.branch,
                 candidate.path.display(),
-                crate::tui::cleanup_reason_label_for_mode(candidate, mode),
+                crate::tui::cleanup_reason_label_for_mode(candidate, mode.as_str()),
                 remote,
                 dirty,
                 busy,
