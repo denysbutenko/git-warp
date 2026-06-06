@@ -16,7 +16,7 @@ pub fn is_cow_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
 
     #[cfg(target_os = "linux")]
     {
-        is_linux_reflink_supported(&probe)
+        linux::is_supported(&probe)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -78,45 +78,78 @@ fn is_apfs<P: AsRef<Path>>(path: P) -> Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn is_linux_reflink_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
+mod linux {
+    use crate::error::Result;
+    use std::collections::HashMap;
     use std::fs;
-    use std::process::Command;
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
 
-    let path = path.as_ref();
+    // FICLONE = _IOW(0x94, 9, int): clones the source fd (passed as the int
+    // arg) into the destination fd. Available since Linux 4.5 on filesystems
+    // that implement reflink (btrfs, xfs with reflink=1, bcachefs, etc.).
+    nix::ioctl_write_int!(ficlone, 0x94, 9);
 
-    // Attempt to create a temp file in the target directory to test reflink
-    let temp_dir = if path.is_dir() {
-        path.to_path_buf()
-    } else {
-        path.parent().unwrap_or(Path::new(".")).to_path_buf()
-    };
+    static CACHE: OnceLock<Mutex<HashMap<u64, bool>>> = OnceLock::new();
 
-    let test_file = temp_dir.join(".reflink_test_src");
-    let test_dest = temp_dir.join(".reflink_test_dest");
-
-    // Clean up if they somehow exist
-    let _ = fs::remove_file(&test_file);
-    let _ = fs::remove_file(&test_dest);
-
-    // Create a small source file
-    if fs::write(&test_file, "reflink test").is_err() {
-        return Ok(false);
+    fn cache() -> &'static Mutex<HashMap<u64, bool>> {
+        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    // Attempt reflink
-    let status = Command::new("cp")
-        .arg("--reflink=always")
-        .arg(&test_file)
-        .arg(&test_dest)
-        .status();
+    pub(super) fn is_supported(path: &Path) -> Result<bool> {
+        let temp_dir: PathBuf = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            path.parent().unwrap_or(Path::new(".")).to_path_buf()
+        };
 
-    // Clean up
-    let _ = fs::remove_file(&test_file);
-    let _ = fs::remove_file(&test_dest);
+        let dev = match fs::metadata(&temp_dir) {
+            Ok(meta) => meta.dev(),
+            Err(_) => return Ok(false),
+        };
 
-    match status {
-        Ok(s) => Ok(s.success()),
-        Err(_) => Ok(false),
+        if let Some(&cached) = cache().lock().unwrap().get(&dev) {
+            return Ok(cached);
+        }
+
+        let result = probe(&temp_dir);
+        cache().lock().unwrap().insert(dev, result);
+        Ok(result)
+    }
+
+    fn probe(temp_dir: &Path) -> bool {
+        let mut src = match tempfile::Builder::new()
+            .prefix(".git-warp-reflink-")
+            .tempfile_in(temp_dir)
+        {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        if src.write_all(b"x").is_err() {
+            return false;
+        }
+        let dst = match tempfile::Builder::new()
+            .prefix(".git-warp-reflink-")
+            .tempfile_in(temp_dir)
+        {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+
+        // SAFETY: src and dst are open regular files owned by NamedTempFile on
+        // the same filesystem. FICLONE takes the destination fd as the ioctl
+        // target and the source fd (cast to the ioctl integer arg type) as its
+        // argument.
+        let rc = unsafe {
+            ficlone(
+                dst.as_file().as_raw_fd(),
+                src.as_file().as_raw_fd() as nix::libc::c_ulong,
+            )
+        };
+        rc.is_ok()
     }
 }
 
@@ -228,6 +261,34 @@ mod tests {
             assert!(dest_dir.join("test.txt").exists());
             let content = fs::read_to_string(dest_dir.join("test.txt")).unwrap();
             assert_eq!(content, "Hello, World!");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_probe_leaves_no_trace() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = Arc::new(tempdir().unwrap());
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let dir = Arc::clone(&dir);
+            handles.push(thread::spawn(move || {
+                let _ = is_cow_supported(dir.path());
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        for entry in fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with(".git-warp-reflink-") && !name.starts_with(".reflink_test_"),
+                "probe leaked file: {name}"
+            );
         }
     }
 }
