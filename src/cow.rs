@@ -1,24 +1,39 @@
 use crate::error::{GitWarpError, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// Check if Copy-on-Write is supported for the given path
+/// Check if Copy-on-Write is supported for the given path.
+///
+/// Resolves to the nearest existing ancestor first so callers can probe a
+/// not-yet-created worktree path without the underlying filesystem syscalls
+/// failing with `ENOENT`.
 pub fn is_cow_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
+    let probe = nearest_existing_ancestor(path.as_ref());
+
     #[cfg(target_os = "macos")]
     {
-        // Check if the path is on an APFS filesystem
-        is_apfs(path)
+        is_apfs(&probe)
     }
 
     #[cfg(target_os = "linux")]
     {
-        is_linux_reflink_supported(path)
+        is_linux_reflink_supported(&probe)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = path;
+        let _ = probe;
         Ok(false)
     }
+}
+
+fn nearest_existing_ancestor(path: &Path) -> PathBuf {
+    let mut candidate = path.to_path_buf();
+    while !candidate.exists() {
+        if !candidate.pop() {
+            return PathBuf::from(".");
+        }
+    }
+    candidate
 }
 
 /// Clone a directory using Copy-on-Write
@@ -68,9 +83,6 @@ fn is_linux_reflink_supported<P: AsRef<Path>>(path: P) -> Result<bool> {
     use std::process::Command;
 
     let path = path.as_ref();
-    if !path.exists() {
-        return Ok(false);
-    }
 
     // Attempt to create a temp file in the target directory to test reflink
     let temp_dir = if path.is_dir() {
@@ -181,6 +193,20 @@ mod tests {
     fn test_cow_support_check() {
         let result = is_cow_supported(".");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cow_support_resolves_missing_path() {
+        let temp_dir = tempdir().unwrap();
+        let missing = temp_dir.path().join("does-not-exist-yet");
+        assert!(!missing.exists());
+
+        let probed = is_cow_supported(&missing).expect("probe should not error");
+        let parent = is_cow_supported(temp_dir.path()).expect("probe should not error");
+        assert_eq!(
+            probed, parent,
+            "missing child must yield same CoW verdict as its existing parent",
+        );
     }
 
     #[test]

@@ -22,11 +22,18 @@ fn test_cow_support_detection() {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn test_cow_support_nonexistent_path() {
-    let result = is_cow_supported("/nonexistent/path/that/should/not/exist");
-    assert!(result.is_err());
+fn test_cow_support_nonexistent_path_resolves_to_ancestor() {
+    let temp_dir = tempdir().unwrap();
+    let missing = temp_dir.path().join("a/b/c/does-not-exist");
+    assert!(!missing.exists());
+
+    let probed = is_cow_supported(&missing).expect("probe must walk up to existing ancestor");
+    let parent = is_cow_supported(temp_dir.path()).expect("parent probe should not error");
+    assert_eq!(
+        probed, parent,
+        "probe on missing path must match probe on its nearest existing ancestor",
+    );
 }
 
 #[test]
