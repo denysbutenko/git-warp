@@ -481,15 +481,18 @@ pub struct ConfigManager {
 pub enum GitWarpError {
     #[error("Not in a git repository")]
     NotInGitRepository,
-    
+
+    #[error("Worktree '{path}' not found")]
+    WorktreeNotFound { path: String },
+
     #[error("Copy-on-Write is not supported on this filesystem")]
     CoWNotSupported,
-    
+
+    #[error("Terminal integration not supported on this platform")]
+    TerminalNotSupported,
+
     #[error("Configuration error: {message}")]
     ConfigError { message: String },
-    
-    #[error("Failed to terminate processes: {reason}")]
-    ProcessTerminationFailed { reason: String },
 }
 ```
 
