@@ -32,7 +32,7 @@ ratatui = "0.30.0"
 crossterm = "0.29.0"
 
 # Core Logic
-nix = { version = "0.31.3", features = ["fs", "signal"] }
+nix = { version = "0.31.3", features = ["fs", "signal", "ioctl"] }
 rayon = "1.10.0"
 ignore = "0.4.22"
 sysinfo = "0.39.3"
@@ -50,8 +50,8 @@ log = "0.4.21"
 env_logger = "0.11.3"
 dirs = "6.0.0"
 chrono = "0.4.38"
+tempfile = "3.10.1"
 
 [dev-dependencies]
-tempfile = "3.10.1"
 criterion = "0.5"
 rand = "0.8"
