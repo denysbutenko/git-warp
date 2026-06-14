@@ -27,10 +27,19 @@ impl PathRewriter {
         let src_str = self.src_path.to_string_lossy();
         let dest_str = self.dest_path.to_string_lossy();
 
-        // Build a list of files to process
+        // Build a list of files to process. The rewriter targets gitignored
+        // artifacts (venvs, build output, generated configs) that bake in the
+        // old worktree path, so the walker must NOT filter on gitignore. The
+        // `.git` entry is pruned explicitly: in a primary worktree it is the
+        // repo's internal directory, and in a secondary worktree it is a
+        // `gitdir:` pointer file that git owns.
         let files: Vec<PathBuf> = WalkBuilder::new(&self.dest_path)
-            .hidden(false) // Process hidden files
-            .git_ignore(true) // Respect gitignore
+            .hidden(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .require_git(false)
+            .filter_entry(|entry| entry.file_name() != ".git")
             .build()
             .filter_map(|entry| match entry {
                 Ok(entry) => {
@@ -167,6 +176,7 @@ fn replace_at_path_boundary(content: &str, src: &str, dest: &str) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::process::Command;
     use tempfile::tempdir;
 
     #[test]
@@ -225,6 +235,56 @@ mod tests {
     fn test_replace_at_path_boundary_handles_repeated_matches() {
         let out = replace_at_path_boundary("/a/b /a/b/c", "/a/b", "/x");
         assert_eq!(out, "/x /x/c");
+    }
+
+    #[test]
+    fn test_rewrites_gitignored_file_inside_real_git_repo() {
+        // Mirrors the production call site: `dest_path` is a real worktree
+        // (i.e. has a `.git` directory) and the file we care about is listed
+        // in `.gitignore` — exactly the case the rewriter is documented to
+        // handle. Before #161, the `git_ignore(true)` walker filter skipped
+        // this file inside a real repo, so the rewrite was a silent no-op.
+        let temp_dir = tempdir().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let dest_dir = temp_dir.path().join("dest");
+
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let init_ok = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dest_dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(init_ok, "git init failed");
+
+        let head_path = dest_dir.join(".git/HEAD");
+        let head_before = fs::read(&head_path).unwrap();
+
+        fs::write(dest_dir.join(".gitignore"), "activate.sh\n").unwrap();
+        let test_content = format!("export PATH=\"{}:$PATH\"", src_dir.display());
+        fs::write(dest_dir.join("activate.sh"), &test_content).unwrap();
+
+        PathRewriter::new(&src_dir, &dest_dir)
+            .rewrite_paths()
+            .unwrap();
+
+        let rewritten = fs::read_to_string(dest_dir.join("activate.sh")).unwrap();
+        assert!(
+            rewritten.contains(&dest_dir.to_string_lossy().to_string()),
+            "expected dest path in rewritten activate.sh: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains(&src_dir.to_string_lossy().to_string()),
+            "source path still present in rewritten activate.sh: {rewritten}"
+        );
+
+        let head_after = fs::read(&head_path).unwrap();
+        assert_eq!(
+            head_before, head_after,
+            ".git/HEAD must not be touched by the rewriter"
+        );
     }
 
     #[test]
