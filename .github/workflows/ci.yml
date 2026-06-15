@@ -19,10 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+      - name: git diff --check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="origin/${{ github.base_ref }}...HEAD"
+          else
+            range="HEAD~1 HEAD"
+          fi
+          echo "Checking $range"
+          git diff --check $range
 
   clippy:
     name: cargo clippy (${{ matrix.os }})

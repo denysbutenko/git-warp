@@ -223,6 +223,7 @@ fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<(
             "cargo",
             &["fmt", "--all", "--", "--check"],
         ),
+        ReleaseCommand::new("git diff --check", "git", &["diff", "--check"]),
         ReleaseCommand::new(
             "cargo clippy --all-targets --locked -- -D warnings",
             "cargo",
