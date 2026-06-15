@@ -24,6 +24,7 @@ Supported prebuilt targets:
   - macOS Intel: x86_64-apple-darwin
   - Linux arm64: aarch64-unknown-linux-gnu
   - Linux x64: x86_64-unknown-linux-gnu
+  - Windows x64: x86_64-pc-windows-msvc (install with install.ps1)
 EOF
 }
 
@@ -199,6 +200,12 @@ target_triple() {
   case "$os" in
     Darwin) os_part="apple-darwin" ;;
     Linux) os_part="unknown-linux-gnu" ;;
+    MINGW*|MSYS*|CYGWIN*)
+      echo "error: install.sh does not run on Windows; use install.ps1 instead:" >&2
+      echo "  irm ${repo_url}/raw/main/install.ps1 | iex" >&2
+      cargo_fallback_hint
+      exit 1
+      ;;
     *) fail_unsupported_target "operating system" "$os" ;;
   esac
 
