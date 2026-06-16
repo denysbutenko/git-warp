@@ -4,6 +4,8 @@
 
 Install Git-Warp with one command. Rust and Cargo are not required.
 
+### macOS / Linux
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh
 ```
@@ -17,6 +19,26 @@ warp doctor
 
 The installer downloads a prebuilt release archive for your platform and places
 the `warp` binary in `~/.local/bin`.
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1 | iex
+```
+
+Then verify the binary is reachable:
+
+```powershell
+warp --version
+warp doctor
+```
+
+The PowerShell installer downloads the `x86_64-pc-windows-msvc` `.zip`, verifies
+its SHA256, and places `warp.exe` in `%LOCALAPPDATA%\Programs\git-warp\bin`. You
+may need to open a new PowerShell session for the PATH update to take effect.
+
+The Bash installer (`install.sh`) detects MSYS / Git Bash / Cygwin shells and
+points you back at `install.ps1`; there is no Bash-on-Windows install path.
 
 ## PATH Setup
 
@@ -45,6 +67,13 @@ Install into another writable directory with `GIT_WARP_INSTALL_DIR`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_DIR=/usr/local/bin sh
+```
+
+On Windows, pass `-InstallDir` (or set `$env:GIT_WARP_INSTALL_DIR` before
+piping):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1))) -InstallDir 'C:\tools\git-warp'
 ```
 
 ## Checksum Verification
@@ -98,6 +127,26 @@ Release binaries are published for:
 - macOS Intel: `x86_64-apple-darwin`
 - Linux arm64: `aarch64-unknown-linux-gnu`
 - Linux x64: `x86_64-unknown-linux-gnu`
+- Windows x64: `x86_64-pc-windows-msvc`
+
+## Windows Manual Download
+
+If you prefer to bypass `install.ps1`, grab the archive yourself:
+
+```powershell
+$tag = 'v0.3.0'
+$asset = "git-warp-$tag-x86_64-pc-windows-msvc.zip"
+$base = "https://github.com/denysbutenko/git-warp/releases/download/$tag"
+irm "$base/$asset" -OutFile $asset
+irm "$base/$asset.sha256" -OutFile "$asset.sha256"
+$expected = (Get-Content "$asset.sha256" -TotalCount 1).Trim().Split(' ')[0]
+$actual = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($expected -ne $actual) { throw "SHA256 mismatch" }
+Unblock-File $asset
+Expand-Archive -Force $asset -DestinationPath "$env:LOCALAPPDATA\Programs\git-warp\bin"
+```
+
+Then add `%LOCALAPPDATA%\Programs\git-warp\bin` to your `PATH`.
 
 ## Upgrade
 
