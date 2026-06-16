@@ -259,9 +259,9 @@ pub struct ConfigStatusMsg {
 /// Outcome reported by `ConfigEditorModel::request_quit`.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConfigQuitOutcome {
-    /// No unsaved changes â€” caller may exit immediately.
+    /// No unsaved changes — caller may exit immediately.
     Clean,
-    /// Working copy diverges from disk â€” caller must confirm discard.
+    /// Working copy diverges from disk — caller must confirm discard.
     NeedsConfirm,
 }
 
@@ -815,7 +815,7 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
 
     let dirty_tag = if model.is_dirty() { " [unsaved]" } else { "" };
     let header_text = format!(
-        "Git-Warp config editor â€” {}{}",
+        "Git-Warp config editor — {}{}",
         model.config_path().display(),
         dirty_tag
     );
@@ -836,7 +836,7 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
         .enumerate()
         .map(|(idx, section)| {
             let marker = if idx == model.section_idx() {
-                "â–¸ "
+                "▸ "
             } else {
                 "  "
             };
@@ -876,7 +876,7 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
                 let buf = model.edit_buffer_value().unwrap_or("");
                 format!("> {} = {}_", field.label, buf)
             } else {
-                let cursor_mark = if idx == cursor { "â–¸" } else { " " };
+                let cursor_mark = if idx == cursor { "▸" } else { " " };
                 format!(
                     "{} {} = {}",
                     cursor_mark,
@@ -921,7 +921,7 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
         status.text.clone()
     } else if !model.env_overrides().is_empty() {
         format!(
-            "Heads up: {} GIT_WARP_* env var(s) set â€” they shadow saved values at runtime.",
+            "Heads up: {} GIT_WARP_* env var(s) set — they shadow saved values at runtime.",
             model.env_overrides().len()
         )
     } else {
@@ -948,8 +948,7 @@ pub fn draw_config_editor(f: &mut Frame, model: &ConfigEditorModel, pending_quit
     } else if model.editing() {
         "Enter save field  Esc cancel  Backspace delete".to_string()
     } else {
-        "â†‘â†“/jk move  Tab section  Space toggle  Enter/e edit  s save  r revert  q quit"
-            .to_string()
+        "↑↓/jk move  Tab section  Space toggle  Enter/e edit  s save  r revert  q quit".to_string()
     };
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::Gray))
