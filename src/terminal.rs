@@ -69,19 +69,40 @@ pub trait Terminal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum TerminalPreference {
+    Auto,
     ITerm2,
     AppleTerminal,
     Warp,
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+impl TerminalPreference {
+    pub const SUPPORTED: &'static [&'static str] = &["auto", "iterm2", "terminal", "warp"];
+}
+
 fn parse_terminal_preference(value: &str) -> Option<TerminalPreference> {
     match value.to_lowercase().as_str() {
+        "auto" => Some(TerminalPreference::Auto),
         "iterm" | "iterm2" => Some(TerminalPreference::ITerm2),
         "terminal" => Some(TerminalPreference::AppleTerminal),
         "warp" => Some(TerminalPreference::Warp),
         _ => None,
     }
+}
+
+/// Reject unknown `terminal.app` values up front instead of falling back to
+/// whatever `TERM_PROGRAM` happens to be set to.
+pub fn validate_terminal_app(value: &str) -> Result<()> {
+    if parse_terminal_preference(value).is_some() {
+        return Ok(());
+    }
+    Err(GitWarpError::ConfigError {
+        message: format!(
+            "Invalid terminal app '{}'. Supported apps: {}",
+            value,
+            TerminalPreference::SUPPORTED.join(", "),
+        ),
+    }
+    .into())
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -91,8 +112,9 @@ pub fn resolve_terminal_preference(
     iterm_supported: bool,
     warp_supported: bool,
 ) -> TerminalPreference {
-    if let Some(explicit) = parse_terminal_preference(preferred_app) {
-        return explicit;
+    match parse_terminal_preference(preferred_app) {
+        Some(TerminalPreference::Auto) | None => {}
+        Some(explicit) => return explicit,
     }
 
     match term_program {
@@ -605,6 +627,10 @@ impl TerminalManager {
     }
 
     pub fn get_terminal(preferred_app: Option<&str>) -> Result<Box<dyn Terminal>> {
+        if let Some(value) = preferred_app {
+            validate_terminal_app(value)?;
+        }
+
         #[cfg(target_os = "macos")]
         {
             let iterm2 = ITerm2;
@@ -636,6 +662,9 @@ impl TerminalManager {
             );
 
             match resolved {
+                TerminalPreference::Auto => unreachable!(
+                    "resolve_terminal_preference must collapse Auto into a concrete terminal"
+                ),
                 TerminalPreference::ITerm2 => Ok(Box::new(ITerm2)),
                 TerminalPreference::AppleTerminal => Ok(Box::new(AppleTerminal)),
                 TerminalPreference::Warp => Ok(Box::new(WarpTerminal)),
@@ -920,5 +949,59 @@ mod tests {
         let spec = resolve_windows_current_shell(None, None, None, None, &[]);
         assert_eq!(spec.program, std::path::PathBuf::from("cmd.exe"));
         assert!(spec.args.is_empty());
+    }
+
+    #[test]
+    fn parse_terminal_preference_recognises_auto() {
+        assert_eq!(
+            parse_terminal_preference("auto"),
+            Some(TerminalPreference::Auto)
+        );
+        assert_eq!(
+            parse_terminal_preference("AUTO"),
+            Some(TerminalPreference::Auto)
+        );
+    }
+
+    #[test]
+    fn parse_terminal_preference_rejects_unknown() {
+        assert_eq!(parse_terminal_preference("ghostty"), None);
+        assert_eq!(parse_terminal_preference("alacritty"), None);
+        assert_eq!(parse_terminal_preference(""), None);
+    }
+
+    #[test]
+    fn validate_terminal_app_accepts_supported_values() {
+        for value in ["auto", "AUTO", "iterm", "iterm2", "terminal", "warp"] {
+            assert!(
+                validate_terminal_app(value).is_ok(),
+                "expected '{value}' to validate"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_terminal_app_rejects_unknown_value() {
+        let err = validate_terminal_app("ghostty").unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("ghostty"), "message: {message}");
+        for entry in TerminalPreference::SUPPORTED {
+            assert!(
+                message.contains(entry),
+                "message {message:?} missing supported value {entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_terminal_preference_auto_uses_term_program() {
+        assert_eq!(
+            resolve_terminal_preference("auto", Some("WarpTerminal"), false, true),
+            TerminalPreference::Warp
+        );
+        assert_eq!(
+            resolve_terminal_preference("auto", Some("Apple_Terminal"), true, true),
+            TerminalPreference::AppleTerminal
+        );
     }
 }
