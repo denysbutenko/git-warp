@@ -81,10 +81,10 @@ fn is_apfs<P: AsRef<Path>>(path: P) -> Result<bool> {
 mod linux {
     use crate::error::Result;
     use std::collections::HashMap;
-    use std::fs;
+    use std::fs::{self, File, OpenOptions};
     use std::io::Write;
     use std::os::fd::AsRawFd;
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
 
@@ -139,17 +139,102 @@ mod linux {
             Err(_) => return false,
         };
 
-        // SAFETY: src and dst are open regular files owned by NamedTempFile on
-        // the same filesystem. FICLONE takes the destination fd as the ioctl
-        // target and the source fd (cast to the ioctl integer arg type) as its
-        // argument.
-        let rc = unsafe {
-            ficlone(
-                dst.as_file().as_raw_fd(),
-                src.as_file().as_raw_fd() as nix::libc::c_ulong,
+        clone_file_fd(src.as_file(), dst.as_file()).is_ok()
+    }
+
+    fn clone_file_fd(src: &File, dst: &File) -> nix::Result<nix::libc::c_int> {
+        // SAFETY: caller passes open regular files on the same filesystem.
+        // FICLONE takes the destination fd as the ioctl target and the source
+        // fd (cast to the ioctl integer arg type) as its argument.
+        unsafe { ficlone(dst.as_raw_fd(), src.as_raw_fd() as nix::libc::c_ulong) }
+    }
+
+    pub(super) fn clone_directory(src: &Path, dst: &Path) -> Result<()> {
+        if dst.exists() {
+            fs::remove_dir_all(dst)?;
+        }
+        clone_tree(src, dst)
+    }
+
+    fn clone_tree(src: &Path, dst: &Path) -> Result<()> {
+        let meta = fs::symlink_metadata(src).map_err(|e| {
+            anyhow::anyhow!("Failed to stat {} for reflink clone: {}", src.display(), e)
+        })?;
+        let file_type = meta.file_type();
+
+        if file_type.is_symlink() {
+            let target = fs::read_link(src).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to read symlink {} for reflink clone: {}",
+                    src.display(),
+                    e
+                )
+            })?;
+            std::os::unix::fs::symlink(&target, dst).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to recreate symlink {} -> {}: {}",
+                    dst.display(),
+                    target.display(),
+                    e
+                )
+            })?;
+            return Ok(());
+        }
+
+        if file_type.is_dir() {
+            fs::create_dir(dst).map_err(|e| {
+                anyhow::anyhow!("Failed to create directory {}: {}", dst.display(), e)
+            })?;
+            for entry in fs::read_dir(src)
+                .map_err(|e| anyhow::anyhow!("Failed to read directory {}: {}", src.display(), e))?
+            {
+                let entry = entry.map_err(|e| {
+                    anyhow::anyhow!("Failed to iterate directory {}: {}", src.display(), e)
+                })?;
+                let name = entry.file_name();
+                clone_tree(&entry.path(), &dst.join(&name))?;
+            }
+            fs::set_permissions(dst, fs::Permissions::from_mode(meta.mode() & 0o7777)).map_err(
+                |e| {
+                    anyhow::anyhow!(
+                        "Failed to set permissions on {} after clone: {}",
+                        dst.display(),
+                        e
+                    )
+                },
+            )?;
+            return Ok(());
+        }
+
+        if file_type.is_file() {
+            return clone_regular_file(src, dst, meta.mode());
+        }
+
+        Err(anyhow::anyhow!(
+            "Unsupported file type for reflink clone at {}",
+            src.display()
+        ))
+    }
+
+    fn clone_regular_file(src: &Path, dst: &Path, mode: u32) -> Result<()> {
+        let src_file = File::open(src)
+            .map_err(|e| anyhow::anyhow!("Failed to open {} for clone: {}", src.display(), e))?;
+        let dst_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode & 0o7777)
+            .open(dst)
+            .map_err(|e| anyhow::anyhow!("Failed to create {} for clone: {}", dst.display(), e))?;
+
+        clone_file_fd(&src_file, &dst_file).map_err(|e| {
+            anyhow::anyhow!(
+                "FICLONE failed for {} -> {}: {}",
+                src.display(),
+                dst.display(),
+                e
             )
-        };
-        rc.is_ok()
+        })?;
+        Ok(())
     }
 }
 
@@ -189,31 +274,7 @@ fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resu
 
 #[cfg(target_os = "linux")]
 fn clone_directory_reflink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
-    use std::process::Command;
-
-    // Remove destination if it exists
-    if dest.as_ref().exists() {
-        std::fs::remove_dir_all(&dest)?;
-    }
-
-    // Use cp with Linux reflink flags
-    let output = Command::new("cp")
-        .arg("--reflink=always") // Force reflink (CoW)
-        .arg("-R") // Recursive
-        .arg(src.as_ref())
-        .arg(dest.as_ref())
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to execute cp command: {}", e))?;
-
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!(
-            "Failed to clone directory with CoW (reflink): {}",
-            error
-        ));
-    }
-
-    Ok(())
+    linux::clone_directory(src.as_ref(), dest.as_ref())
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -262,6 +323,51 @@ mod tests {
             let content = fs::read_to_string(dest_dir.join("test.txt")).unwrap();
             assert_eq!(content, "Hello, World!");
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_clone_tree_via_ficlone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let dest_dir = temp_dir.path().join("dest");
+
+        if !is_cow_supported(temp_dir.path()).unwrap_or(false) {
+            return;
+        }
+
+        fs::create_dir(&src_dir).unwrap();
+        fs::create_dir(src_dir.join("nested")).unwrap();
+        fs::write(src_dir.join("a.txt"), b"hello").unwrap();
+        fs::write(src_dir.join("nested/b.bin"), b"world").unwrap();
+        fs::set_permissions(src_dir.join("a.txt"), fs::Permissions::from_mode(0o640)).unwrap();
+        std::os::unix::fs::symlink("a.txt", src_dir.join("link")).unwrap();
+
+        clone_directory(&src_dir, &dest_dir).expect("ficlone clone should succeed");
+
+        assert_eq!(fs::read(dest_dir.join("a.txt")).unwrap(), b"hello");
+        assert_eq!(fs::read(dest_dir.join("nested/b.bin")).unwrap(), b"world");
+        assert!(
+            fs::symlink_metadata(dest_dir.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "symlink must be preserved verbatim, not dereferenced"
+        );
+        assert_eq!(
+            fs::read_link(dest_dir.join("link")).unwrap(),
+            Path::new("a.txt")
+        );
+        assert_eq!(
+            fs::metadata(dest_dir.join("a.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
     }
 
     #[cfg(target_os = "linux")]
