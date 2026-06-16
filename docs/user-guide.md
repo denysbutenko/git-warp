@@ -300,8 +300,8 @@ disabled banner; `[agent].refresh_rate` sets the dashboard poll interval in
 milliseconds (clamped to ≥ 250 ms).
 
 `post_create.auto_install` runs the matching `<manager> install` after Git-Warp
-creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` â†’
-`yarn.lock` â†’ `bun.lock` â†’ `bun.lockb` â†’ `package-lock.json` â†’ `Cargo.toml`; the first match wins. Set
+creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` →
+`yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json` → `Cargo.toml`; the first match wins. Set
 `auto_install = false` to skip the install step entirely.
 
 Environment variables override config file values. Top-level keys map

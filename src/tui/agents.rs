@@ -315,7 +315,7 @@ impl TuiApp {
         );
         let header_text = if self.filters.is_active() {
             format!(
-                "Warp Agents ({}/{}) â€” {}",
+                "Warp Agents ({}/{}) — {}",
                 preview_model.total_rows,
                 preview_model.total_unfiltered,
                 preview_model.filter_summary
@@ -409,7 +409,7 @@ impl TuiApp {
 
         // Help
         let help_text =
-            "â†‘â†“/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | q/Esc: Quit";
+            "↑↓/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | q/Esc: Quit";
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
@@ -551,7 +551,7 @@ pub fn session_detail_lines(session: &AgentSessionSummary) -> Vec<String> {
 
 fn session_state_symbol(state: AgentSessionState) -> &'static str {
     match state {
-        AgentSessionState::Starting => "â€”‹",
+        AgentSessionState::Starting => "—‹",
         AgentSessionState::Working => "●",
         AgentSessionState::Processing => "—",
         AgentSessionState::Waiting => "!",

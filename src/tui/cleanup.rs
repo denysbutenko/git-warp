@@ -57,7 +57,7 @@ impl CleanupTui {
         };
 
         if branch_statuses.is_empty() {
-            println!("âœ¨ No worktrees found that can be cleaned up!");
+            println!("✨ No worktrees found that can be cleaned up!");
             return Ok(vec![]);
         }
 
@@ -166,7 +166,7 @@ impl CleanupTui {
 
                 let selected_count = selected_branches.iter().filter(|&&x| x).count();
                 let footer_text = format!(
-                    "â†‘â†“/jk: Navigate | Space: Toggle | a: Toggle all | Enter: Confirm ({} selected) | q/Esc: Cancel",
+                    "↑↓/jk: Navigate | Space: Toggle | a: Toggle all | Enter: Confirm ({} selected) | q/Esc: Cancel",
                     selected_count
                 );
                 let footer = Paragraph::new(footer_text)

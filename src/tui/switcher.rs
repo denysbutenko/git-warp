@@ -456,7 +456,7 @@ fn draw_worktree_switcher(
     }
 
     let help = Paragraph::new(
-        "â†‘â†“/jk: Navigate | Space: Select | a: All | Enter: Switch | d/Del: Remove selected/current | q/Esc: Quit",
+        "↑↓/jk: Navigate | Space: Select | a: All | Enter: Switch | d/Del: Remove selected/current | q/Esc: Quit",
     )
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
@@ -477,7 +477,7 @@ fn batch_removal_notice(batch: &WorktreeBatchRemoval) -> String {
         .map(|target| {
             if target.force {
                 format!(
-                    "{} ({}) [dirty â€” force]",
+                    "{} ({}) [dirty — force]",
                     target.branch,
                     target.path.display()
                 )
