@@ -169,6 +169,8 @@ active one, and warns when more than one exists.
 
 ## Uninstall
 
+### macOS / Linux
+
 Remove the default install with the bundled uninstaller:
 
 ```bash
@@ -182,6 +184,26 @@ The uninstaller:
 - Lists any other detected `warp` installs without touching them.
 
 Use `--dry-run` to preview the changes without modifying your system.
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/uninstall.ps1 | iex
+```
+
+The PowerShell uninstaller mirrors the Bash one:
+- Removes agent hook entries from Claude/Codex settings using `warp.exe` before its deletion (opt out with `$env:GIT_WARP_KEEP_HOOKS = '1'`).
+- Removes `%LOCALAPPDATA%\Programs\git-warp\bin\warp.exe` (or `$env:GIT_WARP_INSTALL_DIR\warp.exe`). Drops the install directory if it ends up empty.
+- Scans the four `$PROFILE.*` PowerShell-profile paths for leftover `warp_cd` / `warp __complete` snippets and prints cleanup hints.
+- Lists any other detected `warp.exe` installs (Cargo, custom directories) without touching them.
+
+Preview the actions without modifying anything:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/uninstall.ps1))) -DryRun
+```
+
+### Cargo
 
 If you installed Git-Warp with Cargo, also run:
 

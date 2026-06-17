@@ -90,9 +90,13 @@ fn test_collect_metadata_checks_all_pass() {
     )
     .unwrap();
 
+    // 5. install.ps1 + uninstall.ps1 presence
+    fs::write(temp.path().join("install.ps1"), "param()").unwrap();
+    fs::write(temp.path().join("uninstall.ps1"), "param()").unwrap();
+
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
-    assert_eq!(checks.len(), 5);
+    assert_eq!(checks.len(), 7);
     for check in &checks {
         assert!(check.ok, "check failed: {} - {}", check.label, check.detail);
     }
@@ -109,7 +113,7 @@ fn test_collect_metadata_checks_failures() {
     // All files missing or mismatched
     let checks = collect_metadata_checks(temp.path(), &expected, "0.2.0").unwrap();
 
-    assert_eq!(checks.len(), 5);
+    assert_eq!(checks.len(), 7);
     for check in &checks {
         assert!(!check.ok, "check should have failed: {}", check.label);
     }
@@ -136,6 +140,10 @@ fn test_collect_metadata_checks_failures() {
             .detail
             .contains("api.github.com/repos/.../releases/latest")
     );
+    assert_eq!(checks[5].label, "install.ps1");
+    assert!(checks[5].detail.contains("install.ps1 is missing"));
+    assert_eq!(checks[6].label, "uninstall.ps1");
+    assert!(checks[6].detail.contains("uninstall.ps1 is missing"));
 }
 
 #[test]
@@ -159,6 +167,27 @@ fn test_install_script_partial_lookup_fails() {
         "install.sh missing API lookup should fail the check"
     );
     assert_eq!(checks[4].label, "install.sh");
+}
+
+#[test]
+fn test_powershell_scripts_partial_presence_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.ps1 present, uninstall.ps1 missing — release must fail.
+    fs::write(temp.path().join("install.ps1"), "param()").unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks.len(), 7);
+    assert_eq!(checks[5].label, "install.ps1");
+    assert!(checks[5].ok, "install.ps1 presence check should pass");
+    assert_eq!(checks[6].label, "uninstall.ps1");
+    assert!(!checks[6].ok, "uninstall.ps1 absence should fail the check");
+    assert!(checks[6].detail.contains("uninstall.ps1 is missing"));
 }
 
 #[test]
@@ -213,10 +242,12 @@ fn test_collect_metadata_checks_partial_success() {
     // All other files are missing.
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
-    assert_eq!(checks.len(), 5);
+    assert_eq!(checks.len(), 7);
     assert!(checks[0].ok, "Cargo.toml check should pass");
     assert!(!checks[1].ok, "CHANGELOG.md check should fail");
     assert!(!checks[2].ok, "release notes check should fail");
     assert!(!checks[3].ok, "docs/install.md check should fail");
     assert!(!checks[4].ok, "install.sh check should fail");
+    assert!(!checks[5].ok, "install.ps1 check should fail");
+    assert!(!checks[6].ok, "uninstall.ps1 check should fail");
 }
