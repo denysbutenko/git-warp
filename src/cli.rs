@@ -1690,6 +1690,9 @@ impl Cli {
 
             println!("🖥️  Terminal Integration:");
             println!("  App: {}", config.terminal.app);
+            if let Err(err) = crate::terminal::validate_terminal_app(&config.terminal.app) {
+                eprintln!("  ⚠️  {}", err);
+            }
             println!("  Auto-activate: {}", config.terminal.auto_activate);
             println!("  Init commands: {:?}", config.terminal.init_commands);
             println!();
