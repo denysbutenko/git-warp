@@ -193,6 +193,21 @@ pub fn collect_metadata_checks(
         ));
     }
 
+    for label in ["install.ps1", "uninstall.ps1"] {
+        let path = repo_root.join(label);
+        if path.is_file() {
+            checks.push(ReleaseCheck::pass(
+                label,
+                format!("{label} is present at the repo root"),
+            ));
+        } else {
+            checks.push(ReleaseCheck::fail(
+                label,
+                format!("{label} is missing from the repo root"),
+            ));
+        }
+    }
+
     Ok(checks)
 }
 
