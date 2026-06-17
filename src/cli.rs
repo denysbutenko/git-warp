@@ -144,8 +144,8 @@ pub enum Commands {
     /// Install agent hooks
     HooksInstall {
         /// Installation level: user, project, console
-        #[arg(long)]
-        level: Option<String>,
+        #[arg(long, value_enum)]
+        level: Option<crate::hooks::HookInstallLevel>,
         /// Runtime: claude, codex, all
         #[arg(long, default_value = "claude")]
         runtime: String,
@@ -154,8 +154,8 @@ pub enum Commands {
     /// Remove agent hooks
     HooksRemove {
         /// Installation level: user, project
-        #[arg(long)]
-        level: Option<String>,
+        #[arg(long, value_enum)]
+        level: Option<crate::hooks::HookRemoveLevel>,
         /// Runtime: claude, codex, all
         #[arg(long, default_value = "claude")]
         runtime: String,
@@ -443,12 +443,8 @@ impl Cli {
                 version: version.clone(),
                 metadata_only: *metadata_only,
             }),
-            Commands::HooksInstall { level, runtime } => {
-                self.handle_hooks_install(level.as_deref(), runtime)
-            }
-            Commands::HooksRemove { level, runtime } => {
-                self.handle_hooks_remove(level.as_deref(), runtime)
-            }
+            Commands::HooksInstall { level, runtime } => self.handle_hooks_install(*level, runtime),
+            Commands::HooksRemove { level, runtime } => self.handle_hooks_remove(*level, runtime),
             Commands::HooksStatus { runtime } => self.handle_hooks_status(runtime),
             Commands::ShellConfig { shell } => self.handle_shell_config(shell.as_deref()),
             Commands::Complete { target, prefix } => {
@@ -2369,40 +2365,50 @@ impl Cli {
         dashboard.run()
     }
 
-    fn handle_hooks_install(&self, level: Option<&str>, runtime: &str) -> Result<()> {
-        use crate::hooks::HooksManager;
+    fn handle_hooks_install(
+        &self,
+        level: Option<crate::hooks::HookInstallLevel>,
+        runtime: &str,
+    ) -> Result<()> {
+        use crate::hooks::{HookInstallLevel, HooksManager};
 
+        let resolved = level.unwrap_or(HookInstallLevel::Console);
         info!(
-            "Installing hooks at level: {:?}, runtime: {}",
-            level, runtime
+            "Installing hooks at level: {}, runtime: {}",
+            resolved, runtime
         );
         if self.dry_run {
             println!(
-                "Would install Git-Warp hooks at level: {:?}, runtime: {}",
-                level.unwrap_or("console"),
-                runtime
+                "Would install Git-Warp hooks at level: {}, runtime: {}",
+                resolved, runtime
             );
             return Ok(());
         }
 
-        HooksManager::install_hooks(level, runtime)
+        HooksManager::install_hooks(resolved, runtime)
     }
 
-    fn handle_hooks_remove(&self, level: Option<&str>, runtime: &str) -> Result<()> {
-        use crate::hooks::HooksManager;
+    fn handle_hooks_remove(
+        &self,
+        level: Option<crate::hooks::HookRemoveLevel>,
+        runtime: &str,
+    ) -> Result<()> {
+        use crate::hooks::{HookRemoveLevel, HooksManager};
 
-        info!("Removing hooks at level: {:?}, runtime: {}", level, runtime);
+        let resolved = level.unwrap_or(HookRemoveLevel::User);
+        info!(
+            "Removing hooks at level: {}, runtime: {}",
+            resolved, runtime
+        );
         if self.dry_run {
             println!(
-                "Would remove Git-Warp hooks at level: {:?}, runtime: {}",
-                level.unwrap_or("user"),
-                runtime
+                "Would remove Git-Warp hooks at level: {}, runtime: {}",
+                resolved, runtime
             );
             return Ok(());
         }
 
-        let level = level.unwrap_or("user");
-        HooksManager::remove_hooks(level, runtime)
+        HooksManager::remove_hooks(resolved, runtime)
     }
 
     fn handle_hooks_status(&self, runtime: &str) -> Result<()> {
