@@ -1242,10 +1242,21 @@ fn uninstall_script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("uninstall.sh")
 }
 
-#[cfg(unix)]
+fn warp_bin_name() -> String {
+    format!("warp{}", std::env::consts::EXE_SUFFIX)
+}
+
 fn write_fake_warp_binary(path: &Path, version_label: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    write_executable(path, &format!("#!/bin/sh\necho \"{version_label}\"\n"));
+    #[cfg(unix)]
+    {
+        write_executable(path, &format!("#!/bin/sh\necho \"{version_label}\"\n"));
+    }
+    #[cfg(windows)]
+    {
+        let _ = version_label;
+        fs::write(path, b"").unwrap();
+    }
 }
 
 #[cfg(unix)]
@@ -1537,7 +1548,6 @@ fn test_uninstaller_reports_when_no_default_install_exists() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn test_doctor_install_check_warns_on_multiple_warp_binaries() {
     let temp_dir = tempdir().unwrap();
@@ -1545,22 +1555,24 @@ fn test_doctor_install_check_warns_on_multiple_warp_binaries() {
     let probe_a = tempdir().unwrap();
     let probe_b = tempdir().unwrap();
 
-    write_fake_warp_binary(&probe_a.path().join("warp"), "warp 0.1.0");
-    write_fake_warp_binary(&probe_b.path().join("warp"), "warp 0.2.0");
+    write_fake_warp_binary(&probe_a.path().join(warp_bin_name()), "warp 0.1.0");
+    write_fake_warp_binary(&probe_b.path().join(warp_bin_name()), "warp 0.2.0");
 
+    let probe_dirs = std::env::join_paths([probe_a.path(), probe_b.path()]).unwrap();
     let output = warp_command(temp_dir.path())
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("PATH", probe_a.path())
-        .env(
-            "GIT_WARP_DOCTOR_PROBE_DIRS",
-            format!("{}:{}", probe_a.path().display(), probe_b.path().display()),
-        )
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", probe_dirs)
+        .env_remove("PSModulePath")
         .arg("doctor")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let active_path = probe_a.path().join(warp_bin_name());
+    let inactive_path = probe_b.path().join(warp_bin_name());
 
     assert!(output.status.success(), "{stdout}{stderr}");
     assert!(stdout.contains("Install:"), "{stdout}");
@@ -1569,40 +1581,42 @@ fn test_doctor_install_check_warns_on_multiple_warp_binaries() {
         "{stdout}"
     );
     assert!(
-        stdout.contains(&format!("{}/warp (active)", probe_a.path().display())),
+        stdout.contains(&format!("{} (active)", active_path.display())),
         "{stdout}"
     );
     assert!(
-        stdout.contains(&format!("{}/warp", probe_b.path().display())),
+        stdout.contains(&inactive_path.display().to_string()),
         "{stdout}"
     );
     assert!(stdout.contains("Resolve install conflicts"), "{stdout}");
 }
 
-#[cfg(unix)]
 #[test]
 fn test_doctor_install_check_passes_with_single_active_binary() {
     let temp_dir = tempdir().unwrap();
     let home_dir = tempdir().unwrap();
     let probe = tempdir().unwrap();
 
-    write_fake_warp_binary(&probe.path().join("warp"), "warp 0.3.0");
+    write_fake_warp_binary(&probe.path().join(warp_bin_name()), "warp 0.3.0");
 
     let output = warp_command(temp_dir.path())
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("PATH", probe.path())
         .env("GIT_WARP_DOCTOR_PROBE_DIRS", probe.path())
+        .env_remove("PSModulePath")
         .arg("doctor")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
+    let active_path = probe.path().join(warp_bin_name());
+
     assert!(output.status.success(), "{stdout}{stderr}");
     assert!(stdout.contains("Install:"), "{stdout}");
     assert!(
-        stdout.contains(&format!("{}/warp (active)", probe.path().display())),
+        stdout.contains(&format!("{} (active)", active_path.display())),
         "{stdout}"
     );
     assert!(
@@ -1611,19 +1625,20 @@ fn test_doctor_install_check_passes_with_single_active_binary() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn test_doctor_shell_check_warns_when_install_dir_not_in_path() {
     let temp_dir = tempdir().unwrap();
     let home_dir = tempdir().unwrap();
     let other_dir = tempdir().unwrap();
+    let install_dir = home_dir.path().join("install-bin");
 
-    let install_dir = home_dir.path().join(".local").join("bin");
     let output = warp_command(temp_dir.path())
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("PATH", other_dir.path())
         .env("GIT_WARP_DOCTOR_PROBE_DIRS", other_dir.path())
+        .env("GIT_WARP_DEFAULT_INSTALL_DIR", &install_dir)
+        .env_remove("PSModulePath")
         .arg("doctor")
         .output()
         .unwrap();
@@ -1637,58 +1652,62 @@ fn test_doctor_shell_check_warns_when_install_dir_not_in_path() {
         "{stdout}"
     );
     assert!(
-        stdout.contains(&format!("export PATH=\"{}:$PATH\"", install_dir.display())),
+        stdout.contains(&format!("Add `{}` to PATH", install_dir.display())),
         "{stdout}"
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn test_doctor_shell_check_passes_when_install_dir_in_path() {
     let temp_dir = tempdir().unwrap();
     let home_dir = tempdir().unwrap();
-    let install_dir = home_dir.path().join(".local").join("bin");
+    let install_dir = home_dir.path().join("install-bin");
     fs::create_dir_all(&install_dir).unwrap();
-    write_fake_warp_binary(&install_dir.join("warp"), "warp 0.4.0");
+    write_fake_warp_binary(&install_dir.join(warp_bin_name()), "warp 0.4.0");
 
     let output = warp_command(temp_dir.path())
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("PATH", &install_dir)
         .env("GIT_WARP_DOCTOR_PROBE_DIRS", &install_dir)
+        .env("GIT_WARP_DEFAULT_INSTALL_DIR", &install_dir)
+        .env_remove("PSModulePath")
         .arg("doctor")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
+    let active_path = install_dir.join(warp_bin_name());
+
     assert!(output.status.success(), "{stdout}{stderr}");
     assert!(stdout.contains("Shell PATH"), "{stdout}");
     assert!(
-        stdout.contains(&format!("active warp at {}/warp", install_dir.display())),
+        stdout.contains(&format!("active warp at {}", active_path.display())),
         "{stdout}"
     );
     assert!(!stdout.contains("is not in PATH"), "{stdout}");
 }
 
-#[cfg(unix)]
 #[test]
 fn test_doctor_shell_check_warns_when_path_shadows_install_dir() {
     let temp_dir = tempdir().unwrap();
     let home_dir = tempdir().unwrap();
-    let install_dir = home_dir.path().join(".local").join("bin");
+    let install_dir = home_dir.path().join("install-bin");
     fs::create_dir_all(&install_dir).unwrap();
-    write_fake_warp_binary(&install_dir.join("warp"), "warp 0.4.0");
+    write_fake_warp_binary(&install_dir.join(warp_bin_name()), "warp 0.4.0");
 
     let other_dir = tempdir().unwrap();
-    write_fake_warp_binary(&other_dir.path().join("warp"), "warp 0.1.0");
+    write_fake_warp_binary(&other_dir.path().join(warp_bin_name()), "warp 0.1.0");
 
-    let path_value = format!("{}:{}", other_dir.path().display(), install_dir.display());
+    let path_value = std::env::join_paths([other_dir.path(), install_dir.as_path()]).unwrap();
     let output = warp_command(temp_dir.path())
         .env("HOME", home_dir.path())
         .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
         .env("PATH", &path_value)
         .env("GIT_WARP_DOCTOR_PROBE_DIRS", &path_value)
+        .env("GIT_WARP_DEFAULT_INSTALL_DIR", &install_dir)
+        .env_remove("PSModulePath")
         .arg("doctor")
         .output()
         .unwrap();
@@ -1807,6 +1826,76 @@ fn test_doctor_shell_check_handles_unknown_shell() {
         "{stdout}"
     );
     assert!(stdout.contains("supported: bash, zsh, fish"), "{stdout}");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_doctor_shell_check_recognizes_powershell() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_dir = home_dir
+        .path()
+        .join("Programs")
+        .join("git-warp")
+        .join("bin");
+    fs::create_dir_all(&install_dir).unwrap();
+    write_fake_warp_binary(&install_dir.join(warp_bin_name()), "warp 0.4.0");
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", &install_dir)
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", &install_dir)
+        .env("GIT_WARP_DEFAULT_INSTALL_DIR", &install_dir)
+        .env("PSModulePath", "C:\\fake\\Modules")
+        .env_remove("SHELL")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("PowerShell integration is not yet shipped"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("Add `{}` to $env:PATH", install_dir.display())),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Set SHELL to bash, zsh, or fish"),
+        "{stdout}"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn test_doctor_install_check_recommends_install_ps1_when_missing() {
+    let temp_dir = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let empty_probe = tempdir().unwrap();
+    let empty_path = tempdir().unwrap();
+
+    let output = warp_command(temp_dir.path())
+        .env("HOME", home_dir.path())
+        .env("XDG_CONFIG_HOME", home_dir.path().join(".config"))
+        .env("PATH", empty_path.path())
+        .env("GIT_WARP_DOCTOR_PROBE_DIRS", empty_probe.path())
+        .env_remove("SHELL")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("no warp binary found in PATH or known install dirs"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("install.ps1 | iex"), "{stdout}");
 }
 
 fn setup_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {

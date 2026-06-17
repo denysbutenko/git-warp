@@ -214,6 +214,8 @@ enum DoctorShell {
         name: &'static str,
         rc_path: PathBuf,
     },
+    #[cfg_attr(not(windows), allow(dead_code))]
+    PowerShell,
     Unknown {
         value: Option<String>,
     },
@@ -1944,6 +1946,12 @@ impl Cli {
                 "Install",
                 "no warp binary found in PATH or known install dirs",
             );
+            #[cfg(windows)]
+            next_steps.push(
+                "Reinstall with `irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1 | iex`."
+                    .to_string(),
+            );
+            #[cfg(not(windows))]
             next_steps.push(
                 "Reinstall with `curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | sh`."
                     .to_string(),
@@ -2004,7 +2012,10 @@ impl Cli {
             (None, Some(dir)) => {
                 Self::doctor_warn(
                     "Shell PATH",
-                    format!("no warp on PATH (expected {}/warp)", dir.display()),
+                    format!(
+                        "no warp on PATH (expected {})",
+                        dir.join(Self::warp_executable_name()).display()
+                    ),
                 );
                 next_steps.push(format!(
                     "Add `{}` to PATH (e.g. `export PATH=\"{}:$PATH\"`).",
@@ -2029,7 +2040,7 @@ impl Cli {
                     dir.display()
                 ));
             } else if let Some(active_path) = &active {
-                let installed = dir.join("warp");
+                let installed = dir.join(Self::warp_executable_name());
                 if installed.is_file() && !Self::same_path(active_path, &installed) {
                     Self::doctor_warn(
                         "Default install path",
@@ -2083,6 +2094,25 @@ impl Cli {
                     ));
                 }
             }
+            DoctorShell::PowerShell => {
+                Self::doctor_warn(
+                    "Shell integration",
+                    "PowerShell integration is not yet shipped",
+                );
+                if let Some(dir) = &default_dir {
+                    next_steps.push(format!(
+                        "Add `{}` to $env:PATH (e.g. `$env:Path = \"{};$env:Path\"`) so installed {} is found.",
+                        dir.display(),
+                        dir.display(),
+                        Self::warp_executable_name(),
+                    ));
+                } else {
+                    next_steps.push(
+                        "Install Git-Warp via `irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1 | iex` and add the install directory to $env:PATH."
+                            .to_string(),
+                    );
+                }
+            }
             DoctorShell::Unknown { value } => {
                 let detail = match value {
                     Some(v) => format!("unsupported shell `{v}`; supported: bash, zsh, fish"),
@@ -2096,6 +2126,10 @@ impl Cli {
         }
     }
 
+    fn warp_executable_name() -> String {
+        format!("warp{}", std::env::consts::EXE_SUFFIX)
+    }
+
     fn doctor_default_install_dir() -> Option<PathBuf> {
         if let Some(value) = std::env::var_os("GIT_WARP_DEFAULT_INSTALL_DIR") {
             let path = PathBuf::from(value);
@@ -2103,7 +2137,23 @@ impl Cli {
                 return Some(path);
             }
         }
-        dirs::home_dir().map(|h| h.join(".local").join("bin"))
+        #[cfg(windows)]
+        {
+            if let Some(local) = dirs::data_local_dir() {
+                return Some(local.join("Programs").join("git-warp").join("bin"));
+            }
+            return dirs::home_dir().map(|h| {
+                h.join("AppData")
+                    .join("Local")
+                    .join("Programs")
+                    .join("git-warp")
+                    .join("bin")
+            });
+        }
+        #[cfg(not(windows))]
+        {
+            dirs::home_dir().map(|h| h.join(".local").join("bin"))
+        }
     }
 
     fn path_dirs() -> Vec<PathBuf> {
@@ -2130,7 +2180,7 @@ impl Cli {
 
         let home = match dirs::home_dir() {
             Some(h) => h,
-            None => return DoctorShell::Unknown { value: raw },
+            None => return Self::fallback_shell(raw),
         };
 
         match basename.as_deref() {
@@ -2146,8 +2196,19 @@ impl Cli {
                 name: "fish",
                 rc_path: home.join(".config").join("fish").join("config.fish"),
             },
-            _ => DoctorShell::Unknown { value: raw },
+            _ => Self::fallback_shell(raw),
         }
+    }
+
+    fn fallback_shell(raw: Option<String>) -> DoctorShell {
+        #[cfg(windows)]
+        {
+            if std::env::var_os("PSModulePath").is_some() {
+                let _ = raw;
+                return DoctorShell::PowerShell;
+            }
+        }
+        DoctorShell::Unknown { value: raw }
     }
 
     fn shell_rc_has_warp_integration(rc_path: &Path) -> bool {
@@ -2164,7 +2225,7 @@ impl Cli {
         }
 
         for dir in Self::doctor_install_probe_dirs() {
-            let candidate = dir.join("warp");
+            let candidate = dir.join(Self::warp_executable_name());
             if candidate.is_file() {
                 paths.push((candidate, false));
             }
@@ -2197,20 +2258,34 @@ impl Cli {
         if let Some(override_value) = std::env::var_os("GIT_WARP_DOCTOR_PROBE_DIRS") {
             return std::env::split_paths(&override_value).collect();
         }
+        #[allow(unused_mut)]
         let mut dirs = Vec::new();
-        if let Some(home) = dirs::home_dir() {
-            dirs.push(home.join(".local").join("bin"));
-            dirs.push(home.join(".cargo").join("bin"));
+        #[cfg(windows)]
+        {
+            if let Some(local) = dirs::data_local_dir() {
+                dirs.push(local.join("Programs").join("git-warp").join("bin"));
+            }
+            if let Some(home) = dirs::home_dir() {
+                dirs.push(home.join(".cargo").join("bin"));
+            }
         }
-        dirs.push(PathBuf::from("/usr/local/bin"));
-        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        #[cfg(not(windows))]
+        {
+            if let Some(home) = dirs::home_dir() {
+                dirs.push(home.join(".local").join("bin"));
+                dirs.push(home.join(".cargo").join("bin"));
+            }
+            dirs.push(PathBuf::from("/usr/local/bin"));
+            dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        }
         dirs
     }
 
     fn resolve_warp_on_path() -> Option<PathBuf> {
         let path = std::env::var_os("PATH")?;
+        let name = Self::warp_executable_name();
         for dir in std::env::split_paths(&path) {
-            let candidate = dir.join("warp");
+            let candidate = dir.join(&name);
             if candidate.is_file() && Self::is_executable(&candidate) {
                 return Some(candidate);
             }
