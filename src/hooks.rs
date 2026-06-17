@@ -1,9 +1,55 @@
 use crate::error::Result;
+use clap::ValueEnum;
 use serde_json::{Map, Value, json};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const GIT_WARP_HOOK_PREFIX: &str = "agent_status_";
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum HookInstallLevel {
+    User,
+    Project,
+    Console,
+}
+
+impl HookInstallLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HookInstallLevel::User => "user",
+            HookInstallLevel::Project => "project",
+            HookInstallLevel::Console => "console",
+        }
+    }
+}
+
+impl fmt::Display for HookInstallLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum HookRemoveLevel {
+    User,
+    Project,
+}
+
+impl HookRemoveLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HookRemoveLevel::User => "user",
+            HookRemoveLevel::Project => "project",
+        }
+    }
+}
+
+impl fmt::Display for HookRemoveLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 const EXPECTED_EVENTS: &[&str] = &[
     "SessionStart",
@@ -137,11 +183,11 @@ impl HookDiagnosis {
 pub struct HooksManager;
 
 impl HooksManager {
-    pub fn install_hooks(level: Option<&str>, runtime: &str) -> Result<()> {
+    pub fn install_hooks(level: HookInstallLevel, runtime: &str) -> Result<()> {
         let runtimes = HookRuntime::parse_many(runtime)?;
 
         match level {
-            Some("console") | None => {
+            HookInstallLevel::Console => {
                 for (index, runtime) in runtimes.iter().enumerate() {
                     if index > 0 {
                         println!();
@@ -154,45 +200,37 @@ impl HooksManager {
                 }
                 Ok(())
             }
-            Some("user") => {
+            HookInstallLevel::User => {
                 for runtime in runtimes {
                     let settings_path = runtime.user_settings_path()?;
                     Self::merge_hooks_into_settings(settings_path, runtime)?;
                 }
                 Ok(())
             }
-            Some("project") => {
+            HookInstallLevel::Project => {
                 for runtime in runtimes {
                     let settings_path = runtime.project_settings_path()?;
                     Self::merge_hooks_into_settings(settings_path, runtime)?;
                 }
                 Ok(())
             }
-            _ => {
-                println!("Invalid level. Use: user, project, or console");
-                Ok(())
-            }
         }
     }
 
-    pub fn remove_hooks(level: &str, runtime: &str) -> Result<()> {
+    pub fn remove_hooks(level: HookRemoveLevel, runtime: &str) -> Result<()> {
         let runtimes = HookRuntime::parse_many(runtime)?;
 
         match level {
-            "user" => {
+            HookRemoveLevel::User => {
                 for runtime in runtimes {
                     Self::remove_hooks_from_settings(runtime.user_settings_path()?, runtime)?;
                 }
                 Ok(())
             }
-            "project" => {
+            HookRemoveLevel::Project => {
                 for runtime in runtimes {
                     Self::remove_hooks_from_settings(runtime.project_settings_path()?, runtime)?;
                 }
-                Ok(())
-            }
-            _ => {
-                println!("Invalid level. Use: user or project");
                 Ok(())
             }
         }
