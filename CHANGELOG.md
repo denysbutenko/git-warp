@@ -41,6 +41,13 @@
 
 ### Fixed
 
+- Agent hook entries now invoke a hidden `warp __hook-status --runtime <r>
+  --status <s>` subcommand instead of an inline POSIX `sh` chain with
+  `date -Iseconds`. The single executable invocation parses identically under
+  `cmd.exe`, `pwsh`, `bash`, and `dash`, so Windows hooks finally write
+  `.claude/git-warp/status` / `.codex/git-warp/status`, and macOS BSD `date`
+  no longer truncates `last_activity` to an empty string. Re-run
+  `warp hooks-install` to rewrite already-installed entries. (#189)
 - Atomic writes now `fsync` the parent directory on Unix after rename so the
   rename itself survives a crash. Applied to hooks settings, config save,
   path rewriting, and post-create marker writes. (#68, #102)
