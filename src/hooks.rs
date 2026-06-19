@@ -1,4 +1,5 @@
 use crate::error::Result;
+use chrono::Local;
 use clap::ValueEnum;
 use serde_json::{Map, Value, json};
 use std::fmt;
@@ -75,6 +76,14 @@ impl HookRuntime {
             _ => Err(anyhow::anyhow!(
                 "Invalid runtime. Use: claude, codex, or all"
             )),
+        }
+    }
+
+    fn parse_single(runtime: &str) -> Result<Self> {
+        match runtime {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            _ => Err(anyhow::anyhow!("Invalid runtime. Use: claude or codex")),
         }
     }
 
@@ -475,9 +484,13 @@ impl HooksManager {
     }
 
     fn build_hook_entry(runtime: HookRuntime, status: &str, hook_id: &str) -> Value {
-        let status_root = runtime.status_root_dir();
+        // Single executable invocation parses identically under cmd.exe,
+        // pwsh, bash, and dash — no shell-specific quoting, no GNU/BSD
+        // `date` divergence (#189).
         let command = format!(
-            "ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/{status_root}/git-warp\" && echo \"{{\\\"status\\\":\\\"{status}\\\",\\\"last_activity\\\":\\\"$(date -Iseconds)\\\"}}\" > \"$ROOT/{status_root}/git-warp/status\""
+            "warp __hook-status --runtime {} --status {}",
+            runtime.install_arg(),
+            status,
         );
 
         json!({
@@ -487,6 +500,30 @@ impl HooksManager {
             }],
             "git_warp_hook_id": hook_id
         })
+    }
+
+    /// Write the per-runtime live status file used by `warp agents` and the
+    /// TUI dashboard. Called from the hidden `warp __hook-status` subcommand
+    /// installed into Claude/Codex hook configs (#189).
+    pub fn write_runtime_status(runtime_arg: &str, status: &str) -> Result<()> {
+        let runtime = HookRuntime::parse_single(runtime_arg)?;
+
+        let repo_root = crate::git::GitRepository::find()
+            .map(|repo| repo.root_path().to_path_buf())
+            .or_else(|_| std::env::current_dir())?;
+
+        let dir = repo_root.join(runtime.status_root_dir()).join("git-warp");
+        fs::create_dir_all(&dir)?;
+        let path = dir.join("status");
+
+        let payload = json!({
+            "status": status,
+            "last_activity": Local::now().to_rfc3339(),
+        });
+        let serialized = serde_json::to_string(&payload)?;
+
+        crate::fs_atomic::write_atomic(&path, serialized.as_bytes())?;
+        Ok(())
     }
 
     fn merge_hooks_into_settings(settings_path: PathBuf, runtime: HookRuntime) -> Result<()> {
@@ -613,11 +650,9 @@ mod tests {
         let hooks = &config["hooks"];
         assert!(hooks.get("SessionStart").is_some());
         assert!(hooks.get("UserPromptSubmit").is_some());
-        assert!(
-            hooks["Stop"][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap()
-                .contains(".claude/git-warp/status")
+        assert_eq!(
+            hooks["Stop"][0]["hooks"][0]["command"].as_str().unwrap(),
+            "warp __hook-status --runtime claude --status waiting"
         );
     }
 
@@ -627,12 +662,55 @@ mod tests {
         assert!(config.get("hooks").is_none());
         assert!(config.get("SessionStart").is_some());
         assert!(config.get("PreToolUse").is_some());
-        assert!(
-            config["Stop"][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap()
-                .contains(".codex/git-warp/status")
+        assert_eq!(
+            config["Stop"][0]["hooks"][0]["command"].as_str().unwrap(),
+            "warp __hook-status --runtime codex --status waiting"
         );
+    }
+
+    #[test]
+    fn test_write_runtime_status_writes_json() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // Initialise a real git repo so `GitRepository::find()` resolves to
+        // the temp dir rather than wandering up into the user's checkout.
+        let init = std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(temp_dir.path())
+            .status()
+            .unwrap();
+        assert!(init.success());
+
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let result = HooksManager::write_runtime_status("claude", "waiting");
+        std::env::set_current_dir(&prev_cwd).unwrap();
+        result.unwrap();
+
+        // git rev-parse --show-toplevel may return a /private/var-style
+        // canonical path on macOS, so look the file up under the resolved
+        // toplevel instead of `temp_dir.path()` directly.
+        let toplevel = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(temp_dir.path())
+            .output()
+            .unwrap();
+        let toplevel = PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim().to_string());
+        let status_path = toplevel.join(".claude").join("git-warp").join("status");
+
+        let body = fs::read_to_string(&status_path).unwrap();
+        let parsed: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["status"].as_str(), Some("waiting"));
+        let last_activity = parsed["last_activity"].as_str().unwrap();
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(last_activity).is_ok(),
+            "last_activity {last_activity:?} is not RFC3339"
+        );
+    }
+
+    #[test]
+    fn test_write_runtime_status_rejects_all() {
+        let err = HooksManager::write_runtime_status("all", "waiting").unwrap_err();
+        assert!(err.to_string().contains("claude or codex"));
     }
 
     #[test]

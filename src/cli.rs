@@ -182,6 +182,17 @@ pub enum Commands {
         /// Current token prefix
         prefix: Option<String>,
     },
+
+    /// Internal hook callback used by installed Claude/Codex hooks (#189)
+    #[command(name = "__hook-status", hide = true)]
+    HookStatus {
+        /// Runtime: claude or codex
+        #[arg(long)]
+        runtime: String,
+        /// Status value to record in the live status file
+        #[arg(long)]
+        status: String,
+    },
 }
 
 /// Resolve the effective kill behavior for cleanup. `--no-kill` always wins,
@@ -452,7 +463,18 @@ impl Cli {
             Commands::Complete { target, prefix } => {
                 self.handle_complete(target, prefix.as_deref())
             }
+            Commands::HookStatus { runtime, status } => self.handle_hook_status(runtime, status),
         }
+    }
+
+    /// Hidden callback used by installed Claude/Codex hooks. Writes the
+    /// per-runtime status file atomically and always returns success so a
+    /// transient failure never breaks the agent runtime's hook pipeline.
+    fn handle_hook_status(&self, runtime: &str, status: &str) -> Result<()> {
+        if let Err(error) = crate::hooks::HooksManager::write_runtime_status(runtime, status) {
+            eprintln!("warp __hook-status: {error}");
+        }
+        Ok(())
     }
 
     fn handle_default_switcher(&self) -> Result<()> {
