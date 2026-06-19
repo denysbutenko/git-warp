@@ -104,6 +104,102 @@ function Test-OnPath {
     return $false
 }
 
+function Get-CandidateInstallDirs {
+    param([string]$Primary)
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if ($Primary) { [void]$candidates.Add($Primary) }
+    if ($env:LOCALAPPDATA) { [void]$candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\git-warp\bin')) }
+    $cargoHome = [Environment]::GetEnvironmentVariable('CARGO_HOME')
+    if ($cargoHome) {
+        [void]$candidates.Add((Join-Path $cargoHome 'bin'))
+    } elseif ($env:USERPROFILE) {
+        [void]$candidates.Add((Join-Path $env:USERPROFILE '.cargo\bin'))
+    }
+    if ($env:ProgramData) { [void]$candidates.Add((Join-Path $env:ProgramData 'chocolatey\bin')) }
+    if ($env:ProgramFiles) { [void]$candidates.Add((Join-Path $env:ProgramFiles 'Git-Warp\bin')) }
+
+    $seen = @{}
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in $candidates) {
+        $key = $dir.TrimEnd('\').ToLowerInvariant()
+        if (-not $key) { continue }
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$result.Add($dir)
+    }
+    return $result
+}
+
+function Get-ExistingWarpBinaries {
+    param([string]$Primary)
+    $found = New-Object System.Collections.Generic.List[pscustomobject]
+    $seen = @{}
+    foreach ($dir in Get-CandidateInstallDirs -Primary $Primary) {
+        $binary = Join-Path $dir 'warp.exe'
+        if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { continue }
+        $key = $binary.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $versionLine = $null
+        try {
+            $versionLine = (& $binary --version 2>$null | Select-Object -First 1)
+        } catch {
+            $versionLine = $null
+        }
+        [void]$found.Add([pscustomobject]@{ Path = $binary; Version = $versionLine })
+    }
+    return $found
+}
+
+function Show-ExistingInstalls {
+    param([string]$Primary, [string]$Repo)
+    $existing = Get-ExistingWarpBinaries -Primary $Primary
+    if (-not $existing -or $existing.Count -eq 0) { return }
+    Write-Host "Existing Git-Warp installs detected:"
+    foreach ($entry in $existing) {
+        if ($entry.Version) {
+            Write-Host ("  - {0} ({1})" -f $entry.Path, $entry.Version)
+        } else {
+            Write-Host ("  - {0}" -f $entry.Path)
+        }
+    }
+    $primaryBinary = Join-Path $Primary 'warp.exe'
+    Write-Host "The installer will replace $primaryBinary; other locations are left as-is."
+    Write-Host "Run 'irm $Repo/raw/main/uninstall.ps1 | iex' to remove the default install,"
+    Write-Host "or 'cargo uninstall git-warp' to remove a Cargo install."
+    Write-Host ""
+}
+
+function Resolve-InstalledBinary {
+    param([string]$Method, [string]$InstallDir)
+    if ($Method -eq 'cargo') {
+        $cargoHome = [Environment]::GetEnvironmentVariable('CARGO_HOME')
+        if ($cargoHome) {
+            $cargoBin = Join-Path $cargoHome 'bin'
+        } elseif ($env:USERPROFILE) {
+            $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+        } else {
+            return $null
+        }
+        return Join-Path $cargoBin 'warp.exe'
+    }
+    return Join-Path $InstallDir 'warp.exe'
+}
+
+function Show-ActiveWarpShadowing {
+    param([string]$InstalledPath)
+    if (-not $InstalledPath) { return }
+    $command = Get-Command warp -ErrorAction SilentlyContinue
+    if (-not $command) { return }
+    $active = $command.Source
+    if (-not $active) { return }
+    if ($active.TrimEnd('\').ToLowerInvariant() -eq $InstalledPath.TrimEnd('\').ToLowerInvariant()) { return }
+    $installDir = Split-Path -Parent $InstalledPath
+    Write-Host ""
+    Write-Host "Note: 'warp' on PATH resolves to $active, not the binary just installed at $InstalledPath."
+    Write-Host "Reorder PATH to put $installDir first, or remove the older binary at $active."
+}
+
 function Install-Binary {
     param(
         [string]$Repo,
@@ -212,6 +308,8 @@ if ($Version) {
 
 $downloadBase = Coalesce $DownloadBase 'GIT_WARP_DOWNLOAD_BASE' "$repoUrl/releases/download/$tag"
 
+Show-ExistingInstalls -Primary $installDir -Repo $repoUrl
+
 switch ($method) {
     'binary' { Install-Binary -Repo $repoUrl -Tag $tag -Dir $installDir -Base $downloadBase -Skip $skipChecksum }
     'cargo'  { Install-Cargo -Repo $repoUrl -Tag $tag }
@@ -220,13 +318,11 @@ switch ($method) {
 
 Write-Host ""
 
-$installed = Join-Path $installDir 'warp.exe'
-if (Test-Path -LiteralPath $installed) {
-    & $installed --version
-} elseif (Get-Command warp -ErrorAction SilentlyContinue) {
-    & warp --version
+$installedPath = Resolve-InstalledBinary -Method $method -InstallDir $installDir
+if ($installedPath -and (Test-Path -LiteralPath $installedPath)) {
+    & $installedPath --version
 } else {
-    Write-Host "Git-Warp installed, but 'warp' is not on PATH yet."
+    Write-Host "Git-Warp installed, but 'warp.exe' was not found at $installedPath."
 }
 
 if (-not (Test-OnPath -Dir $installDir)) {
@@ -237,5 +333,7 @@ if (-not (Test-OnPath -Dir $installDir)) {
     Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"$installDir;`" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')"
     Write-Host "Open a new terminal or run 'warp doctor' after updating PATH."
 }
+
+Show-ActiveWarpShadowing -InstalledPath $installedPath
 
 Write-Host "Run 'warp doctor' to check your setup."
