@@ -2163,13 +2163,13 @@ impl Cli {
             if let Some(local) = dirs::data_local_dir() {
                 return Some(local.join("Programs").join("git-warp").join("bin"));
             }
-            return dirs::home_dir().map(|h| {
+            dirs::home_dir().map(|h| {
                 h.join("AppData")
                     .join("Local")
                     .join("Programs")
                     .join("git-warp")
                     .join("bin")
-            });
+            })
         }
         #[cfg(not(windows))]
         {
