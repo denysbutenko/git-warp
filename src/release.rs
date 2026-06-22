@@ -3,6 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Filename of the `warp` binary on the current platform (`warp.exe` on Windows,
+/// `warp` elsewhere).
+pub fn warp_executable_name() -> String {
+    format!("warp{}", std::env::consts::EXE_SUFFIX)
+}
+
 pub struct ReleaseCheckOptions {
     pub version: Option<String>,
     pub metadata_only: bool,
@@ -229,8 +235,10 @@ fn print_metadata_checks(checks: &[ReleaseCheck]) {
 }
 
 fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<()> {
-    let release_binary = repo_root.join("target").join("release").join("warp");
+    let binary_name = warp_executable_name();
+    let release_binary = repo_root.join("target").join("release").join(&binary_name);
     let release_binary = release_binary.to_string_lossy().into_owned();
+    let warp_label = format!("./target/release/{binary_name}");
 
     let steps = [
         ReleaseCommand::new(
@@ -258,27 +266,27 @@ fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<(
             &["build", "--release", "--bin", "warp"],
         ),
         ReleaseCommand::new(
-            "./target/release/warp --version",
+            format!("{warp_label} --version"),
             release_binary.as_str(),
             &["--version"],
         ),
         ReleaseCommand::new(
-            "./target/release/warp --help",
+            format!("{warp_label} --help"),
             release_binary.as_str(),
             &["--help"],
         ),
         ReleaseCommand::new(
-            "./target/release/warp switch --help",
+            format!("{warp_label} switch --help"),
             release_binary.as_str(),
             &["switch", "--help"],
         ),
         ReleaseCommand::new(
-            "./target/release/warp cleanup --help",
+            format!("{warp_label} cleanup --help"),
             release_binary.as_str(),
             &["cleanup", "--help"],
         ),
         ReleaseCommand::new(
-            "./target/release/warp doctor",
+            format!("{warp_label} doctor"),
             release_binary.as_str(),
             &["doctor"],
         ),
@@ -295,15 +303,15 @@ fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<(
 }
 
 struct ReleaseCommand<'a> {
-    label: &'static str,
+    label: String,
     program: &'a str,
     args: &'a [&'a str],
 }
 
 impl<'a> ReleaseCommand<'a> {
-    fn new(label: &'static str, program: &'a str, args: &'a [&'a str]) -> Self {
+    fn new(label: impl Into<String>, program: &'a str, args: &'a [&'a str]) -> Self {
         Self {
-            label,
+            label: label.into(),
             program,
             args,
         }

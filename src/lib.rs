@@ -18,3 +18,4 @@ pub mod terminal;
 pub mod tui;
 
 pub use error::{GitWarpError, Result};
+pub use release::warp_executable_name;
