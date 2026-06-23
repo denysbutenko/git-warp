@@ -10,15 +10,21 @@
     $env:GIT_WARP_VERSION. Default install directory is
     "$env:LOCALAPPDATA\Programs\git-warp\bin"; override with -InstallDir or
     $env:GIT_WARP_INSTALL_DIR.
+
+    For -Method cargo, override the cargo install root with -InstallRoot or
+    $env:GIT_WARP_INSTALL_ROOT (cargo writes to <root>\bin\warp.exe).
 .EXAMPLE
     irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1 | iex
 .EXAMPLE
     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1))) -InstallDir 'C:\tools\git-warp'
+.EXAMPLE
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1))) -Method cargo -InstallRoot 'C:\tools\git-warp'
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
     [string]$InstallDir,
+    [string]$InstallRoot,
     [string]$RepoUrl,
     [string]$DownloadBase,
     [ValidateSet('binary', 'cargo')]
@@ -171,8 +177,11 @@ function Show-ExistingInstalls {
 }
 
 function Resolve-InstalledBinary {
-    param([string]$Method, [string]$InstallDir)
+    param([string]$Method, [string]$InstallDir, [string]$InstallRoot)
     if ($Method -eq 'cargo') {
+        if ($InstallRoot) {
+            return Join-Path $InstallRoot 'bin\warp.exe'
+        }
         $cargoHome = [Environment]::GetEnvironmentVariable('CARGO_HOME')
         if ($cargoHome) {
             $cargoBin = Join-Path $cargoHome 'bin'
@@ -267,7 +276,8 @@ function Install-Binary {
 function Install-Cargo {
     param(
         [string]$Repo,
-        [string]$Tag
+        [string]$Tag,
+        [string]$InstallRoot
     )
 
     $cargo = Get-Command cargo -ErrorAction SilentlyContinue
@@ -275,8 +285,16 @@ function Install-Cargo {
         Fail "cargo is required for the cargo install method" $Repo
     }
 
-    Write-Host "Installing Git-Warp $Tag from $Repo with Cargo"
-    & cargo install --locked --force --git $Repo --tag $Tag --bin warp git-warp
+    $cargoArgs = @('install', '--locked', '--force', '--git', $Repo, '--tag', $Tag, '--bin', 'warp')
+    if ($InstallRoot) {
+        $cargoArgs += @('--root', $InstallRoot)
+        Write-Host "Installing Git-Warp $Tag from $Repo with Cargo into $InstallRoot\bin"
+    } else {
+        Write-Host "Installing Git-Warp $Tag from $Repo with Cargo"
+    }
+    $cargoArgs += 'git-warp'
+
+    & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) {
         Fail "Cargo install failed for Git-Warp $Tag" $Repo
     }
@@ -293,6 +311,13 @@ if (-not $skipChecksum) {
 
 $defaultDir = Join-Path $env:LOCALAPPDATA 'Programs\git-warp\bin'
 $installDir = Coalesce $InstallDir 'GIT_WARP_INSTALL_DIR' $defaultDir
+$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null
+if (-not $installRoot -and $installDir -ne $defaultDir) {
+    $trimmed = $installDir.TrimEnd('\')
+    if ($trimmed.ToLowerInvariant().EndsWith('\bin')) {
+        $installRoot = Split-Path -Parent $trimmed
+    }
+}
 
 if ($Version) {
     $tag = $Version
@@ -312,25 +337,26 @@ Show-ExistingInstalls -Primary $installDir -Repo $repoUrl
 
 switch ($method) {
     'binary' { Install-Binary -Repo $repoUrl -Tag $tag -Dir $installDir -Base $downloadBase -Skip $skipChecksum }
-    'cargo'  { Install-Cargo -Repo $repoUrl -Tag $tag }
+    'cargo'  { Install-Cargo -Repo $repoUrl -Tag $tag -InstallRoot $installRoot }
     default  { Fail "unsupported install method: $method; use 'binary' or 'cargo'" $repoUrl }
 }
 
 Write-Host ""
 
-$installedPath = Resolve-InstalledBinary -Method $method -InstallDir $installDir
+$installedPath = Resolve-InstalledBinary -Method $method -InstallDir $installDir -InstallRoot $installRoot
 if ($installedPath -and (Test-Path -LiteralPath $installedPath)) {
     & $installedPath --version
 } else {
     Write-Host "Git-Warp installed, but 'warp.exe' was not found at $installedPath."
 }
 
-if (-not (Test-OnPath -Dir $installDir)) {
+$pathDir = if ($installedPath) { Split-Path -Parent $installedPath } else { $installDir }
+if (-not (Test-OnPath -Dir $pathDir)) {
     Write-Host ""
-    Write-Host "Add $installDir to PATH so your shell can find 'warp':"
-    Write-Host "  `$env:PATH = '$installDir;' + `$env:PATH"
+    Write-Host "Add $pathDir to PATH so your shell can find 'warp':"
+    Write-Host "  `$env:PATH = '$pathDir;' + `$env:PATH"
     Write-Host "Persist it across sessions with:"
-    Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"$installDir;`" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')"
+    Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"$pathDir;`" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')"
     Write-Host "Open a new terminal or run 'warp doctor' after updating PATH."
 }
 
