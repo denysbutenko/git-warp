@@ -4,9 +4,10 @@ Fast, safety-focused Git worktree management with terminal handoff, cleanup
 helpers, and optional Claude/Codex session visibility.
 
 Git-Warp is a Rust CLI for creating, switching, listing, and cleaning Git
-worktrees. On macOS/APFS it can use Copy-on-Write cloning for faster worktree
-creation, and it falls back to normal `git worktree` creation when CoW is not
-available.
+worktrees. On macOS/APFS and Linux filesystems that implement the FICLONE
+ioctl (btrfs, xfs with `reflink=1`, bcachefs, OCFS2, etc.) it can use
+Copy-on-Write cloning for faster worktree creation, and it falls back to
+normal `git worktree` creation when CoW is not available.
 
 ## What It Does Today
 

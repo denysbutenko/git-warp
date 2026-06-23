@@ -113,7 +113,7 @@ Git-Warp uses Copy-on-Write (CoW) to create worktrees almost instantaneously. Th
 feature is supported on:
 
 - **macOS**: APFS filesystems.
-- **Linux**: Btrfs, XFS, and OCFS2 filesystems (via `cp --reflink=always`).
+- **Linux**: Filesystems that implement the FICLONE ioctl (btrfs, xfs with `reflink=1`, bcachefs, OCFS2, etc.).
 
 Git-Warp automatically detects CoW support. If your filesystem does not support
 it, Git-Warp falls back to traditional Git worktree creation. Run `warp doctor`
