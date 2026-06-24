@@ -106,6 +106,8 @@ pub fn collect_metadata_checks(
     let changelog = read_optional(repo_root.join("CHANGELOG.md"))?;
     let install_doc = read_optional(repo_root.join("docs").join("install.md"))?;
     let install_script = read_optional(repo_root.join("install.sh"))?;
+    let install_ps1 = read_optional(repo_root.join("install.ps1"))?;
+    let uninstall_ps1 = read_optional(repo_root.join("uninstall.ps1"))?;
     let release_notes_path = repo_root
         .join("docs")
         .join("releases")
@@ -193,22 +195,56 @@ pub fn collect_metadata_checks(
         ));
     }
 
-    for label in ["install.ps1", "uninstall.ps1"] {
-        let path = repo_root.join(label);
-        if path.is_file() {
-            checks.push(ReleaseCheck::pass(
-                label,
-                format!("{label} is present at the repo root"),
-            ));
-        } else {
-            checks.push(ReleaseCheck::fail(
-                label,
-                format!("{label} is missing from the repo root"),
-            ));
-        }
-    }
+    let install_ps1_requirements: &[(&str, &str)] = &[
+        ("api.github.com/repos/", "the GitHub releases API lookup"),
+        (
+            "$env:GIT_WARP_VERSION",
+            "the $env:GIT_WARP_VERSION override",
+        ),
+        ("Get-FileHash", "the Get-FileHash checksum step"),
+        ("-Algorithm SHA256", "the SHA256 algorithm flag"),
+    ];
+    checks.push(content_guard(
+        "install.ps1",
+        &install_ps1,
+        install_ps1_requirements,
+        "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, and Get-FileHash -Algorithm SHA256 verification",
+    ));
+
+    let uninstall_ps1_requirements: &[(&str, &str)] = &[(
+        "hooks-remove --level user",
+        "the user-level hooks-remove call",
+    )];
+    checks.push(content_guard(
+        "uninstall.ps1",
+        &uninstall_ps1,
+        uninstall_ps1_requirements,
+        "uninstall.ps1 must keep the warp hooks-remove --level user invocation",
+    ));
 
     Ok(checks)
+}
+
+fn content_guard(
+    label: &'static str,
+    content: &str,
+    requirements: &[(&str, &str)],
+    fail_summary: &str,
+) -> ReleaseCheck {
+    let missing: Vec<&str> = requirements
+        .iter()
+        .filter(|(needle, _)| !content.contains(needle))
+        .map(|(_, description)| *description)
+        .collect();
+
+    if missing.is_empty() {
+        ReleaseCheck::pass(label, format!("{label} keeps its release-critical logic"))
+    } else {
+        ReleaseCheck::fail(
+            label,
+            format!("{fail_summary}; missing: {}", missing.join(", ")),
+        )
+    }
 }
 
 fn read_optional(path: PathBuf) -> Result<String> {

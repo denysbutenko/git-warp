@@ -90,9 +90,20 @@ fn test_collect_metadata_checks_all_pass() {
     )
     .unwrap();
 
-    // 5. install.ps1 + uninstall.ps1 presence
-    fs::write(temp.path().join("install.ps1"), "param()").unwrap();
-    fs::write(temp.path().join("uninstall.ps1"), "param()").unwrap();
+    // 5. install.ps1 + uninstall.ps1 with release-critical content
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $envVersion = [Environment]::GetEnvironmentVariable('GIT_WARP_VERSION')\n\
+         if ($envVersion) { $tag = $env:GIT_WARP_VERSION }\n\
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "& $Target hooks-remove --level user --runtime all *> $null\n",
+    )
+    .unwrap();
 
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
@@ -141,9 +152,18 @@ fn test_collect_metadata_checks_failures() {
             .contains("api.github.com/repos/.../releases/latest")
     );
     assert_eq!(checks[5].label, "install.ps1");
-    assert!(checks[5].detail.contains("install.ps1 is missing"));
+    assert!(
+        checks[5]
+            .detail
+            .contains("Get-FileHash -Algorithm SHA256 verification")
+    );
+    assert!(checks[5].detail.contains("missing: "));
     assert_eq!(checks[6].label, "uninstall.ps1");
-    assert!(checks[6].detail.contains("uninstall.ps1 is missing"));
+    assert!(
+        checks[6]
+            .detail
+            .contains("warp hooks-remove --level user invocation")
+    );
 }
 
 #[test]
@@ -170,24 +190,81 @@ fn test_install_script_partial_lookup_fails() {
 }
 
 #[test]
-fn test_powershell_scripts_partial_presence_fails() {
+fn test_install_ps1_missing_checksum_fails() {
     let temp = tempdir().unwrap();
     let expected = ReleaseVersion {
         number: "0.3.0".to_string(),
         tag: "v0.3.0".to_string(),
     };
 
-    // install.ps1 present, uninstall.ps1 missing — release must fail.
-    fs::write(temp.path().join("install.ps1"), "param()").unwrap();
+    // install.ps1 keeps env override + API lookup but lost the checksum step.
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $tag = $env:GIT_WARP_VERSION\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "& $Target hooks-remove --level user --runtime all *> $null\n",
+    )
+    .unwrap();
 
     let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
 
-    assert_eq!(checks.len(), 7);
     assert_eq!(checks[5].label, "install.ps1");
-    assert!(checks[5].ok, "install.ps1 presence check should pass");
+    assert!(
+        !checks[5].ok,
+        "install.ps1 without checksum guard should fail the check"
+    );
+    assert!(
+        checks[5].detail.contains("Get-FileHash checksum step"),
+        "fail detail should call out the missing checksum, got: {}",
+        checks[5].detail
+    );
+    assert!(
+        checks[5].detail.contains("SHA256 algorithm flag"),
+        "fail detail should call out the missing SHA256 flag, got: {}",
+        checks[5].detail
+    );
+    assert!(checks[6].ok, "uninstall.ps1 guard should still pass");
+}
+
+#[test]
+fn test_uninstall_ps1_missing_hooks_remove_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $tag = $env:GIT_WARP_VERSION\n\
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+    )
+    .unwrap();
+    // uninstall.ps1 forgot the hooks-remove call.
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "Remove-Item -LiteralPath $target -Force\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert!(checks[5].ok, "install.ps1 guard should pass");
     assert_eq!(checks[6].label, "uninstall.ps1");
-    assert!(!checks[6].ok, "uninstall.ps1 absence should fail the check");
-    assert!(checks[6].detail.contains("uninstall.ps1 is missing"));
+    assert!(
+        !checks[6].ok,
+        "uninstall.ps1 without hooks-remove should fail"
+    );
+    assert!(
+        checks[6].detail.contains("user-level hooks-remove call"),
+        "fail detail should call out the missing hooks-remove, got: {}",
+        checks[6].detail
+    );
 }
 
 #[test]
