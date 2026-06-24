@@ -71,13 +71,13 @@ remove_hooks() {
 
   if [ "$dry_run" -eq 1 ]; then
     echo "Would remove user hooks with: $target hooks-remove --level user --runtime all"
-    if [ -d .git ]; then
+    if [ -e .git ]; then
       echo "Would remove project hooks with: $target hooks-remove --level project --runtime all"
     fi
   else
     echo "Removing agent hooks..."
     "$target" hooks-remove --level user --runtime all >/dev/null 2>&1 || echo "warning: failed to remove user hooks"
-    if [ -d .git ]; then
+    if [ -e .git ]; then
       "$target" hooks-remove --level project --runtime all >/dev/null 2>&1 || echo "warning: failed to remove project hooks"
     fi
   fi

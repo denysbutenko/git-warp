@@ -1574,6 +1574,43 @@ fn test_uninstaller_dry_run_keeps_default_install() {
 
 #[cfg(unix)]
 #[test]
+fn test_uninstaller_dry_run_lists_project_hooks_inside_linked_worktree() {
+    let primary = setup_test_repo();
+    let worktree_path = create_worktree(primary.path(), "feature-203");
+
+    assert!(
+        worktree_path.join(".git").is_file(),
+        ".git in a linked worktree should be a file, not a directory"
+    );
+
+    let home_dir = tempdir().unwrap();
+    let install_dir = tempdir().unwrap();
+    let target = install_dir.path().join("warp");
+    write_fake_warp_binary(&target, "warp 9.9.9");
+
+    let output = Command::new("/bin/sh")
+        .arg(uninstall_script_path())
+        .arg("--dry-run")
+        .current_dir(&worktree_path)
+        .env("HOME", home_dir.path())
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("GIT_WARP_INSTALL_DIR", install_dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("Would remove user hooks with:"), "{stdout}");
+    assert!(
+        stdout.contains("Would remove project hooks with:"),
+        "{stdout}"
+    );
+    assert!(target.exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn test_uninstaller_reports_when_no_default_install_exists() {
     let home_dir = tempdir().unwrap();
     let install_dir = tempdir().unwrap();
