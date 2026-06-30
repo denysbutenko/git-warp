@@ -199,7 +199,7 @@ fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resu
 
 #[cfg(target_os = "linux")]
 fn clone_directory_reflink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
-    // ... use cp --reflink=always for Linux
+    // ... use FICLONE ioctl for Linux
 }
 ```
 
