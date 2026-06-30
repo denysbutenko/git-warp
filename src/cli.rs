@@ -2035,7 +2035,7 @@ impl Cli {
                     "Shell PATH",
                     format!(
                         "no warp on PATH (expected {})",
-                        dir.join(Self::warp_executable_name()).display()
+                        dir.join(crate::release::warp_executable_name()).display()
                     ),
                 );
                 next_steps.push(format!(
@@ -2061,7 +2061,7 @@ impl Cli {
                     dir.display()
                 ));
             } else if let Some(active_path) = &active {
-                let installed = dir.join(Self::warp_executable_name());
+                let installed = dir.join(crate::release::warp_executable_name());
                 if installed.is_file() && !Self::same_path(active_path, &installed) {
                     Self::doctor_warn(
                         "Default install path",
@@ -2125,7 +2125,7 @@ impl Cli {
                         "Add `{}` to $env:PATH (e.g. `$env:Path = \"{};$env:Path\"`) so installed {} is found.",
                         dir.display(),
                         dir.display(),
-                        Self::warp_executable_name(),
+                        crate::release::warp_executable_name(),
                     ));
                 } else {
                     next_steps.push(
@@ -2145,10 +2145,6 @@ impl Cli {
                 );
             }
         }
-    }
-
-    fn warp_executable_name() -> String {
-        format!("warp{}", std::env::consts::EXE_SUFFIX)
     }
 
     fn doctor_default_install_dir() -> Option<PathBuf> {
@@ -2246,7 +2242,7 @@ impl Cli {
         }
 
         for dir in Self::doctor_install_probe_dirs() {
-            let candidate = dir.join(Self::warp_executable_name());
+            let candidate = dir.join(crate::release::warp_executable_name());
             if candidate.is_file() {
                 paths.push((candidate, false));
             }
@@ -2304,7 +2300,7 @@ impl Cli {
 
     fn resolve_warp_on_path() -> Option<PathBuf> {
         let path = std::env::var_os("PATH")?;
-        let name = Self::warp_executable_name();
+        let name = crate::release::warp_executable_name();
         for dir in std::env::split_paths(&path) {
             let candidate = dir.join(&name);
             if candidate.is_file() && Self::is_executable(&candidate) {

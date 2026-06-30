@@ -1,8 +1,19 @@
 use git_warp::release::{
     ReleaseVersion, collect_metadata_checks, read_package_version, resolve_version,
 };
+use git_warp::warp_executable_name;
 use std::fs;
 use tempfile::tempdir;
+
+#[test]
+fn test_warp_executable_name_matches_platform() {
+    let name = warp_executable_name();
+    if cfg!(windows) {
+        assert_eq!(name, "warp.exe");
+    } else {
+        assert_eq!(name, "warp");
+    }
+}
 
 #[test]
 fn test_resolve_version() {
