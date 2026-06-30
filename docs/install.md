@@ -76,6 +76,20 @@ piping):
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1))) -InstallDir 'C:\tools\git-warp'
 ```
 
+For `-Method cargo`, `cargo install` writes to `<root>\bin\warp.exe`, so the
+relevant override is the cargo root. Pass `-InstallRoot` (or set
+`$env:GIT_WARP_INSTALL_ROOT`) — this mirrors `GIT_WARP_INSTALL_ROOT` in
+`install.sh`:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.ps1))) -Method cargo -InstallRoot 'C:\tools\git-warp'
+```
+
+When `-InstallDir` ends in `\bin` (and `-InstallRoot` is not set), the
+installer derives the cargo root as the parent directory so a single
+`-InstallDir 'C:\tools\git-warp\bin'` works for both methods. For any other
+`-InstallDir` shape, pass `-InstallRoot` explicitly on the cargo path.
+
 ## Checksum Verification
 
 `install.sh` downloads the release archive's companion `.sha256` file from the
