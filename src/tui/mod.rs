@@ -33,6 +33,20 @@ pub use switcher::{
 // Re-exports for public API consistency
 pub use terminal::{TuiTerminalGuard, combine_errors};
 
+/// Result of feeding one key press to a TUI view controller. The shell that
+/// owns the terminal loop interprets this to switch views, quit, or act.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ViewOutcome {
+    /// Key handled; stay in the current view.
+    Consumed,
+    /// Switch to the other view.
+    ToggleView,
+    /// Quit the TUI.
+    Quit,
+    /// The worktree switcher produced a terminal action.
+    Action(switcher::WorktreeSwitchAction),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,3 +1,4 @@
+use super::ViewOutcome;
 use crate::tui::agents::truncate_label;
 use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
 use crate::{config::GitConfig, error::Result, git::WorktreeInfo};
@@ -153,14 +154,175 @@ pub fn has_hard_blocker(blockers: &[WorktreeRemovalBlock]) -> bool {
     blockers.iter().any(|blocker| !is_soft_blocker(*blocker))
 }
 
-pub struct WorktreeSwitchTui {
-    model: WorktreeSwitchModel,
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum PendingWorktreeRemoval {
     Single(WorktreeRemovalTarget),
     Batch(WorktreeBatchRemoval),
+}
+
+/// Terminal-free controller for the worktree switcher view. Owns selection and
+/// pending-removal state and turns key presses into `ViewOutcome`s. The shell
+/// (or `WorktreeSwitchTui`) owns the terminal and the event loop.
+pub struct WorktreeSwitchView {
+    model: WorktreeSwitchModel,
+    selected_index: usize,
+    selected_indices: BTreeSet<usize>,
+    pending_remove: Option<PendingWorktreeRemoval>,
+    notice: Option<String>,
+}
+
+impl WorktreeSwitchView {
+    pub fn new(model: WorktreeSwitchModel) -> Self {
+        Self {
+            model,
+            selected_index: 0,
+            selected_indices: BTreeSet::new(),
+            pending_remove: None,
+            notice: None,
+        }
+    }
+
+    #[allow(dead_code)] // Part of the controller's public API; used by the shell in later tasks.
+    pub fn set_notice(&mut self, message: String) {
+        self.notice = Some(message);
+    }
+
+    pub fn draw(&self, f: &mut Frame) {
+        let selected_indices_list = self.selected_indices.iter().copied().collect::<Vec<_>>();
+        draw_worktree_switcher(
+            f,
+            &self.model,
+            self.selected_index,
+            &selected_indices_list,
+            self.pending_remove.as_ref(),
+            self.notice.as_deref(),
+        );
+    }
+
+    pub fn handle_key(&mut self, code: KeyCode) -> ViewOutcome {
+        if let Some(removal) = self.pending_remove.clone() {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    return ViewOutcome::Action(match removal {
+                        PendingWorktreeRemoval::Single(target) => {
+                            WorktreeSwitchAction::Remove(target)
+                        }
+                        PendingWorktreeRemoval::Batch(batch) => {
+                            WorktreeSwitchAction::RemoveMany(batch)
+                        }
+                    });
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.pending_remove = None;
+                    self.notice = Some("Removal cancelled".to_string());
+                }
+                KeyCode::Char('q') => return ViewOutcome::Quit,
+                _ => {}
+            }
+            return ViewOutcome::Consumed;
+        }
+
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc => return ViewOutcome::Quit,
+            KeyCode::Tab => return ViewOutcome::ToggleView,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.selected_index = self.selected_index.saturating_sub(1);
+                self.notice = None;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.selected_index =
+                    (self.selected_index + 1).min(self.model.rows.len().saturating_sub(1));
+                self.notice = None;
+            }
+            KeyCode::Char(' ') => {
+                if !self.selected_indices.insert(self.selected_index) {
+                    self.selected_indices.remove(&self.selected_index);
+                }
+                self.notice = Some(format!(
+                    "{} worktree{} selected",
+                    self.selected_indices.len(),
+                    if self.selected_indices.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                ));
+            }
+            KeyCode::Char('a') => {
+                if self.selected_indices.len() == self.model.rows.len() {
+                    self.selected_indices.clear();
+                } else {
+                    self.selected_indices = (0..self.model.rows.len()).collect();
+                }
+                self.notice = Some(format!(
+                    "{} worktree{} selected",
+                    self.selected_indices.len(),
+                    if self.selected_indices.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                ));
+            }
+            KeyCode::Enter => {
+                return self
+                    .model
+                    .target_at(self.selected_index)
+                    .map(WorktreeSwitchAction::Switch)
+                    .map(ViewOutcome::Action)
+                    .unwrap_or(ViewOutcome::Consumed);
+            }
+            KeyCode::Char('d') | KeyCode::Delete => {
+                if !self.selected_indices.is_empty() {
+                    let selected_indices_list =
+                        self.selected_indices.iter().copied().collect::<Vec<_>>();
+                    if let Some(batch) = self.model.batch_removal_at(&selected_indices_list) {
+                        if batch.targets.is_empty() {
+                            let skipped = batch
+                                .skipped
+                                .iter()
+                                .map(|skip| format!("{} ({})", skip.branch_label, skip.reason))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            self.notice =
+                                Some(format!("No selected worktrees can be removed: {skipped}"));
+                        } else {
+                            self.notice = Some(batch_removal_notice(&batch));
+                            self.pending_remove = Some(PendingWorktreeRemoval::Batch(batch));
+                        }
+                    } else {
+                        self.notice = Some("No worktrees selected".to_string());
+                    }
+                } else if let Some(removal) = self.model.removal_at(self.selected_index) {
+                    self.notice = Some(if removal.force {
+                        format!(
+                            "⚠  Worktree '{}' is dirty — uncommitted changes will be lost. Force remove? y/N",
+                            removal.branch
+                        )
+                    } else {
+                        format!(
+                            "Remove '{}' and delete its local branch? y/N",
+                            removal.branch
+                        )
+                    });
+                    self.pending_remove = Some(PendingWorktreeRemoval::Single(removal));
+                } else if let Some(row) = self.model.rows.get(self.selected_index) {
+                    let reason = if row.removal_blockers.is_empty() {
+                        "no local branch".to_string()
+                    } else {
+                        removal_blocker_summary(&row.removal_blockers)
+                    };
+                    self.notice = Some(format!("Cannot remove '{}': {}", row.branch_label, reason));
+                }
+            }
+            _ => {}
+        }
+        ViewOutcome::Consumed
+    }
+}
+
+pub struct WorktreeSwitchTui {
+    model: WorktreeSwitchModel,
 }
 
 impl WorktreeSwitchTui {
@@ -213,139 +375,19 @@ impl WorktreeSwitchTui {
         &self,
         terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<Option<WorktreeSwitchAction>> {
-        let mut selected_index = 0;
-        let mut selected_indices = BTreeSet::new();
-        let mut pending_remove: Option<PendingWorktreeRemoval> = None;
-        let mut notice: Option<String> = None;
+        let mut view = WorktreeSwitchView::new(self.model.clone());
 
         loop {
-            let selected_indices_list = selected_indices.iter().copied().collect::<Vec<_>>();
-            terminal.draw(|f| {
-                draw_worktree_switcher(
-                    f,
-                    &self.model,
-                    selected_index,
-                    &selected_indices_list,
-                    pending_remove.as_ref(),
-                    notice.as_deref(),
-                )
-            })?;
+            terminal.draw(|f| view.draw(f))?;
 
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-
-                if let Some(removal) = pending_remove.clone() {
-                    match key.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                            return Ok(Some(match removal {
-                                PendingWorktreeRemoval::Single(target) => {
-                                    WorktreeSwitchAction::Remove(target)
-                                }
-                                PendingWorktreeRemoval::Batch(batch) => {
-                                    WorktreeSwitchAction::RemoveMany(batch)
-                                }
-                            }));
-                        }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                            pending_remove = None;
-                            notice = Some("Removal cancelled".to_string());
-                        }
-                        KeyCode::Char('q') => return Ok(None),
-                        _ => {}
-                    }
-                    continue;
-                }
-
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        selected_index = selected_index.saturating_sub(1);
-                        notice = None;
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        selected_index =
-                            (selected_index + 1).min(self.model.rows.len().saturating_sub(1));
-                        notice = None;
-                    }
-                    KeyCode::Char(' ') => {
-                        if !selected_indices.insert(selected_index) {
-                            selected_indices.remove(&selected_index);
-                        }
-                        notice = Some(format!(
-                            "{} worktree{} selected",
-                            selected_indices.len(),
-                            if selected_indices.len() == 1 { "" } else { "s" }
-                        ));
-                    }
-                    KeyCode::Char('a') => {
-                        if selected_indices.len() == self.model.rows.len() {
-                            selected_indices.clear();
-                        } else {
-                            selected_indices = (0..self.model.rows.len()).collect();
-                        }
-                        notice = Some(format!(
-                            "{} worktree{} selected",
-                            selected_indices.len(),
-                            if selected_indices.len() == 1 { "" } else { "s" }
-                        ));
-                    }
-                    KeyCode::Enter => {
-                        return Ok(self
-                            .model
-                            .target_at(selected_index)
-                            .map(WorktreeSwitchAction::Switch));
-                    }
-                    KeyCode::Char('d') | KeyCode::Delete => {
-                        if !selected_indices.is_empty() {
-                            let selected_indices_list =
-                                selected_indices.iter().copied().collect::<Vec<_>>();
-                            if let Some(batch) = self.model.batch_removal_at(&selected_indices_list)
-                            {
-                                if batch.targets.is_empty() {
-                                    let skipped = batch
-                                        .skipped
-                                        .iter()
-                                        .map(|skip| {
-                                            format!("{} ({})", skip.branch_label, skip.reason)
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    notice = Some(format!(
-                                        "No selected worktrees can be removed: {skipped}"
-                                    ));
-                                } else {
-                                    notice = Some(batch_removal_notice(&batch));
-                                    pending_remove = Some(PendingWorktreeRemoval::Batch(batch));
-                                }
-                            } else {
-                                notice = Some("No worktrees selected".to_string());
-                            }
-                        } else if let Some(removal) = self.model.removal_at(selected_index) {
-                            notice = Some(if removal.force {
-                                format!(
-                                    "⚠  Worktree '{}' is dirty — uncommitted changes will be lost. Force remove? y/N",
-                                    removal.branch
-                                )
-                            } else {
-                                format!(
-                                    "Remove '{}' and delete its local branch? y/N",
-                                    removal.branch
-                                )
-                            });
-                            pending_remove = Some(PendingWorktreeRemoval::Single(removal));
-                        } else if let Some(row) = self.model.rows.get(selected_index) {
-                            let reason = if row.removal_blockers.is_empty() {
-                                "no local branch".to_string()
-                            } else {
-                                removal_blocker_summary(&row.removal_blockers)
-                            };
-                            notice =
-                                Some(format!("Cannot remove '{}': {}", row.branch_label, reason));
-                        }
-                    }
-                    _ => {}
+                match view.handle_key(key.code) {
+                    ViewOutcome::Action(action) => return Ok(Some(action)),
+                    ViewOutcome::Quit => return Ok(None),
+                    ViewOutcome::ToggleView | ViewOutcome::Consumed => {}
                 }
             }
         }
@@ -713,4 +755,72 @@ pub fn build_worktree_switch_rows(
             WorktreeSwitchDisplayRow { display_line }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn single_row_model() -> WorktreeSwitchModel {
+        WorktreeSwitchModel {
+            rows: vec![WorktreeSwitchRow {
+                branch_label: "feature".to_string(),
+                path_label: "/tmp/wt".to_string(),
+                badges: vec![],
+                target: WorktreeSwitchTarget {
+                    branch: Some("feature".to_string()),
+                    path: std::path::PathBuf::from("/tmp/wt"),
+                },
+                removal_blockers: vec![],
+            }],
+            empty_state_lines: vec![],
+        }
+    }
+
+    #[test]
+    fn switch_view_tab_requests_toggle() {
+        let mut view = WorktreeSwitchView::new(single_row_model());
+        assert_eq!(
+            view.handle_key(KeyCode::Tab),
+            super::super::ViewOutcome::ToggleView
+        );
+    }
+
+    #[test]
+    fn switch_view_quit_on_q_and_esc() {
+        let mut view = WorktreeSwitchView::new(single_row_model());
+        assert_eq!(
+            view.handle_key(KeyCode::Char('q')),
+            super::super::ViewOutcome::Quit
+        );
+        assert_eq!(
+            view.handle_key(KeyCode::Esc),
+            super::super::ViewOutcome::Quit
+        );
+    }
+
+    #[test]
+    fn switch_view_enter_returns_switch_action() {
+        let mut view = WorktreeSwitchView::new(single_row_model());
+        match view.handle_key(KeyCode::Enter) {
+            super::super::ViewOutcome::Action(WorktreeSwitchAction::Switch(target)) => {
+                assert_eq!(target.branch.as_deref(), Some("feature"));
+            }
+            other => panic!("expected Switch action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn switch_view_tab_swallowed_during_pending_removal() {
+        let mut view = WorktreeSwitchView::new(single_row_model());
+        view.pending_remove = Some(PendingWorktreeRemoval::Single(WorktreeRemovalTarget {
+            branch: "feature".to_string(),
+            path: std::path::PathBuf::from("/tmp/wt"),
+            force: false,
+        }));
+        assert_eq!(
+            view.handle_key(KeyCode::Tab),
+            super::super::ViewOutcome::Consumed
+        );
+    }
 }
