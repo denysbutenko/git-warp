@@ -36,6 +36,40 @@ fn nearest_existing_ancestor(path: &Path) -> PathBuf {
     candidate
 }
 
+/// When `dest` lives inside `src`, return the direct child of `src` that lies on
+/// the path to `dest`. Cloning `src` into a location beneath itself would copy
+/// that child (and everything under it, including `dest`) back into the new
+/// tree, recursing without bound — this is exactly what happens when worktrees
+/// are stored under `<repo>/.worktrees/<branch>` and the whole repo is CoW
+/// cloned. Callers exclude the returned child from the clone.
+///
+/// Returns `None` when `dest` is not inside `src` (the default git-warp layout,
+/// where worktrees live in a sibling `../worktrees` directory), so the fast
+/// whole-tree clone path is preserved.
+fn nested_dest_exclusion(src: &Path, dest: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let src = src.canonicalize().ok()?;
+    let dest = resolve_for_containment(dest);
+    let relative = dest.strip_prefix(&src).ok()?;
+    match relative.components().next()? {
+        Component::Normal(name) => Some(src.join(name)),
+        _ => None,
+    }
+}
+
+/// Resolve `path` to an absolute, symlink-free form for containment checks,
+/// tolerating a not-yet-created leaf by canonicalizing the nearest existing
+/// ancestor and re-appending the missing tail components.
+fn resolve_for_containment(path: &Path) -> PathBuf {
+    let ancestor = nearest_existing_ancestor(path);
+    let base = ancestor.canonicalize().unwrap_or(ancestor.clone());
+    match path.strip_prefix(&ancestor) {
+        Ok(tail) => base.join(tail),
+        Err(_) => base,
+    }
+}
+
 /// Clone a directory using Copy-on-Write
 pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
     let src = src.as_ref();
@@ -48,19 +82,25 @@ pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resul
         .into());
     }
 
+    // Guard against cloning `src` into a location beneath itself (e.g. worktrees
+    // stored under `<repo>/.worktrees/<branch>`). Copying the whole tree would
+    // otherwise recurse into the destination and every sibling worktree,
+    // exploding without bound.
+    let exclude = nested_dest_exclusion(src, dest);
+
     #[cfg(target_os = "macos")]
     {
-        clone_directory_apfs(src, dest)
+        clone_directory_apfs(src, dest, exclude.as_deref())
     }
 
     #[cfg(target_os = "linux")]
     {
-        clone_directory_reflink(src, dest)
+        clone_directory_reflink(src, dest, exclude.as_deref())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = dest;
+        let _ = (dest, exclude);
         Err(GitWarpError::CoWNotSupported.into())
     }
 }
@@ -149,14 +189,17 @@ mod linux {
         unsafe { ficlone(dst.as_raw_fd(), src.as_raw_fd() as nix::libc::c_ulong) }
     }
 
-    pub(super) fn clone_directory(src: &Path, dst: &Path) -> Result<()> {
+    pub(super) fn clone_directory(src: &Path, dst: &Path, exclude: Option<&Path>) -> Result<()> {
         if dst.exists() {
             fs::remove_dir_all(dst)?;
         }
-        clone_tree(src, dst)
+        // Canonicalize so the caller-supplied `exclude` (a canonical top-level
+        // child of `src`) matches the paths produced while walking the tree.
+        let src_root = src.canonicalize().unwrap_or_else(|_| src.to_path_buf());
+        clone_tree(&src_root, dst, exclude)
     }
 
-    fn clone_tree(src: &Path, dst: &Path) -> Result<()> {
+    fn clone_tree(src: &Path, dst: &Path, exclude: Option<&Path>) -> Result<()> {
         let meta = fs::symlink_metadata(src).map_err(|e| {
             anyhow::anyhow!("Failed to stat {} for reflink clone: {}", src.display(), e)
         })?;
@@ -191,8 +234,11 @@ mod linux {
                 let entry = entry.map_err(|e| {
                     anyhow::anyhow!("Failed to iterate directory {}: {}", src.display(), e)
                 })?;
+                if exclude == Some(entry.path().as_path()) {
+                    continue;
+                }
                 let name = entry.file_name();
-                clone_tree(&entry.path(), &dst.join(&name))?;
+                clone_tree(&entry.path(), &dst.join(&name), exclude)?;
             }
             fs::set_permissions(dst, fs::Permissions::from_mode(meta.mode() & 0o7777)).map_err(
                 |e| {
@@ -239,25 +285,57 @@ mod linux {
 }
 
 #[cfg(target_os = "macos")]
-fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
-    use std::process::Command;
-
+fn clone_directory_apfs(src: &Path, dest: &Path, exclude: Option<&Path>) -> Result<()> {
     // Ensure we're on APFS
-    if !is_apfs(&src)? {
+    if !is_apfs(src)? {
         return Err(GitWarpError::CoWNotSupported.into());
     }
 
     // Remove destination if it exists
-    if dest.as_ref().exists() {
-        std::fs::remove_dir_all(&dest)?;
+    if dest.exists() {
+        std::fs::remove_dir_all(dest)?;
     }
 
-    // Use cp with APFS clone flags
+    // Fast path: nothing to exclude, clone the whole tree in one `cp` call.
+    let Some(excluded) = exclude else {
+        return cp_clone(src, dest);
+    };
+
+    // The destination lives inside the source, so clone each top-level child
+    // individually and skip the one that leads to the destination (the worktree
+    // storage directory). This preserves CoW speed (`cp -c -R` per child clones
+    // recursively) while never copying the destination back into itself.
+    let src_root = src.canonicalize().unwrap_or_else(|_| src.to_path_buf());
+    std::fs::create_dir_all(dest)
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", dest.display(), e))?;
+    if let Ok(meta) = std::fs::metadata(&src_root) {
+        let _ = std::fs::set_permissions(dest, meta.permissions());
+    }
+
+    for entry in std::fs::read_dir(&src_root)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", src_root.display(), e))?
+    {
+        let entry =
+            entry.map_err(|e| anyhow::anyhow!("Failed to read entry in {}: {}", src_root.display(), e))?;
+        if entry.path() == excluded {
+            continue;
+        }
+        cp_clone(&entry.path(), &dest.join(entry.file_name()))?;
+    }
+
+    Ok(())
+}
+
+/// Recursively CoW-clone `from` to `to` via `cp -c -R` (APFS clonefile).
+#[cfg(target_os = "macos")]
+fn cp_clone(from: &Path, to: &Path) -> Result<()> {
+    use std::process::Command;
+
     let output = Command::new("cp")
         .arg("-c") // Clone files (CoW) if possible
         .arg("-R") // Recursive
-        .arg(src.as_ref())
-        .arg(dest.as_ref())
+        .arg(from)
+        .arg(to)
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to execute cp command: {}", e))?;
 
@@ -273,8 +351,8 @@ fn clone_directory_apfs<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resu
 }
 
 #[cfg(target_os = "linux")]
-fn clone_directory_reflink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
-    linux::clone_directory(src.as_ref(), dest.as_ref())
+fn clone_directory_reflink(src: &Path, dest: &Path, exclude: Option<&Path>) -> Result<()> {
+    linux::clone_directory(src, dest, exclude)
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -287,6 +365,74 @@ mod tests {
     fn test_cow_support_check() {
         let result = is_cow_supported(".");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn nested_dest_exclusion_flags_worktree_storage_child() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("repo");
+        fs::create_dir_all(src.join(".worktrees")).unwrap();
+        let dest = src.join(".worktrees").join("feature-x");
+
+        let excluded =
+            nested_dest_exclusion(&src, &dest).expect("dest inside src must be excluded");
+
+        assert_eq!(excluded, src.canonicalize().unwrap().join(".worktrees"));
+    }
+
+    #[test]
+    fn nested_dest_exclusion_flags_direct_child() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("repo");
+        fs::create_dir_all(&src).unwrap();
+        let dest = src.join("feature-x");
+
+        let excluded =
+            nested_dest_exclusion(&src, &dest).expect("direct child dest must be excluded");
+
+        assert_eq!(excluded, src.canonicalize().unwrap().join("feature-x"));
+    }
+
+    #[test]
+    fn nested_dest_exclusion_none_for_external_dest() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("repo");
+        fs::create_dir_all(&src).unwrap();
+        // Sibling directory outside the source tree — the default git-warp layout.
+        let dest = tmp.path().join("worktrees").join("feature-x");
+
+        assert!(nested_dest_exclusion(&src, &dest).is_none());
+    }
+
+    #[test]
+    fn clone_directory_skips_nested_destination() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("repo");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::create_dir_all(src.join(".worktrees")).unwrap();
+        fs::write(src.join("a.txt"), b"a").unwrap();
+        fs::write(src.join("sub/inner.txt"), b"inner").unwrap();
+        fs::write(src.join(".worktrees/keep.txt"), b"keep").unwrap();
+
+        // Destination lives inside the source's worktree-storage directory —
+        // the layout that previously caused an unbounded recursive copy.
+        let dest = src.join(".worktrees").join("new-worktree");
+
+        if !is_cow_supported(&src).unwrap_or(false) {
+            return;
+        }
+
+        clone_directory(&src, &dest).expect("clone must succeed");
+
+        // Regular files outside the storage dir are cloned.
+        assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"a");
+        assert_eq!(fs::read(dest.join("sub/inner.txt")).unwrap(), b"inner");
+        // The worktree-storage dir (which contains the destination) is excluded,
+        // so nothing recurses back into the new tree.
+        assert!(
+            !dest.join(".worktrees").exists(),
+            "worktree storage dir must be excluded from the clone"
+        );
     }
 
     #[test]
