@@ -114,7 +114,7 @@ installs that tag. The resolved tag is printed before the download starts.
 Pin a specific version with `GIT_WARP_VERSION` to skip the API lookup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_VERSION=v0.3.0 sh
+curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_VERSION=v0.4.0 sh
 ```
 
 If the API lookup fails (no network, rate-limited, custom non-`github.com`
@@ -148,7 +148,7 @@ Release binaries are published for:
 If you prefer to bypass `install.ps1`, grab the archive yourself:
 
 ```powershell
-$tag = 'v0.3.0'
+$tag = 'v0.4.0'
 $asset = "git-warp-$tag-x86_64-pc-windows-msvc.zip"
 $base = "https://github.com/denysbutenko/git-warp/releases/download/$tag"
 irm "$base/$asset" -OutFile $asset
