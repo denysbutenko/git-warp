@@ -1,17 +1,15 @@
 use super::ViewOutcome;
 use crate::tui::agents::truncate_label;
-use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
-use crate::{config::GitConfig, error::Result, git::WorktreeInfo};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crate::{config::GitConfig, git::WorktreeInfo};
+use crossterm::event::KeyCode;
 use ratatui::{
-    Frame, Terminal as RatatuiTerminal,
-    backend::CrosstermBackend,
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use std::{collections::BTreeSet, io, path::PathBuf, time::SystemTime};
+use std::{collections::BTreeSet, path::PathBuf, time::SystemTime};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WorktreeRuntimeStatus {
@@ -162,7 +160,7 @@ enum PendingWorktreeRemoval {
 
 /// Terminal-free controller for the worktree switcher view. Owns selection and
 /// pending-removal state and turns key presses into `ViewOutcome`s. The shell
-/// (or `WorktreeSwitchTui`) owns the terminal and the event loop.
+/// owns the terminal and the event loop.
 pub struct WorktreeSwitchView {
     model: WorktreeSwitchModel,
     selected_index: usize,
@@ -182,7 +180,6 @@ impl WorktreeSwitchView {
         }
     }
 
-    #[allow(dead_code)] // Part of the controller's public API; used by the shell in later tasks.
     pub fn set_notice(&mut self, message: String) {
         self.notice = Some(message);
     }
@@ -318,79 +315,6 @@ impl WorktreeSwitchView {
             _ => {}
         }
         ViewOutcome::Consumed
-    }
-}
-
-pub struct WorktreeSwitchTui {
-    model: WorktreeSwitchModel,
-}
-
-impl WorktreeSwitchTui {
-    pub fn new(model: WorktreeSwitchModel) -> Self {
-        Self { model }
-    }
-
-    pub fn run(&self) -> Result<Option<WorktreeSwitchAction>> {
-        if self.model.rows.is_empty() {
-            for line in &self.model.empty_state_lines {
-                println!("{line}");
-            }
-            return Ok(None);
-        }
-
-        let mut terminal_guard = TuiTerminalGuard::enter()?;
-        let backend = CrosstermBackend::new(io::stdout());
-        let mut terminal = RatatuiTerminal::new(backend)?;
-
-        let run_result = self.run_app(&mut terminal);
-        let cleanup_result = terminal_guard.restore();
-        let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
-        drop(terminal);
-
-        match run_result {
-            Err(err) => {
-                let mut follow_on_errors = Vec::new();
-                if let Err(cleanup_err) = cleanup_result {
-                    follow_on_errors.push(cleanup_err);
-                }
-                if let Err(cursor_err) = cursor_result {
-                    follow_on_errors.push(cursor_err);
-                }
-
-                if follow_on_errors.is_empty() {
-                    Err(err)
-                } else {
-                    Err(combine_errors(err, follow_on_errors))
-                }
-            }
-            Ok(target) => {
-                cleanup_result?;
-                cursor_result?;
-                Ok(target)
-            }
-        }
-    }
-
-    fn run_app(
-        &self,
-        terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
-    ) -> Result<Option<WorktreeSwitchAction>> {
-        let mut view = WorktreeSwitchView::new(self.model.clone());
-
-        loop {
-            terminal.draw(|f| view.draw(f))?;
-
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                match view.handle_key(key.code) {
-                    ViewOutcome::Action(action) => return Ok(Some(action)),
-                    ViewOutcome::Quit => return Ok(None),
-                    ViewOutcome::ToggleView | ViewOutcome::Consumed => {}
-                }
-            }
-        }
     }
 }
 

@@ -478,18 +478,20 @@ impl Cli {
     }
 
     fn handle_default_switcher(&self) -> Result<()> {
+        use crate::agents::AgentDiscovery;
         use crate::config::ConfigManager;
         use crate::git::GitRepository;
         use crate::process::ProcessManager;
         use crate::tui::{
-            WorktreeSwitchAction, WorktreeSwitchTui, build_worktree_switch_model_with_metadata,
+            WarpTui, WorktreeSwitchAction, build_worktree_switch_model_with_metadata,
         };
 
         info!("Starting default worktree switcher");
 
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let config_manager = ConfigManager::new()?;
-        let protected_branches = config_manager.get().git.protected_branches.clone();
+        let config = config_manager.get();
+        let protected_branches = config.git.protected_branches.clone();
         let worktrees = git_repo.list_worktrees()?;
         let statuses =
             Self::collect_worktree_runtime_statuses(&git_repo, &worktrees, ProcessManager::new());
@@ -506,8 +508,19 @@ impl Cli {
             return Ok(());
         }
 
-        let switcher = WorktreeSwitchTui::new(model);
-        match switcher.run()? {
+        let agent_config = &config.agent;
+        let discovery = AgentDiscovery::with_max_history_sessions(
+            Self::agent_monitored_paths(&git_repo)?,
+            agent_config.max_activities,
+        );
+        let mut warp_tui = WarpTui::new(
+            model,
+            discovery,
+            agent_config.refresh_rate,
+            agent_config.enabled,
+        );
+
+        match warp_tui.run()? {
             Some(WorktreeSwitchAction::Switch(target)) => self.handle_switcher_target(target),
             Some(WorktreeSwitchAction::Remove(target)) => self.handle_switcher_remove(target),
             Some(WorktreeSwitchAction::RemoveMany(batch)) => {
