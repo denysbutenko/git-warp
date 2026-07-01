@@ -431,8 +431,7 @@ fn draw_agents_dashboard(
     }
 
     // Help
-    let help_text =
-        "↑↓/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | q/Esc: Quit";
+    let help_text = "↑↓/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | Tab: Worktrees | q/Esc: Quit";
     let help = Paragraph::new(help_text)
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)

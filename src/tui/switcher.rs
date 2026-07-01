@@ -422,7 +422,7 @@ fn draw_worktree_switcher(
     }
 
     let help = Paragraph::new(
-        "↑↓/jk: Navigate | Space: Select | a: All | Enter: Switch | d/Del: Remove selected/current | q/Esc: Quit",
+        "↑↓/jk: Navigate | Space: Select | a: All | Enter: Switch | d/Del: Remove selected/current | Tab: Agents | q/Esc: Quit",
     )
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
