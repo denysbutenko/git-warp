@@ -1,6 +1,9 @@
 pub mod agents;
 pub mod cleanup;
 pub mod config_editor;
+// Not yet wired into the CLI (Task 4); allow(dead_code) is temporary.
+#[allow(dead_code)]
+pub mod shell;
 pub mod switcher;
 pub mod terminal;
 
@@ -21,6 +24,8 @@ pub use config_editor::{
     ConfigSectionId, ConfigStatusKind, ConfigStatusMsg, ConfigTui, apply_field_value,
     config_field_specs, detect_env_overrides, draw_config_editor, render_field_value,
 };
+#[allow(unused_imports)]
+pub use shell::WarpTui;
 #[allow(unused_imports)]
 pub use switcher::{
     WorktreeBatchRemoval, WorktreeRemovalBlock, WorktreeRemovalSkip, WorktreeRemovalTarget,
