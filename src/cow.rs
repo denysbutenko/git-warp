@@ -315,8 +315,9 @@ fn clone_directory_apfs(src: &Path, dest: &Path, exclude: Option<&Path>) -> Resu
     for entry in std::fs::read_dir(&src_root)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", src_root.display(), e))?
     {
-        let entry =
-            entry.map_err(|e| anyhow::anyhow!("Failed to read entry in {}: {}", src_root.display(), e))?;
+        let entry = entry.map_err(|e| {
+            anyhow::anyhow!("Failed to read entry in {}: {}", src_root.display(), e)
+        })?;
         if entry.path() == excluded {
             continue;
         }
