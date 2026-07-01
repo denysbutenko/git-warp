@@ -1,3 +1,4 @@
+use super::ViewOutcome;
 use crate::tui::terminal::{TuiTerminalGuard, combine_errors};
 use crate::{
     agents::{
@@ -154,28 +155,111 @@ pub fn is_stale_session(session: &AgentSessionSummary, now: DateTime<Local>) -> 
     now.signed_duration_since(session.last_activity) > ChronoDuration::hours(STALE_THRESHOLD_HOURS)
 }
 
+/// Terminal-free controller for the agents dashboard view. Owns session data,
+/// selection, filters, and refresh timing; turns key presses into
+/// `ViewOutcome`s. The shell (or `TuiApp`) owns the terminal and event loop.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct TuiApp {
-    should_quit: bool,
+pub struct AgentsView {
     selected_index: usize,
     last_refresh: Instant,
     refresh_interval: Duration,
+    force_refresh: bool,
     discovery: AgentDiscovery,
     sessions: Vec<AgentSessionSummary>,
-    filters: DashboardFilters,
+    pub filters: DashboardFilters,
+}
+
+impl AgentsView {
+    pub fn with_refresh_interval(discovery: AgentDiscovery, refresh_interval: Duration) -> Self {
+        let refresh_interval = refresh_interval.max(MIN_REFRESH_INTERVAL);
+        Self {
+            selected_index: 0,
+            last_refresh: Instant::now(),
+            refresh_interval,
+            force_refresh: true,
+            discovery,
+            sessions: Vec::new(),
+            filters: DashboardFilters::default(),
+        }
+    }
+
+    pub fn maybe_refresh(&mut self) -> Result<()> {
+        if self.force_refresh || self.last_refresh.elapsed() >= self.refresh_interval {
+            self.refresh_sessions()?;
+        }
+        Ok(())
+    }
+
+    pub fn refresh_sessions(&mut self) -> Result<()> {
+        self.sessions = self.discovery.discover(Local::now())?;
+        let filtered = self.filtered_count();
+        if filtered == 0 {
+            self.selected_index = 0;
+        } else {
+            self.selected_index = self.selected_index.min(filtered - 1);
+        }
+        self.last_refresh = Instant::now();
+        self.force_refresh = false;
+        Ok(())
+    }
+
+    fn filtered_count(&self) -> usize {
+        let now = Local::now();
+        self.sessions
+            .iter()
+            .filter(|session| {
+                self.filters.runtime.matches(session.runtime)
+                    && self.filters.presence.matches(session, now)
+            })
+            .count()
+    }
+
+    pub fn handle_key(&mut self, code: KeyCode) -> ViewOutcome {
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc => return ViewOutcome::Quit,
+            KeyCode::Tab => return ViewOutcome::ToggleView,
+            KeyCode::Up | KeyCode::Char('k') if self.selected_index > 0 => {
+                self.selected_index -= 1;
+            }
+            KeyCode::Down | KeyCode::Char('j')
+                if self.selected_index < self.filtered_count().saturating_sub(1) =>
+            {
+                self.selected_index += 1;
+            }
+            KeyCode::Char('r') => self.force_refresh = true,
+            KeyCode::Char('t') => {
+                self.filters.runtime = self.filters.runtime.next();
+                self.selected_index = 0;
+            }
+            KeyCode::Char('p') => {
+                self.filters.presence = self.filters.presence.next();
+                self.selected_index = 0;
+            }
+            KeyCode::Char('c') => {
+                self.filters = DashboardFilters::default();
+                self.selected_index = 0;
+            }
+            _ => {}
+        }
+        ViewOutcome::Consumed
+    }
+
+    pub fn draw(&self, f: &mut Frame, now: DateTime<Local>) {
+        draw_agents_dashboard(f, &self.sessions, self.selected_index, self.filters, now);
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TuiApp {
+    view: AgentsView,
+    should_quit: bool,
 }
 
 impl TuiApp {
     pub fn with_refresh_interval(discovery: AgentDiscovery, refresh_interval: Duration) -> Self {
-        let refresh_interval = refresh_interval.max(MIN_REFRESH_INTERVAL);
         Self {
+            view: AgentsView::with_refresh_interval(discovery, refresh_interval),
             should_quit: false,
-            selected_index: 0,
-            last_refresh: Instant::now() - refresh_interval,
-            refresh_interval,
-            discovery,
-            sessions: Vec::new(),
-            filters: DashboardFilters::default(),
         }
     }
 
@@ -184,9 +268,7 @@ impl TuiApp {
         let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = RatatuiTerminal::new(backend)?;
 
-        let run_result = self
-            .refresh_sessions()
-            .and_then(|_| self.run_app(&mut terminal));
+        let run_result = self.run_app(&mut terminal);
         let cleanup_result = terminal_guard.restore();
         let cursor_result: Result<()> = terminal.show_cursor().map_err(Into::into);
         drop(terminal);
@@ -200,7 +282,6 @@ impl TuiApp {
                 if let Err(cursor_err) = cursor_result {
                     follow_on_errors.push(cursor_err);
                 }
-
                 if follow_on_errors.is_empty() {
                     Err(err)
                 } else {
@@ -219,48 +300,16 @@ impl TuiApp {
         terminal: &mut RatatuiTerminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<()> {
         loop {
-            if self.last_refresh.elapsed() >= self.refresh_interval {
-                self.refresh_sessions()?;
-            }
+            self.view.maybe_refresh()?;
+            terminal.draw(|f| self.view.draw(f, Local::now()))?;
 
-            terminal.draw(|f| self.draw_agents_dashboard(f, Local::now()))?;
-
-            // Non-blocking event check
             let timeout = Duration::from_millis(100);
             if poll(timeout)?
                 && let Event::Key(key) = event::read()?
             {
-                match key.code {
-                    KeyCode::Char('q') => {
-                        self.should_quit = true;
-                    }
-                    KeyCode::Esc => {
-                        self.should_quit = true;
-                    }
-                    KeyCode::Up | KeyCode::Char('k') if self.selected_index > 0 => {
-                        self.selected_index -= 1;
-                    }
-                    KeyCode::Down | KeyCode::Char('j')
-                        if self.selected_index < self.filtered_count().saturating_sub(1) =>
-                    {
-                        self.selected_index += 1;
-                    }
-                    KeyCode::Char('r') => {
-                        self.refresh_sessions()?;
-                    }
-                    KeyCode::Char('t') => {
-                        self.filters.runtime = self.filters.runtime.next();
-                        self.selected_index = 0;
-                    }
-                    KeyCode::Char('p') => {
-                        self.filters.presence = self.filters.presence.next();
-                        self.selected_index = 0;
-                    }
-                    KeyCode::Char('c') => {
-                        self.filters = DashboardFilters::default();
-                        self.selected_index = 0;
-                    }
-                    _ => {}
+                match self.view.handle_key(key.code) {
+                    ViewOutcome::Quit => self.should_quit = true,
+                    ViewOutcome::ToggleView | ViewOutcome::Consumed | ViewOutcome::Action(_) => {}
                 }
             }
 
@@ -268,154 +317,127 @@ impl TuiApp {
                 break;
             }
         }
-
         Ok(())
     }
+}
 
-    fn refresh_sessions(&mut self) -> Result<()> {
-        self.sessions = self.discovery.discover(Local::now())?;
-        let filtered = self.filtered_count();
-        if filtered == 0 {
-            self.selected_index = 0;
-        } else {
-            self.selected_index = self.selected_index.min(filtered - 1);
-        }
-        self.last_refresh = Instant::now();
-        Ok(())
-    }
+fn draw_agents_dashboard(
+    f: &mut Frame,
+    sessions: &[AgentSessionSummary],
+    selected_index: usize,
+    filters: DashboardFilters,
+    now: DateTime<Local>,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3), // Header
+            Constraint::Min(8),    // Main content
+            Constraint::Length(3), // Help
+        ])
+        .split(f.area());
 
-    fn filtered_count(&self) -> usize {
-        let now = Local::now();
-        self.sessions
-            .iter()
-            .filter(|session| {
-                self.filters.runtime.matches(session.runtime)
-                    && self.filters.presence.matches(session, now)
-            })
-            .count()
-    }
+    let preview_model =
+        build_dashboard_model_filtered_windowed(sessions, now, selected_index, 1, filters);
+    let header_text = if filters.is_active() {
+        format!(
+            "Warp Agents ({}/{}) — {}",
+            preview_model.total_rows, preview_model.total_unfiltered, preview_model.filter_summary
+        )
+    } else {
+        format!("Warp Agents ({})", preview_model.total_unfiltered)
+    };
+    let header = Paragraph::new(header_text)
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
 
-    fn draw_agents_dashboard(&self, f: &mut Frame, now: DateTime<Local>) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(8),    // Main content
-                Constraint::Length(3), // Help
-            ])
-            .split(f.area());
-
-        let preview_model = build_dashboard_model_filtered_windowed(
-            &self.sessions,
+    if preview_model.total_rows == 0 {
+        let empty_model = build_dashboard_model_filtered_windowed(sessions, now, 0, 1, filters);
+        let empty_state = Paragraph::new(empty_model.empty_state_lines.join("\n\n"))
+            .block(Block::default().title("No Sessions").borders(Borders::ALL))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray))
+            .wrap(Wrap { trim: false });
+        f.render_widget(empty_state, chunks[1]);
+    } else {
+        let content_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(chunks[1]);
+        let visible_capacity = content_chunks[0].height.saturating_sub(2).max(1) as usize;
+        let model = build_dashboard_model_filtered_windowed(
+            sessions,
             now,
-            self.selected_index,
-            1,
-            self.filters,
+            selected_index,
+            visible_capacity,
+            filters,
         );
-        let header_text = if self.filters.is_active() {
-            format!(
-                "Warp Agents ({}/{}) — {}",
-                preview_model.total_rows,
-                preview_model.total_unfiltered,
-                preview_model.filter_summary
-            )
-        } else {
-            format!("Warp Agents ({})", preview_model.total_unfiltered)
-        };
-        let header = Paragraph::new(header_text)
-            .style(
+
+        let session_items: Vec<ListItem> = model
+            .rows
+            .iter()
+            .map(|row| {
+                let stale_marker = if row.is_stale { "~" } else { " " };
+                let text = format!(
+                    "{}{} {:<6} {:<10} {:<18} {:<18} {}",
+                    stale_marker,
+                    row.state_symbol,
+                    row.runtime_label,
+                    truncate_label(row.state_label, 10),
+                    truncate_label(&row.location_label, 18),
+                    truncate_label(&row.agent_label, 18),
+                    row.relative_time
+                );
+                let style = if row.is_stale {
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM)
+                } else {
+                    Style::default().fg(session_state_color(row.session.state))
+                };
+                ListItem::new(Line::from(text)).style(style)
+            })
+            .collect();
+
+        let sessions_list = List::new(session_items)
+            .block(Block::default().title("Sessions").borders(Borders::ALL))
+            .highlight_style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .bg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD),
             )
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(header, chunks[0]);
+            .highlight_symbol(">> ");
+        let mut list_state = ListState::default();
+        list_state.select(Some(selected_index.saturating_sub(model.start_index)));
+        f.render_stateful_widget(sessions_list, content_chunks[0], &mut list_state);
 
-        if preview_model.total_rows == 0 {
-            let empty_model =
-                build_dashboard_model_filtered_windowed(&self.sessions, now, 0, 1, self.filters);
-            let empty_state = Paragraph::new(empty_model.empty_state_lines.join("\n\n"))
-                .block(Block::default().title("No Sessions").borders(Borders::ALL))
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Gray))
+        if let Some(selected_row) = model
+            .rows
+            .get(selected_index.saturating_sub(model.start_index))
+        {
+            let details = Paragraph::new(session_detail_lines(&selected_row.session).join("\n"))
+                .block(Block::default().title("Details").borders(Borders::ALL))
+                .style(Style::default().fg(Color::White))
                 .wrap(Wrap { trim: false });
-            f.render_widget(empty_state, chunks[1]);
-        } else {
-            let content_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .split(chunks[1]);
-            let visible_capacity = content_chunks[0].height.saturating_sub(2).max(1) as usize;
-            let model = build_dashboard_model_filtered_windowed(
-                &self.sessions,
-                now,
-                self.selected_index,
-                visible_capacity,
-                self.filters,
-            );
-
-            let session_items: Vec<ListItem> = model
-                .rows
-                .iter()
-                .map(|row| {
-                    let stale_marker = if row.is_stale { "~" } else { " " };
-                    let text = format!(
-                        "{}{} {:<6} {:<10} {:<18} {:<18} {}",
-                        stale_marker,
-                        row.state_symbol,
-                        row.runtime_label,
-                        truncate_label(row.state_label, 10),
-                        truncate_label(&row.location_label, 18),
-                        truncate_label(&row.agent_label, 18),
-                        row.relative_time
-                    );
-                    let style = if row.is_stale {
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .add_modifier(Modifier::DIM)
-                    } else {
-                        Style::default().fg(session_state_color(row.session.state))
-                    };
-                    ListItem::new(Line::from(text)).style(style)
-                })
-                .collect();
-
-            let sessions_list = List::new(session_items)
-                .block(Block::default().title("Sessions").borders(Borders::ALL))
-                .highlight_style(
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .highlight_symbol(">> ");
-            let mut list_state = ListState::default();
-            list_state.select(Some(self.selected_index.saturating_sub(model.start_index)));
-            f.render_stateful_widget(sessions_list, content_chunks[0], &mut list_state);
-
-            if let Some(selected_row) = model
-                .rows
-                .get(self.selected_index.saturating_sub(model.start_index))
-            {
-                let details =
-                    Paragraph::new(session_detail_lines(&selected_row.session).join("\n"))
-                        .block(Block::default().title("Details").borders(Borders::ALL))
-                        .style(Style::default().fg(Color::White))
-                        .wrap(Wrap { trim: false });
-                f.render_widget(details, content_chunks[1]);
-            }
+            f.render_widget(details, content_chunks[1]);
         }
-
-        // Help
-        let help_text =
-            "↑↓/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | q/Esc: Quit";
-        let help = Paragraph::new(help_text)
-            .style(Style::default().fg(Color::Gray))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Help"));
-        f.render_widget(help, chunks[2]);
     }
+
+    // Help
+    let help_text =
+        "↑↓/jk: Navigate | r: Refresh | t: Runtime | p: Presence | c: Clear | q/Esc: Quit";
+    let help = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Help"));
+    f.render_widget(help, chunks[2]);
 }
 
 #[allow(dead_code)] // Convenience wrappers used by unit tests via the library crate.
@@ -725,5 +747,39 @@ mod tests {
 
         assert!(lines.iter().any(|line| line == "Runtime: Codex"));
         assert!(lines.iter().any(|line| line == "Source: Merged"));
+    }
+
+    fn empty_agents_view() -> AgentsView {
+        use crate::agents::AgentDiscovery;
+        AgentsView::with_refresh_interval(AgentDiscovery::new(vec![]), Duration::from_millis(1000))
+    }
+
+    #[test]
+    fn agents_view_tab_requests_toggle() {
+        let mut view = empty_agents_view();
+        assert_eq!(
+            view.handle_key(KeyCode::Tab),
+            crate::tui::ViewOutcome::ToggleView
+        );
+    }
+
+    #[test]
+    fn agents_view_quit_on_q_and_esc() {
+        let mut view = empty_agents_view();
+        assert_eq!(
+            view.handle_key(KeyCode::Char('q')),
+            crate::tui::ViewOutcome::Quit
+        );
+        assert_eq!(view.handle_key(KeyCode::Esc), crate::tui::ViewOutcome::Quit);
+    }
+
+    #[test]
+    fn agents_view_runtime_filter_cycles() {
+        let mut view = empty_agents_view();
+        assert_eq!(
+            view.handle_key(KeyCode::Char('t')),
+            crate::tui::ViewOutcome::Consumed
+        );
+        assert_eq!(view.filters.runtime, AgentRuntimeFilter::Claude);
     }
 }
