@@ -5,6 +5,9 @@ use std::time::Duration;
 use std::time::Instant;
 use sysinfo::{ProcessesToUpdate, System};
 
+#[cfg(windows)]
+const WINDOWS_FORCE_WAIT_MS: u32 = 5_000;
+
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -233,16 +236,69 @@ impl ProcessManager {
 
         #[cfg(windows)]
         {
-            let _ = kill_timeout; // taskkill is immediate; timeout unused on Windows.
             use std::process::Command;
+            use windows_sys::Win32::Foundation::{
+                CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT,
+            };
+            use windows_sys::Win32::System::Threading::{
+                OpenProcess, PROCESS_TERMINATE, SYNCHRONIZE, TerminateProcess, WaitForSingleObject,
+            };
 
-            let result = Command::new("taskkill")
+            // SYNCHRONIZE lets us wait on the process handle for graceful exit;
+            // PROCESS_TERMINATE is the fallback if the grace window elapses.
+            let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+            if handle.is_null() {
+                let err = unsafe { GetLastError() };
+                if err == ERROR_INVALID_PARAMETER {
+                    // Windows returns ERROR_INVALID_PARAMETER when the PID no
+                    // longer exists — mirror the Unix ESRCH branch and report
+                    // success.
+                    return true;
+                }
+                log::warn!("OpenProcess({pid}) failed: {err}");
+                return false;
+            }
+
+            // Fire the graceful attempt via taskkill without /F. This sends
+            // WM_CLOSE to top-level windows and CTRL+BREAK to console apps in
+            // the target's tree, without disturbing our own console state the
+            // way GenerateConsoleCtrlEvent from this process would. Failure
+            // just means we fall through to the timeout + TerminateProcess
+            // path.
+            let _ = Command::new("taskkill")
                 .arg("/PID")
                 .arg(pid.to_string())
-                .arg("/F")
+                .arg("/T")
                 .output();
 
-            result.map(|o| o.status.success()).unwrap_or(false)
+            let grace_ms = u32::try_from(kill_timeout.as_millis()).unwrap_or(u32::MAX);
+            let wait = unsafe { WaitForSingleObject(handle, grace_ms) };
+
+            let result = if wait == WAIT_OBJECT_0 {
+                true
+            } else if wait == WAIT_TIMEOUT {
+                let terminated = unsafe { TerminateProcess(handle, 1) };
+                if terminated == 0 {
+                    let err = unsafe { GetLastError() };
+                    log::warn!("TerminateProcess({pid}) failed: {err}");
+                    false
+                } else {
+                    // Wait briefly for the kernel to finish tearing the
+                    // process down so a caller-side sysinfo refresh sees it
+                    // gone.
+                    let _ = unsafe { WaitForSingleObject(handle, WINDOWS_FORCE_WAIT_MS) };
+                    true
+                }
+            } else {
+                let err = unsafe { GetLastError() };
+                log::warn!("WaitForSingleObject({pid}) returned {wait:#x}: {err}");
+                false
+            };
+
+            unsafe {
+                CloseHandle(handle);
+            }
+            result
         }
 
         #[cfg(not(any(unix, windows)))]
@@ -399,6 +455,58 @@ mod tests {
         let ok = manager.terminate_single_process(pid, Duration::from_millis(200));
 
         assert!(ok, "ESRCH should be treated as success");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminate_single_process_handles_missing_pid() {
+        use std::process::Command as StdCommand;
+
+        // Spawn cmd /C exit 0, wait for it to exit, then let Rust reap it.
+        // OpenProcess on the recycled PID must fail with ERROR_INVALID_PARAMETER,
+        // which the Windows branch treats as success (mirrors the Unix ESRCH
+        // path).
+        let mut child = StdCommand::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .expect("spawn cmd exit");
+        let pid = child.id();
+        let _ = child.wait();
+
+        let manager = ProcessManager::new();
+        let ok = manager.terminate_single_process(pid, Duration::from_millis(200));
+
+        assert!(ok, "vanished PID should be treated as success on Windows");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminate_single_process_respects_kill_timeout() {
+        use std::process::Command as StdCommand;
+        use std::time::Instant;
+
+        // powershell sleep for 30s; taskkill without /F won't touch it, so the
+        // TerminateProcess fallback path must fire after the kill_timeout
+        // elapses. Total wall time stays well below the 30s sleep.
+        let mut child = StdCommand::new("powershell")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
+            .spawn()
+            .expect("spawn powershell sleep");
+        let pid = child.id();
+
+        let manager = ProcessManager::new();
+        let start = Instant::now();
+        let ok = manager.terminate_single_process(pid, Duration::from_millis(200));
+        let elapsed = start.elapsed();
+
+        assert!(ok, "terminate_single_process should report success");
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "expected fast TerminateProcess fallback, took {:?}",
+            elapsed
+        );
+
+        let _ = child.wait();
     }
 
     #[cfg(unix)]
