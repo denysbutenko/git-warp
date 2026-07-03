@@ -10,10 +10,17 @@
     Defaults to "$env:LOCALAPPDATA\Programs\git-warp\bin" (the install.ps1
     default). Override with -InstallDir or $env:GIT_WARP_INSTALL_DIR.
 
+    For a Cargo install with a custom root, pass -InstallRoot or
+    $env:GIT_WARP_INSTALL_ROOT (mirrors install.ps1). The uninstaller then
+    targets "<root>\bin\warp.exe".
+
     Other detected warp.exe installs (Cargo, custom directories) are listed
     but not touched.
 .PARAMETER InstallDir
     Directory containing warp.exe. Defaults to the install.ps1 location.
+.PARAMETER InstallRoot
+    Cargo install root that owns "<root>\bin\warp.exe". Overrides -InstallDir
+    when set. Mirrors install.ps1 -InstallRoot / $env:GIT_WARP_INSTALL_ROOT.
 .PARAMETER DryRun
     Print the actions that would run without modifying the system.
 .EXAMPLE
@@ -27,6 +34,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir,
+    [string]$InstallRoot,
     [switch]$DryRun
 )
 
@@ -167,7 +175,7 @@ function Show-ProfileLeftovers {
 }
 
 function Show-OtherInstalls {
-    param([string]$Target)
+    param([string]$Target, [string]$InstallRoot)
 
     $candidates = @()
     if ($env:GIT_WARP_INSTALL_DIR) {
@@ -175,6 +183,12 @@ function Show-OtherInstalls {
     }
     if ($env:LOCALAPPDATA) {
         $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\git-warp\bin\warp.exe')
+    }
+    if ($env:GIT_WARP_INSTALL_ROOT) {
+        $candidates += (Join-Path $env:GIT_WARP_INSTALL_ROOT 'bin\warp.exe')
+    }
+    if ($InstallRoot) {
+        $candidates += (Join-Path $InstallRoot 'bin\warp.exe')
     }
     if ($env:USERPROFILE) {
         $candidates += (Join-Path $env:USERPROFILE '.cargo\bin\warp.exe')
@@ -224,10 +238,14 @@ function Show-PathLeftover {
 
 $defaultDir = Join-Path $env:LOCALAPPDATA 'Programs\git-warp\bin'
 $installDir = Coalesce $InstallDir 'GIT_WARP_INSTALL_DIR' $defaultDir
+$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null
+if ($installRoot) {
+    $installDir = Join-Path $installRoot 'bin'
+}
 $target = Join-Path $installDir 'warp.exe'
 
 Remove-Hooks -Target $target -Preview $DryRun.IsPresent
 Remove-Binary -Target $target -Dir $installDir -Preview $DryRun.IsPresent
 Show-ProfileLeftovers
-Show-OtherInstalls -Target $target
+Show-OtherInstalls -Target $target -InstallRoot $installRoot
 Show-PathLeftover -Target $target
