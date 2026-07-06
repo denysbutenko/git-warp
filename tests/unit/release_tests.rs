@@ -116,9 +116,19 @@ fn test_collect_metadata_checks_all_pass() {
     )
     .unwrap();
 
+    // 6. src/cli.rs with the PowerShell shell-config emitter
+    let src_dir = temp.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("cli.rs"),
+        "// function warp_cd emitter\n\
+         // Register-ArgumentCompleter -CommandName warp -Native\n",
+    )
+    .unwrap();
+
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     for check in &checks {
         assert!(check.ok, "check failed: {} - {}", check.label, check.detail);
     }
@@ -135,7 +145,7 @@ fn test_collect_metadata_checks_failures() {
     // All files missing or mismatched
     let checks = collect_metadata_checks(temp.path(), &expected, "0.2.0").unwrap();
 
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     for check in &checks {
         assert!(!check.ok, "check should have failed: {}", check.label);
     }
@@ -175,6 +185,8 @@ fn test_collect_metadata_checks_failures() {
             .detail
             .contains("warp hooks-remove --level user invocation")
     );
+    assert_eq!(checks[7].label, "src/cli.rs");
+    assert!(checks[7].detail.contains("PowerShell shell-config emitter"));
 }
 
 #[test]
@@ -279,6 +291,39 @@ fn test_uninstall_ps1_missing_hooks_remove_fails() {
 }
 
 #[test]
+fn test_cli_rs_missing_powershell_emitter_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // src/cli.rs kept warp_cd but lost the Register-ArgumentCompleter line.
+    let src_dir = temp.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("cli.rs"),
+        "fn handle_shell_config() { println!(\"function warp_cd\"); }\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks[7].label, "src/cli.rs");
+    assert!(
+        !checks[7].ok,
+        "src/cli.rs without Register-ArgumentCompleter should fail"
+    );
+    assert!(
+        checks[7]
+            .detail
+            .contains("Register-ArgumentCompleter block"),
+        "fail detail should call out the missing completer, got: {}",
+        checks[7].detail
+    );
+}
+
+#[test]
 fn test_changelog_heading_variants() {
     let temp = tempdir().unwrap();
     let expected = ReleaseVersion {
@@ -330,7 +375,7 @@ fn test_collect_metadata_checks_partial_success() {
     // All other files are missing.
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     assert!(checks[0].ok, "Cargo.toml check should pass");
     assert!(!checks[1].ok, "CHANGELOG.md check should fail");
     assert!(!checks[2].ok, "release notes check should fail");
@@ -338,4 +383,5 @@ fn test_collect_metadata_checks_partial_success() {
     assert!(!checks[4].ok, "install.sh check should fail");
     assert!(!checks[5].ok, "install.ps1 check should fail");
     assert!(!checks[6].ok, "uninstall.ps1 check should fail");
+    assert!(!checks[7].ok, "src/cli.rs check should fail");
 }

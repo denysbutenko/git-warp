@@ -1245,6 +1245,39 @@ fn test_shell_config_fish_outputs_branch_completion_for_root_and_switch() {
     assert!(stdout.contains("warp __complete branches (commandline -ct)"));
 }
 
+#[test]
+fn test_shell_config_powershell_outputs_reusable_function() {
+    let output = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["shell-config", "powershell"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("function warp_cd"));
+    assert!(stdout.contains("warp --terminal echo @args"));
+    assert!(stdout.contains("Invoke-Expression"));
+    assert!(stdout.contains("Register-ArgumentCompleter -CommandName warp -Native"));
+    assert!(stdout.contains("warp __complete branches $wordToComplete"));
+    assert!(stdout.contains("$commandAst.CommandElements"));
+}
+
+#[test]
+fn test_shell_config_pwsh_alias_matches_powershell() {
+    let ps = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["shell-config", "powershell"])
+        .output()
+        .unwrap();
+    let pwsh = Command::new(env!("CARGO_BIN_EXE_warp"))
+        .args(["shell-config", "pwsh"])
+        .output()
+        .unwrap();
+
+    assert!(ps.status.success());
+    assert!(pwsh.status.success());
+    assert_eq!(ps.stdout, pwsh.stdout);
+}
+
 // Keep in sync with the public variants of `Commands` in src/cli.rs.
 // The binary builds the live list dynamically via clap::CommandFactory, so
 // adding a new public subcommand updates the rendered snippet automatically;
@@ -1267,7 +1300,7 @@ const PUBLIC_SUBCOMMAND_NAMES: &[&str] = &[
 
 #[test]
 fn test_shell_config_lists_every_public_subcommand() {
-    for shell in ["bash", "zsh", "fish"] {
+    for shell in ["bash", "zsh", "fish", "powershell"] {
         let output = Command::new(env!("CARGO_BIN_EXE_warp"))
             .args(["shell-config", shell])
             .output()
