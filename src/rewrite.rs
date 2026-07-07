@@ -22,36 +22,32 @@ impl PathRewriter {
         }
     }
 
-    /// Rewrite absolute paths in gitignored files
+    /// Rewrite absolute paths across the whole destination worktree.
+    ///
+    /// The `warp` bin scopes rewriting to the overlaid entries via
+    /// [`Self::rewrite_paths_under`]; this whole-tree variant remains for the
+    /// library's tests and benchmarks.
+    #[allow(dead_code)]
     pub fn rewrite_paths(&self) -> Result<()> {
+        let dest_path = self.dest_path.clone();
+        self.rewrite_files(collect_files(&dest_path))
+    }
+
+    /// Rewrite absolute paths only within `roots` (files or directories),
+    /// instead of walking the entire worktree.
+    ///
+    /// The CoW overlay copies just the untracked/ignored entries, so only those
+    /// can carry a baked-in old path. Scoping to them keeps the walk small and,
+    /// critically, never rewrites tracked files — which git already checked out
+    /// and which must not gain spurious diffs.
+    pub fn rewrite_paths_under(&self, roots: &[PathBuf]) -> Result<()> {
+        let files: Vec<PathBuf> = roots.iter().flat_map(|root| collect_files(root)).collect();
+        self.rewrite_files(files)
+    }
+
+    fn rewrite_files(&self, files: Vec<PathBuf>) -> Result<()> {
         let src_str = self.src_path.to_string_lossy();
         let dest_str = self.dest_path.to_string_lossy();
-
-        // Build a list of files to process. The rewriter targets gitignored
-        // artifacts (venvs, build output, generated configs) that bake in the
-        // old worktree path, so the walker must NOT filter on gitignore. The
-        // `.git` entry is pruned explicitly: in a primary worktree it is the
-        // repo's internal directory, and in a secondary worktree it is a
-        // `gitdir:` pointer file that git owns.
-        let files: Vec<PathBuf> = WalkBuilder::new(&self.dest_path)
-            .hidden(false)
-            .git_ignore(false)
-            .git_global(false)
-            .git_exclude(false)
-            .require_git(false)
-            .filter_entry(|entry| entry.file_name() != ".git")
-            .build()
-            .filter_map(|entry| match entry {
-                Ok(entry) => {
-                    if entry.file_type()?.is_file() {
-                        Some(entry.path().to_path_buf())
-                    } else {
-                        None
-                    }
-                }
-                Err(_) => None,
-            })
-            .collect();
 
         // Process files in parallel
         files.par_iter().for_each(|file_path| {
@@ -131,6 +127,36 @@ impl PathRewriter {
             printable_ratio < 0.95
         }
     }
+}
+
+/// Collect the regular files under `root` for path rewriting.
+///
+/// The rewriter targets gitignored artifacts (venvs, build output, generated
+/// configs) that bake in the old worktree path, so the walker must NOT filter
+/// on gitignore. The `.git` entry is pruned explicitly: in a primary worktree
+/// it is the repo's internal directory, and in a secondary worktree it is a
+/// `gitdir:` pointer file that git owns. A `root` that is itself a file yields
+/// just that file.
+fn collect_files(root: &Path) -> Vec<PathBuf> {
+    WalkBuilder::new(root)
+        .hidden(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .require_git(false)
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .build()
+        .filter_map(|entry| match entry {
+            Ok(entry) => {
+                if entry.file_type()?.is_file() {
+                    Some(entry.path().to_path_buf())
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        })
+        .collect()
 }
 
 /// True when `c` can continue an absolute path token, so a match that
@@ -284,6 +310,37 @@ mod tests {
         assert_eq!(
             head_before, head_after,
             ".git/HEAD must not be touched by the rewriter"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_paths_under_scopes_to_roots_only() {
+        let temp_dir = tempdir().unwrap();
+        let src_dir = temp_dir.path().join("primary");
+        let dest_dir = temp_dir.path().join("worktree");
+        fs::create_dir_all(dest_dir.join("node_modules")).unwrap();
+        fs::create_dir_all(&src_dir).unwrap();
+
+        // An overlaid file (inside the root we pass) and a tracked file that is
+        // NOT in the overlay roots. Both bake in the old primary path.
+        let baked = format!("root={}", src_dir.display());
+        fs::write(dest_dir.join("node_modules/.bin_path"), &baked).unwrap();
+        fs::write(dest_dir.join("tracked.config"), &baked).unwrap();
+
+        PathRewriter::new(&src_dir, &dest_dir)
+            .rewrite_paths_under(&[dest_dir.join("node_modules")])
+            .unwrap();
+
+        // The overlaid file is rewritten to the new worktree path...
+        let overlaid = fs::read_to_string(dest_dir.join("node_modules/.bin_path")).unwrap();
+        assert!(overlaid.contains(&dest_dir.to_string_lossy().to_string()));
+        assert!(!overlaid.contains(&src_dir.to_string_lossy().to_string()));
+
+        // ...while the tracked file outside the roots is left byte-for-byte
+        // identical, so git sees no spurious diff.
+        assert_eq!(
+            fs::read_to_string(dest_dir.join("tracked.config")).unwrap(),
+            baked
         );
     }
 

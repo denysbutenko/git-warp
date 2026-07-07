@@ -44,6 +44,22 @@ pub struct Config {
     /// Post-create setup settings
     #[serde(default)]
     pub post_create: PostCreateConfig,
+
+    /// Copy-on-Write overlay settings
+    #[serde(default)]
+    pub cow: CowConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CowConfig {
+    /// Directory/file names to skip when CoW-overlaying a new worktree with the
+    /// primary's untracked & ignored files. Matched against any path component,
+    /// so `target` also skips `crates/foo/target`. `.git` and tracked files are
+    /// always skipped regardless of this list. Defaults to regeneratable build
+    /// and cache output (`node_modules` is intentionally kept, since cloning it
+    /// is the point). Set to `[]` to overlay everything untracked.
+    #[serde(default = "default_cow_exclude")]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +168,28 @@ fn default_max_activities() -> usize {
     100
 }
 
+fn default_cow_exclude() -> Vec<String> {
+    [
+        "target",
+        "dist",
+        "build",
+        "out",
+        "coverage",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
+        ".parcel-cache",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".gradle",
+    ]
+    .iter()
+    .map(|entry| entry.to_string())
+    .collect()
+}
+
 // Default implementations
 impl Default for Config {
     fn default() -> Self {
@@ -165,6 +203,15 @@ impl Default for Config {
             terminal: TerminalConfig::default(),
             agent: AgentConfig::default(),
             post_create: PostCreateConfig::default(),
+            cow: CowConfig::default(),
+        }
+    }
+}
+
+impl Default for CowConfig {
+    fn default() -> Self {
+        Self {
+            exclude: default_cow_exclude(),
         }
     }
 }
@@ -285,6 +332,12 @@ refresh_rate = {}
 
 # Maximum activities to track
 max_activities = {}
+
+[cow]
+# Names to skip when copying the primary worktree's untracked & ignored files
+# into a new worktree. Matched per path component. `.git` and tracked files are
+# never copied. `node_modules` is kept on purpose. Set to [] to copy everything.
+exclude = {:?}
 "#,
             config.terminal_mode,
             config.use_cow,
@@ -302,6 +355,7 @@ max_activities = {}
             config.agent.enabled,
             config.agent.refresh_rate,
             config.agent.max_activities,
+            config.cow.exclude,
         )
     }
 }
@@ -453,12 +507,42 @@ mod tests {
         assert!(sample.contains("[agent]"));
         assert!(sample.contains("[post_create]"));
         assert!(sample.contains("auto_install"));
+        assert!(sample.contains("[cow]"));
+        assert!(sample.contains("exclude"));
     }
 
     #[test]
     fn test_post_create_defaults() {
         let config = Config::default();
         assert!(config.post_create.auto_install);
+    }
+
+    #[test]
+    fn test_cow_exclude_defaults_skip_build_output_keep_node_modules() {
+        let config = Config::default();
+        assert!(config.cow.exclude.contains(&"target".to_string()));
+        assert!(config.cow.exclude.contains(&"dist".to_string()));
+        assert!(
+            !config.cow.exclude.contains(&"node_modules".to_string()),
+            "node_modules must stay copyable by default"
+        );
+    }
+
+    #[test]
+    fn test_cow_config_serialization_roundtrip() {
+        let mut config = Config::default();
+        config.cow.exclude = vec!["target".to_string(), "custom-cache".to_string()];
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.cow.exclude, config.cow.exclude);
+    }
+
+    #[test]
+    fn test_cow_config_defaults_when_absent_from_file() {
+        // A config file written before the [cow] section existed must still load,
+        // falling back to the default exclude list.
+        let parsed: Config = toml::from_str("terminal_mode = \"tab\"\n").unwrap();
+        assert!(parsed.cow.exclude.contains(&"target".to_string()));
     }
 
     #[test]
