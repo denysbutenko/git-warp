@@ -241,11 +241,15 @@ impl ProcessManager {
                 CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT,
             };
             use windows_sys::Win32::System::Threading::{
-                OpenProcess, PROCESS_TERMINATE, SYNCHRONIZE, TerminateProcess, WaitForSingleObject,
+                OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
             };
 
-            // SYNCHRONIZE lets us wait on the process handle for graceful exit;
+            // SYNCHRONIZE (0x0010_0000) is the standard access right that lets
+            // us wait on the process handle for graceful exit. windows-sys only
+            // re-exports the constant behind Win32_Storage_FileSystem, so define
+            // it locally to avoid pulling in that feature just for one value.
             // PROCESS_TERMINATE is the fallback if the grace window elapses.
+            const SYNCHRONIZE: u32 = 0x0010_0000;
             let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
             if handle.is_null() {
                 let err = unsafe { GetLastError() };
