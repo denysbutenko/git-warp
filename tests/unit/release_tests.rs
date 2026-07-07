@@ -497,7 +497,8 @@ fn test_uninstall_script_missing_hooks_remove_fails() {
     .unwrap();
     fs::write(
         temp.path().join("uninstall.ps1"),
-        "& $Target hooks-remove --level user --runtime all *> $null\n",
+        "param([string]$InstallRoot = $env:GIT_WARP_INSTALL_ROOT)\n\
+         & $Target hooks-remove --level user --runtime all *> $null\n",
     )
     .unwrap();
     // uninstall.sh forgot the hooks-remove call.
