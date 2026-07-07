@@ -93,15 +93,16 @@ fn test_collect_metadata_checks_all_pass() {
     )
     .unwrap();
 
-    // 4. install.sh with env override + GitHub API lookup
+    // 4. install.sh with env override + GitHub API lookup + checksum guards
     fs::write(
         temp.path().join("install.sh"),
         "version=\"${GIT_WARP_VERSION:-}\"\n\
-         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n",
+         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n",
     )
     .unwrap();
 
-    // 5. install.ps1 + uninstall.ps1 with release-critical content
+    // 5. install.ps1 + uninstall.ps1 + uninstall.sh with release-critical content
     fs::write(
         temp.path().join("install.ps1"),
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
@@ -115,10 +116,15 @@ fn test_collect_metadata_checks_all_pass() {
         "& $Target hooks-remove --level user --runtime all *> $null\n",
     )
     .unwrap();
+    fs::write(
+        temp.path().join("uninstall.sh"),
+        "\"$target\" hooks-remove --level user --runtime all >/dev/null 2>&1\n",
+    )
+    .unwrap();
 
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     for check in &checks {
         assert!(check.ok, "check failed: {} - {}", check.label, check.detail);
     }
@@ -135,7 +141,7 @@ fn test_collect_metadata_checks_failures() {
     // All files missing or mismatched
     let checks = collect_metadata_checks(temp.path(), &expected, "0.2.0").unwrap();
 
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     for check in &checks {
         assert!(!check.ok, "check should have failed: {}", check.label);
     }
@@ -157,10 +163,21 @@ fn test_collect_metadata_checks_failures() {
             .detail
             .contains("docs/install.md does not mention GIT_WARP_VERSION=v0.3.0")
     );
+    assert_eq!(checks[4].label, "install.sh");
     assert!(
         checks[4]
             .detail
             .contains("api.github.com/repos/.../releases/latest")
+    );
+    assert!(
+        checks[4]
+            .detail
+            .contains("shasum -a 256 -c or sha256sum -c checksum verification")
+    );
+    assert!(
+        checks[4]
+            .detail
+            .contains("GIT_WARP_SKIP_CHECKSUM opt-out guard")
     );
     assert_eq!(checks[5].label, "install.ps1");
     assert!(
@@ -172,6 +189,12 @@ fn test_collect_metadata_checks_failures() {
     assert_eq!(checks[6].label, "uninstall.ps1");
     assert!(
         checks[6]
+            .detail
+            .contains("warp hooks-remove --level user invocation")
+    );
+    assert_eq!(checks[7].label, "uninstall.sh");
+    assert!(
+        checks[7]
             .detail
             .contains("warp hooks-remove --level user invocation")
     );
@@ -330,7 +353,7 @@ fn test_collect_metadata_checks_partial_success() {
     // All other files are missing.
     let checks = collect_metadata_checks(temp.path(), &expected, version).unwrap();
 
-    assert_eq!(checks.len(), 7);
+    assert_eq!(checks.len(), 8);
     assert!(checks[0].ok, "Cargo.toml check should pass");
     assert!(!checks[1].ok, "CHANGELOG.md check should fail");
     assert!(!checks[2].ok, "release notes check should fail");
@@ -338,4 +361,119 @@ fn test_collect_metadata_checks_partial_success() {
     assert!(!checks[4].ok, "install.sh check should fail");
     assert!(!checks[5].ok, "install.ps1 check should fail");
     assert!(!checks[6].ok, "uninstall.ps1 check should fail");
+    assert!(!checks[7].ok, "uninstall.sh check should fail");
+}
+
+#[test]
+fn test_install_script_missing_checksum_verifier_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.sh keeps env override + API lookup + skip env, but lost the shasum/sha256sum call.
+    fs::write(
+        temp.path().join("install.sh"),
+        "version=\"${GIT_WARP_VERSION:-}\"\n\
+         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then :; fi\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks[4].label, "install.sh");
+    assert!(
+        !checks[4].ok,
+        "install.sh without shasum/sha256sum should fail"
+    );
+    assert!(
+        checks[4]
+            .detail
+            .contains("shasum -a 256 -c or sha256sum -c checksum verification"),
+        "fail detail should call out the missing checksum verifier, got: {}",
+        checks[4].detail
+    );
+}
+
+#[test]
+fn test_install_script_missing_skip_env_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.sh keeps env override + API lookup + sha256sum -c, but lost the skip env guard.
+    fs::write(
+        temp.path().join("install.sh"),
+        "version=\"${GIT_WARP_VERSION:-}\"\n\
+         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         sha256sum -c \"$sums\"\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks[4].label, "install.sh");
+    assert!(
+        !checks[4].ok,
+        "install.sh without GIT_WARP_SKIP_CHECKSUM should fail"
+    );
+    assert!(
+        checks[4]
+            .detail
+            .contains("GIT_WARP_SKIP_CHECKSUM opt-out guard"),
+        "fail detail should call out the missing skip env, got: {}",
+        checks[4].detail
+    );
+}
+
+#[test]
+fn test_uninstall_script_missing_hooks_remove_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.sh + install.ps1 + uninstall.ps1 satisfy their guards.
+    fs::write(
+        temp.path().join("install.sh"),
+        "version=\"${GIT_WARP_VERSION:-}\"\n\
+         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $tag = $env:GIT_WARP_VERSION\n\
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "& $Target hooks-remove --level user --runtime all *> $null\n",
+    )
+    .unwrap();
+    // uninstall.sh forgot the hooks-remove call.
+    fs::write(temp.path().join("uninstall.sh"), "rm -f \"$target\"\n").unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert!(checks[4].ok, "install.sh guard should pass");
+    assert!(checks[5].ok, "install.ps1 guard should pass");
+    assert!(checks[6].ok, "uninstall.ps1 guard should pass");
+    assert_eq!(checks[7].label, "uninstall.sh");
+    assert!(
+        !checks[7].ok,
+        "uninstall.sh without hooks-remove should fail"
+    );
+    assert!(
+        checks[7].detail.contains("user-level hooks-remove call"),
+        "fail detail should call out the missing hooks-remove, got: {}",
+        checks[7].detail
+    );
 }
