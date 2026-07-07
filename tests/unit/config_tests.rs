@@ -1,5 +1,6 @@
 use git_warp::config::{
-    AgentConfig, Config, ConfigManager, GitConfig, PostCreateConfig, ProcessConfig, TerminalConfig,
+    AgentConfig, Config, ConfigManager, CowConfig, GitConfig, PostCreateConfig, ProcessConfig,
+    TerminalConfig,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -61,6 +62,9 @@ fn test_config_with_custom_values() {
         post_create: PostCreateConfig {
             auto_install: false,
         },
+        cow: CowConfig {
+            exclude: vec!["target".to_string(), "dist".to_string()],
+        },
     };
 
     let toml_str = toml::to_string(&config).unwrap();
@@ -72,6 +76,7 @@ fn test_config_with_custom_values() {
     assert_eq!(config.git.protected_branches, parsed.git.protected_branches);
     assert!(!parsed.git.auto_fetch);
     assert!(parsed.process.auto_kill);
+    assert_eq!(parsed.cow.exclude, config.cow.exclude);
 }
 
 #[test]

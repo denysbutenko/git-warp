@@ -10,9 +10,11 @@ pub enum GitWarpError {
     #[error("Worktree '{path}' not found")]
     WorktreeNotFound { path: String },
 
-    // Constructed only on the macOS APFS path and the non-CoW fallback; never
-    // on Linux, where the reflink probe reports support via a bool instead.
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    // Constructed by the lib's whole-tree `clone_directory` (APFS path) and the
+    // non-CoW fallback, exercised through tests/benches. The `warp` bin reaches
+    // CoW only via the untracked overlay, which never constructs this, so the
+    // bin build would otherwise flag it as unconstructed.
+    #[allow(dead_code)]
     #[error("Copy-on-Write is not supported on this filesystem")]
     CoWNotSupported,
 

@@ -113,6 +113,7 @@ pub fn collect_metadata_checks(
     let install_doc = read_optional(repo_root.join("docs").join("install.md"))?;
     let install_script = read_optional(repo_root.join("install.sh"))?;
     let install_ps1 = read_optional(repo_root.join("install.ps1"))?;
+    let uninstall_script = read_optional(repo_root.join("uninstall.sh"))?;
     let uninstall_ps1 = read_optional(repo_root.join("uninstall.ps1"))?;
     let release_notes_path = repo_root
         .join("docs")
@@ -186,18 +187,19 @@ pub fn collect_metadata_checks(
         ));
     }
 
-    let has_env_override = install_script.contains("${GIT_WARP_VERSION:-");
-    let has_api_lookup = install_script.contains("api.github.com/repos/");
-
-    if has_env_override && has_api_lookup {
+    let install_sh_missing = install_sh_missing_parts(&install_script);
+    if install_sh_missing.is_empty() {
         checks.push(ReleaseCheck::pass(
             "install.sh",
-            "resolves GIT_WARP_VERSION dynamically from the GitHub releases API",
+            "resolves GIT_WARP_VERSION dynamically, verifies the archive checksum, and honors the skip env",
         ));
     } else {
         checks.push(ReleaseCheck::fail(
             "install.sh",
-            "install.sh must keep the ${GIT_WARP_VERSION:-...} override and call api.github.com/repos/.../releases/latest",
+            format!(
+                "install.sh must keep the ${{GIT_WARP_VERSION:-...}} override, call api.github.com/repos/.../releases/latest, run shasum -a 256 -c or sha256sum -c, and honor GIT_WARP_SKIP_CHECKSUM; missing: {}",
+                install_sh_missing.join(", ")
+            ),
         ));
     }
 
@@ -217,18 +219,52 @@ pub fn collect_metadata_checks(
         "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, and Get-FileHash -Algorithm SHA256 verification",
     ));
 
-    let uninstall_ps1_requirements: &[(&str, &str)] = &[(
-        "hooks-remove --level user",
-        "the user-level hooks-remove call",
-    )];
+    let uninstall_ps1_requirements: &[(&str, &str)] = &[
+        (
+            "hooks-remove --level user",
+            "the user-level hooks-remove call",
+        ),
+        (
+            "GIT_WARP_INSTALL_ROOT",
+            "the GIT_WARP_INSTALL_ROOT / -InstallRoot handling",
+        ),
+    ];
     checks.push(content_guard(
         "uninstall.ps1",
         &uninstall_ps1,
         uninstall_ps1_requirements,
-        "uninstall.ps1 must keep the warp hooks-remove --level user invocation",
+        "uninstall.ps1 must keep the warp hooks-remove --level user invocation and honor -InstallRoot / GIT_WARP_INSTALL_ROOT",
+    ));
+
+    let uninstall_sh_requirements: &[(&str, &str)] = &[(
+        "hooks-remove --level user",
+        "the user-level hooks-remove call",
+    )];
+    checks.push(content_guard(
+        "uninstall.sh",
+        &uninstall_script,
+        uninstall_sh_requirements,
+        "uninstall.sh must keep the warp hooks-remove --level user invocation",
     ));
 
     Ok(checks)
+}
+
+fn install_sh_missing_parts(script: &str) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if !script.contains("${GIT_WARP_VERSION:-") {
+        missing.push("the ${GIT_WARP_VERSION:-...} override");
+    }
+    if !script.contains("api.github.com/repos/") {
+        missing.push("the GitHub releases API lookup");
+    }
+    if !script.contains("shasum -a 256 -c") && !script.contains("sha256sum -c") {
+        missing.push("the shasum -a 256 -c or sha256sum -c checksum verification");
+    }
+    if !script.contains("GIT_WARP_SKIP_CHECKSUM") {
+        missing.push("the GIT_WARP_SKIP_CHECKSUM opt-out guard");
+    }
+    missing
 }
 
 fn content_guard(

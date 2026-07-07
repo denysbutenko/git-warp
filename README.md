@@ -234,7 +234,7 @@ git diff --check
 Before tagging a release, run the release validation flow:
 
 ```bash
-warp release-check --version v0.3.0
+warp release-check --version v0.4.0
 ```
 
 Useful manual checks:
@@ -254,6 +254,7 @@ cargo run -- --dry-run cleanup --mode merged
 - [Technical Overview](docs/technical-overview.md)
 - [Documentation Index](docs/README.md)
 - [Changelog](CHANGELOG.md)
+- [Release Notes (v0.4.0)](docs/releases/v0.4.0.md)
 - [Release Notes (v0.3.0)](docs/releases/v0.3.0.md)
 - [Release Notes (v0.2.0)](docs/releases/v0.2.0.md)
 

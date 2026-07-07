@@ -1016,11 +1016,135 @@ impl GitRepository {
     }
 }
 
+/// List a worktree's untracked and ignored entries as paths relative to
+/// `repo_dir`, with whole untracked/ignored directories collapsed to a single
+/// entry (git's default reporting granularity).
+///
+/// This drives the CoW overlay: `git worktree add` reproduces tracked files but
+/// not the build output and local files (`node_modules`, `.env`, caches, venvs)
+/// that make a worktree usable, so those are the only entries worth cloning.
+/// `.git` is never reported by `git status`, so it is inherently excluded.
+pub fn list_untracked_and_ignored(repo_dir: &Path) -> Result<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "-z", "--ignored"])
+        .current_dir(repo_dir)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to list untracked files: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    // Porcelain v1 records are `XY <path>`; `-z` NUL-separates records and
+    // leaves paths *unquoted, as raw bytes*. Parse on the byte stream and
+    // rebuild each path via the OS encoding so non-UTF-8 filenames (legal on
+    // Linux) survive intact rather than being mangled by lossy UTF-8 decoding.
+    let mut entries = Vec::new();
+    for record in output.stdout.split(|&byte| byte == 0) {
+        // Shortest meaningful record is `?? x` (2 status bytes, a space, ≥1 path
+        // byte). `XY` is always ASCII.
+        if record.len() < 4 {
+            continue;
+        }
+        let is_untracked = record[0] == b'?' && record[1] == b'?';
+        let is_ignored = record[0] == b'!' && record[1] == b'!';
+        if !is_untracked && !is_ignored {
+            continue;
+        }
+        let mut path_bytes = &record[3..];
+        // git appends a trailing '/' to collapsed directory entries.
+        if path_bytes.last() == Some(&b'/') {
+            path_bytes = &path_bytes[..path_bytes.len() - 1];
+        }
+        if path_bytes.is_empty() {
+            continue;
+        }
+        let path = bytes_to_path(path_bytes);
+        if path == Path::new(".git") {
+            continue;
+        }
+        entries.push(path);
+    }
+    Ok(entries)
+}
+
+#[cfg(unix)]
+fn bytes_to_path(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+#[cfg(not(unix))]
+fn bytes_to_path(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Command;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_list_untracked_and_ignored_collapses_dirs_and_skips_tracked() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path();
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "t@e.com"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "T"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+
+        std::fs::write(repo.join(".gitignore"), "node_modules/\n*.log\n").unwrap();
+        std::fs::write(repo.join("tracked.txt"), "x").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-q", "-m", "init"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+
+        // ignored directory (collapses to a single entry), ignored file, and an
+        // untracked file.
+        std::fs::create_dir_all(repo.join("node_modules/pkg")).unwrap();
+        std::fs::write(repo.join("node_modules/pkg/a.js"), "y").unwrap();
+        std::fs::write(repo.join("debug.log"), "z").unwrap();
+        std::fs::write(repo.join(".env"), "SECRET=1").unwrap();
+
+        let entries = list_untracked_and_ignored(repo).unwrap();
+
+        assert!(
+            entries.contains(&PathBuf::from("node_modules")),
+            "ignored dir collapses to one entry: {entries:?}"
+        );
+        assert!(entries.contains(&PathBuf::from("debug.log")), "{entries:?}");
+        assert!(entries.contains(&PathBuf::from(".env")), "{entries:?}");
+        assert!(
+            !entries.contains(&PathBuf::from("tracked.txt")),
+            "tracked files must not be overlaid: {entries:?}"
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e != Path::new("node_modules") && e.starts_with("node_modules")),
+            "whole ignored dir must not be expanded to files: {entries:?}"
+        );
+    }
 
     #[test]
     fn test_git_repo_operations() {

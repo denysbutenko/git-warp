@@ -46,6 +46,9 @@ fn nearest_existing_ancestor(path: &Path) -> PathBuf {
 /// Returns `None` when `dest` is not inside `src` (the default git-warp layout,
 /// where worktrees live in a sibling `../worktrees` directory), so the fast
 /// whole-tree clone path is preserved.
+// Part of the whole-tree `clone_directory` API, which the `warp` bin no longer
+// calls (it uses the untracked overlay); still exercised by tests/benches.
+#[allow(dead_code)]
 fn nested_dest_exclusion(src: &Path, dest: &Path) -> Option<PathBuf> {
     use std::path::Component;
 
@@ -61,6 +64,7 @@ fn nested_dest_exclusion(src: &Path, dest: &Path) -> Option<PathBuf> {
 /// Resolve `path` to an absolute, symlink-free form for containment checks,
 /// tolerating a not-yet-created leaf by canonicalizing the nearest existing
 /// ancestor and re-appending the missing tail components.
+#[allow(dead_code)] // Whole-tree clone helper; bin uses the untracked overlay.
 fn resolve_for_containment(path: &Path) -> PathBuf {
     let ancestor = nearest_existing_ancestor(path);
     let base = ancestor.canonicalize().unwrap_or(ancestor.clone());
@@ -70,7 +74,12 @@ fn resolve_for_containment(path: &Path) -> PathBuf {
     }
 }
 
-/// Clone a directory using Copy-on-Write
+/// Clone an entire directory tree using Copy-on-Write.
+///
+/// The `warp` bin creates worktrees via `git worktree add` plus [`clone_entry`]
+/// overlay and no longer calls this; it remains part of the public library
+/// surface and is exercised by the integration tests and benchmarks.
+#[allow(dead_code)]
 pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
     let src = src.as_ref();
     let dest = dest.as_ref();
@@ -102,6 +111,120 @@ pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Resul
     {
         let _ = (dest, exclude);
         Err(GitWarpError::CoWNotSupported.into())
+    }
+}
+
+/// Whether a relative untracked/ignored entry should be CoW-overlaid onto a
+/// freshly created worktree. Always skips `.git`, and skips any entry whose
+/// path contains a component listed in `exclude` (so `target` also drops
+/// `crates/foo/target`). Matching is name-based; callers list bare directory
+/// or file names, not globs.
+pub fn should_overlay_entry(rel: &Path, exclude: &[String]) -> bool {
+    use std::path::Component;
+
+    for component in rel.components() {
+        if let Component::Normal(name) = component {
+            let name = name.to_string_lossy();
+            if name == ".git" {
+                return false;
+            }
+            if exclude.iter().any(|token| token.trim_matches('/') == name) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// CoW-clone a single filesystem entry (regular file, directory, or symlink)
+/// from `src` to `dst`, creating `dst`'s parent directories as needed.
+///
+/// Unlike [`clone_directory`], this overlays into an existing tree: it never
+/// removes `dst`'s siblings, so it is safe to layer untracked/ignored files on
+/// top of a worktree that `git worktree add` already populated.
+pub fn clone_entry(src: &Path, dst: &Path) -> Result<()> {
+    // `symlink_metadata` (not `exists`) so a *dangling* symlink still counts as
+    // present — both backends recreate the link verbatim without resolving it.
+    if std::fs::symlink_metadata(src).is_err() {
+        return Err(GitWarpError::WorktreeNotFound {
+            path: src.display().to_string(),
+        }
+        .into());
+    }
+
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("Failed to create {}: {}", parent.display(), e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        cp_clone(src, dst)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux::clone_entry(src, dst)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = dst;
+        Err(GitWarpError::CoWNotSupported.into())
+    }
+}
+
+/// Overlay `src` onto `dst`, copying only paths that do not already exist in
+/// `dst`, and return the freshly created destination paths (so callers can
+/// scope path-rewriting to exactly what was added).
+///
+/// - `dst` absent → the whole entry is CoW-cloned in one shot ([`clone_entry`]).
+/// - both directories → children are merged recursively, so a directory that is
+///   fully untracked on the primary's branch (reported by git as one collapsed
+///   entry) but partly *tracked* on the new branch still contributes its
+///   untracked children instead of being skipped wholesale.
+/// - `dst` already a file/symlink → left untouched (never clobber a checkout).
+///
+/// On a clone failure the partially written destination is removed, so a failed
+/// overlay leaves the worktree *without* those files rather than with a stale,
+/// half-written, un-rewritten copy.
+pub fn overlay_into(src: &Path, dst: &Path) -> Result<Vec<PathBuf>> {
+    let src_meta = std::fs::symlink_metadata(src)
+        .map_err(|e| anyhow::anyhow!("Failed to stat {}: {}", src.display(), e))?;
+
+    match std::fs::symlink_metadata(dst) {
+        // Nothing there yet: clone the whole entry, cleaning up on failure.
+        Err(_) => match clone_entry(src, dst) {
+            Ok(()) => Ok(vec![dst.to_path_buf()]),
+            Err(e) => {
+                let _ = remove_path(dst);
+                Err(e)
+            }
+        },
+        // Directory-into-directory: merge only the missing children.
+        Ok(dst_meta) if src_meta.is_dir() && dst_meta.is_dir() => {
+            let mut created = Vec::new();
+            for entry in std::fs::read_dir(src)
+                .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", src.display(), e))?
+            {
+                let entry = entry.map_err(|e| {
+                    anyhow::anyhow!("Failed to read entry in {}: {}", src.display(), e)
+                })?;
+                created.extend(overlay_into(&entry.path(), &dst.join(entry.file_name()))?);
+            }
+            Ok(created)
+        }
+        // `dst` already exists as a tracked file/symlink: leave it be.
+        Ok(_) => Ok(Vec::new()),
+    }
+}
+
+/// Best-effort recursive removal of whatever kind of node `path` is.
+fn remove_path(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(_) => Ok(()),
     }
 }
 
@@ -189,6 +312,16 @@ mod linux {
         unsafe { ficlone(dst.as_raw_fd(), src.as_raw_fd() as nix::libc::c_ulong) }
     }
 
+    /// Overlay a single entry (file, dir, or symlink) from `src` to `dst`
+    /// without touching `dst`'s siblings. `dst` must not already exist; its
+    /// parent is created by the caller.
+    pub(super) fn clone_entry(src: &Path, dst: &Path) -> Result<()> {
+        clone_tree(src, dst, None)
+    }
+
+    // Whole-tree reflink clone; reached only through the lib's `clone_directory`
+    // (tests/benches), not the `warp` bin, which overlays untracked files.
+    #[allow(dead_code)]
     pub(super) fn clone_directory(src: &Path, dst: &Path, exclude: Option<&Path>) -> Result<()> {
         if dst.exists() {
             fs::remove_dir_all(dst)?;
@@ -285,6 +418,7 @@ mod linux {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)] // Whole-tree clone path; bin overlays untracked files instead.
 fn clone_directory_apfs(src: &Path, dest: &Path, exclude: Option<&Path>) -> Result<()> {
     // Ensure we're on APFS
     if !is_apfs(src)? {
@@ -352,6 +486,7 @@ fn cp_clone(from: &Path, to: &Path) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)] // Whole-tree clone path; bin overlays untracked files instead.
 fn clone_directory_reflink(src: &Path, dest: &Path, exclude: Option<&Path>) -> Result<()> {
     linux::clone_directory(src, dest, exclude)
 }
@@ -366,6 +501,155 @@ mod tests {
     fn test_cow_support_check() {
         let result = is_cow_supported(".");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_overlay_entry_always_skips_dot_git() {
+        assert!(!should_overlay_entry(Path::new(".git"), &[]));
+        assert!(!should_overlay_entry(Path::new(".git/config"), &[]));
+    }
+
+    #[test]
+    fn should_overlay_entry_honors_exclude_by_component() {
+        let exclude = vec!["target".to_string(), ".next".to_string()];
+        assert!(!should_overlay_entry(Path::new("target"), &exclude));
+        assert!(!should_overlay_entry(
+            Path::new("target/debug/foo"),
+            &exclude
+        ));
+        // nested build dir with the same leaf name is also skipped
+        assert!(!should_overlay_entry(
+            Path::new("crates/inner/target"),
+            &exclude
+        ));
+        assert!(!should_overlay_entry(Path::new(".next/cache"), &exclude));
+        // trailing-slash tokens still match
+        let exclude_slash = vec!["dist/".to_string()];
+        assert!(!should_overlay_entry(Path::new("dist"), &exclude_slash));
+    }
+
+    #[test]
+    fn should_overlay_entry_keeps_normal_untracked() {
+        let exclude = vec!["target".to_string()];
+        assert!(should_overlay_entry(Path::new("node_modules"), &exclude));
+        assert!(should_overlay_entry(Path::new(".env"), &exclude));
+        assert!(should_overlay_entry(
+            Path::new("node_modules/lodash/index.js"),
+            &exclude
+        ));
+    }
+
+    #[test]
+    fn overlay_into_merges_missing_children_without_clobbering_tracked() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("primary");
+        let dest = tmp.path().join("worktree");
+        // Primary's `assets/` is fully untracked here (git would collapse it to
+        // one entry): a local note plus generated data.
+        fs::create_dir_all(src.join("assets")).unwrap();
+        fs::write(src.join("assets/logo.png"), b"local-logo").unwrap();
+        fs::write(src.join("assets/notes.txt"), b"local-notes").unwrap();
+        // On the NEW branch `assets/` is tracked, so `git worktree add` already
+        // laid down a checked-out file there.
+        fs::create_dir_all(dest.join("assets")).unwrap();
+        fs::write(dest.join("assets/style.css"), b"tracked").unwrap();
+
+        if !is_cow_supported(&src).unwrap_or(false) {
+            return;
+        }
+
+        let created = overlay_into(&src.join("assets"), &dest.join("assets")).unwrap();
+
+        // Untracked children were overlaid...
+        assert_eq!(
+            fs::read(dest.join("assets/logo.png")).unwrap(),
+            b"local-logo"
+        );
+        assert_eq!(
+            fs::read(dest.join("assets/notes.txt")).unwrap(),
+            b"local-notes"
+        );
+        // ...the tracked checkout survived untouched...
+        assert_eq!(fs::read(dest.join("assets/style.css")).unwrap(), b"tracked");
+        // ...and only the freshly created paths are returned for rewriting.
+        assert!(created.iter().any(|p| p.ends_with("assets/logo.png")));
+        assert!(created.iter().any(|p| p.ends_with("assets/notes.txt")));
+        assert!(!created.iter().any(|p| p.ends_with("assets/style.css")));
+    }
+
+    #[test]
+    fn overlay_into_clones_whole_entry_when_dest_absent() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("primary");
+        let dest = tmp.path().join("worktree");
+        fs::create_dir_all(src.join("node_modules/pkg")).unwrap();
+        fs::write(src.join("node_modules/pkg/i.js"), b"dep").unwrap();
+        fs::create_dir_all(&dest).unwrap();
+
+        if !is_cow_supported(&src).unwrap_or(false) {
+            return;
+        }
+
+        let created = overlay_into(&src.join("node_modules"), &dest.join("node_modules")).unwrap();
+        assert_eq!(
+            fs::read(dest.join("node_modules/pkg/i.js")).unwrap(),
+            b"dep"
+        );
+        assert_eq!(created, vec![dest.join("node_modules")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_into_recreates_dangling_symlink() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("primary");
+        let dest = tmp.path().join("worktree");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        // A symlink whose target does not exist — `Path::exists()` would say no.
+        std::os::unix::fs::symlink("/nonexistent/target", src.join("link")).unwrap();
+
+        if !is_cow_supported(&src).unwrap_or(false) {
+            return;
+        }
+
+        overlay_into(&src.join("link"), &dest.join("link")).unwrap();
+        let meta = fs::symlink_metadata(dest.join("link")).unwrap();
+        assert!(
+            meta.file_type().is_symlink(),
+            "dangling symlink must survive"
+        );
+        assert_eq!(
+            fs::read_link(dest.join("link")).unwrap(),
+            Path::new("/nonexistent/target")
+        );
+    }
+
+    #[test]
+    fn clone_entry_overlays_without_touching_siblings() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("primary");
+        let dest = tmp.path().join("worktree");
+        fs::create_dir_all(src.join("node_modules/pkg")).unwrap();
+        fs::write(src.join("node_modules/pkg/index.js"), b"module").unwrap();
+        // `dest` already exists (as if `git worktree add` created it) and has a
+        // sibling that must survive the overlay.
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("tracked.txt"), b"checked out").unwrap();
+
+        if !is_cow_supported(&src).unwrap_or(false) {
+            return;
+        }
+
+        clone_entry(&src.join("node_modules"), &dest.join("node_modules"))
+            .expect("overlay must succeed");
+
+        assert_eq!(
+            fs::read(dest.join("node_modules/pkg/index.js")).unwrap(),
+            b"module"
+        );
+        // The pre-existing tracked file is untouched.
+        assert_eq!(fs::read(dest.join("tracked.txt")).unwrap(), b"checked out");
     }
 
     #[test]
