@@ -170,7 +170,7 @@ pub enum Commands {
 
     /// Generate shell configuration
     ShellConfig {
-        /// Shell type: bash, zsh, fish
+        /// Shell type: bash, zsh, fish, powershell
         shell: Option<String>,
     },
 
@@ -2190,10 +2190,24 @@ impl Cli {
                 }
             }
             DoctorShell::PowerShell => {
-                Self::doctor_warn(
-                    "Shell integration",
-                    "PowerShell integration is not yet shipped",
-                );
+                let profile_paths = Self::powershell_profile_paths();
+                let integrated = profile_paths
+                    .iter()
+                    .any(|path| Self::shell_rc_has_warp_integration(path));
+                if integrated {
+                    Self::doctor_ok(
+                        "Shell integration",
+                        "warp_cd helper detected in a PowerShell profile",
+                    );
+                } else {
+                    Self::doctor_warn(
+                        "Shell integration",
+                        "PowerShell warp_cd helper is not installed",
+                    );
+                    next_steps.push(
+                        "Run `warp shell-config powershell` and append the output to $PROFILE.CurrentUserAllHosts to enable `warp_cd` and completions.".to_string(),
+                    );
+                }
                 if let Some(dir) = &default_dir {
                     next_steps.push(format!(
                         "Add `{}` to $env:PATH (e.g. `$env:Path = \"{};$env:Path\"`) so installed {} is found.",
@@ -2306,6 +2320,23 @@ impl Cli {
         std::fs::read_to_string(rc_path)
             .map(|content| content.contains("warp_cd") || content.contains("warp __complete"))
             .unwrap_or(false)
+    }
+
+    fn powershell_profile_paths() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let Some(home) = dirs::home_dir() else {
+            return paths;
+        };
+        let documents = home.join("Documents");
+        for host in ["PowerShell", "WindowsPowerShell"] {
+            paths.push(documents.join(host).join("profile.ps1"));
+            paths.push(
+                documents
+                    .join(host)
+                    .join("Microsoft.PowerShell_profile.ps1"),
+            );
+        }
+        paths
     }
 
     fn doctor_install_candidates() -> Vec<DoctorInstallEntry> {
@@ -2598,6 +2629,13 @@ impl Cli {
                         .filter(|value| !value.is_empty())
                 })
             })
+            .or_else(|| {
+                if cfg!(windows) && std::env::var_os("PSModulePath").is_some() {
+                    Some("powershell".to_string())
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| "bash".to_string());
 
         let commands = public_subcommand_names().join(" ");
@@ -2659,9 +2697,41 @@ complete -c warp -n '__fish_use_subcommand' -f -a '(warp __complete branches (co
 complete -c warp -n '__fish_seen_subcommand_from switch' -f -a '(warp __complete branches (commandline -ct) 2>/dev/null)'"
                 );
             }
+            "powershell" | "pwsh" => {
+                let ps_subcommands = public_subcommand_names()
+                    .iter()
+                    .map(|name| format!("'{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                println!("# Add to $PROFILE.CurrentUserAllHosts");
+                println!("function warp_cd {{");
+                println!("    $script = (warp --terminal echo @args) -join \"`n\"");
+                println!("    if ($script) {{ Invoke-Expression $script }}");
+                println!("}}");
+                println!(
+                    "Register-ArgumentCompleter -CommandName warp -Native -ScriptBlock {{
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $subcommands = @({ps_subcommands})
+    $elements = $commandAst.CommandElements
+    $subcommand = if ($elements.Count -ge 2) {{ $elements[1].Extent.Text }} else {{ '' }}
+    if ($subcommand -eq 'switch' -or $elements.Count -le 2) {{
+        foreach ($branch in @(warp __complete branches $wordToComplete 2>$null)) {{
+            [System.Management.Automation.CompletionResult]::new($branch, $branch, 'ParameterValue', $branch)
+        }}
+    }}
+    if ($elements.Count -le 2) {{
+        foreach ($cmd in $subcommands) {{
+            if ($cmd.StartsWith($wordToComplete)) {{
+                [System.Management.Automation.CompletionResult]::new($cmd, $cmd, 'ParameterValue', $cmd)
+            }}
+        }}
+    }}
+}}"
+                );
+            }
             other => {
                 return Err(anyhow::anyhow!(
-                    "Unsupported shell '{other}'. Supported shells: bash, zsh, fish"
+                    "Unsupported shell '{other}'. Supported shells: bash, zsh, fish, powershell"
                 ));
             }
         }

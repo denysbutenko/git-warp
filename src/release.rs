@@ -115,6 +115,7 @@ pub fn collect_metadata_checks(
     let install_ps1 = read_optional(repo_root.join("install.ps1"))?;
     let uninstall_script = read_optional(repo_root.join("uninstall.sh"))?;
     let uninstall_ps1 = read_optional(repo_root.join("uninstall.ps1"))?;
+    let cli_rs = read_optional(repo_root.join("src").join("cli.rs"))?;
     let release_notes_path = repo_root
         .join("docs")
         .join("releases")
@@ -245,6 +246,20 @@ pub fn collect_metadata_checks(
         &uninstall_script,
         uninstall_sh_requirements,
         "uninstall.sh must keep the warp hooks-remove --level user invocation",
+    ));
+
+    let cli_ps_requirements: &[(&str, &str)] = &[
+        ("function warp_cd", "the PowerShell warp_cd function"),
+        (
+            "Register-ArgumentCompleter -CommandName warp",
+            "the Register-ArgumentCompleter block",
+        ),
+    ];
+    checks.push(content_guard(
+        "src/cli.rs",
+        &cli_rs,
+        cli_ps_requirements,
+        "src/cli.rs must keep the PowerShell shell-config emitter (warp_cd + Register-ArgumentCompleter)",
     ));
 
     Ok(checks)

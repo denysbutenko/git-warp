@@ -221,6 +221,12 @@ warp shell-config zsh >> ~/.zshrc
 warp shell-config fish >> ~/.config/fish/config.fish
 ```
 
+For Windows PowerShell, append the snippet to your profile:
+
+```powershell
+warp shell-config powershell | Add-Content -Path $PROFILE.CurrentUserAllHosts
+```
+
 ## Development
 
 ```bash
