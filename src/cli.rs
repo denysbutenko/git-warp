@@ -355,6 +355,81 @@ impl Cli {
             })
     }
 
+    /// CoW-overlay the primary worktree's untracked & ignored files onto a
+    /// freshly created linked worktree at `dest`.
+    ///
+    /// Copies only what `git worktree add` cannot reproduce — build output and
+    /// local files such as `node_modules`, `.env`, and caches — and never
+    /// touches `.git`, tracked files, the worktree-storage directory, or names
+    /// listed in `exclude`. Absolute paths baked into the copied files are
+    /// rewritten to point at `dest`. Best-effort: a failure leaves the worktree
+    /// usable, just without the overlaid files.
+    fn cow_overlay_untracked(
+        git_repo: &crate::git::GitRepository,
+        dest: &Path,
+        exclude: &[String],
+    ) -> Result<()> {
+        use crate::cow;
+        use crate::rewrite::PathRewriter;
+
+        let worktrees = git_repo.list_worktrees()?;
+        let Some(primary) = worktrees.iter().find(|wt| wt.is_primary) else {
+            return Ok(());
+        };
+        let primary_path = primary.path.clone();
+
+        let entries = crate::git::list_untracked_and_ignored(&primary_path)?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        // The worktree-storage directory is the destination's parent: in a
+        // nested layout (`worktrees_path` inside the repo) every sibling
+        // worktree lives under it. Skipping any entry that resolves to the
+        // destination's ancestors *or* into that storage directory keeps whole
+        // worktrees from being copied back into `dest`. In the default sibling
+        // layout the storage dir lives outside the primary, so nothing matches.
+        let dest_canon = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
+        let storage = dest_canon.parent().map(std::path::Path::to_path_buf);
+
+        let mut copied = Vec::new();
+        for rel in entries {
+            if !cow::should_overlay_entry(&rel, exclude) {
+                continue;
+            }
+            let src = primary_path.join(&rel);
+            // `symlink_metadata`, not `exists`: keep dangling untracked symlinks
+            // (e.g. `.env` -> a not-yet-present target) that the worktree wants.
+            if std::fs::symlink_metadata(&src).is_err() {
+                continue;
+            }
+            let src_canon = src.canonicalize().unwrap_or_else(|_| src.clone());
+            if dest_canon.starts_with(&src_canon)
+                || storage
+                    .as_deref()
+                    .is_some_and(|base| src_canon.starts_with(base))
+            {
+                continue;
+            }
+            // `overlay_into` skips paths git already checked out and returns the
+            // freshly created paths (for scoped rewriting), cleaning up on a
+            // partial clone so no stale, un-rewritten copy is left behind.
+            match cow::overlay_into(&src, &dest.join(&rel)) {
+                Ok(mut created) => copied.append(&mut created),
+                Err(e) => log::warn!("CoW overlay of {} failed: {}", rel.display(), e),
+            }
+        }
+
+        if !copied.is_empty() {
+            let rewriter = PathRewriter::new(&primary_path, dest);
+            if let Err(e) = rewriter.rewrite_paths_under(&copied) {
+                log::warn!("Path rewriting failed: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
     fn source_announcement(branch: &str, source: &crate::git::BranchSource) -> String {
         match source {
             crate::git::BranchSource::ExistingWorktree { path } => format!(
@@ -765,7 +840,6 @@ impl Cli {
         use crate::cow;
         use crate::git::GitRepository;
         use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
-        use crate::rewrite::PathRewriter;
 
         // Find the Git repository
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
@@ -811,7 +885,9 @@ impl Cli {
 
         let mut report = SwitchOutcomeReport::new(worktree_path.clone());
         let mut worktree_created = false;
-        let mut checkout_warning = None;
+        // The CoW path no longer re-checks-out the branch (the linked worktree is
+        // created on the right branch up front), so no checkout warning arises.
+        let checkout_warning: Option<String> = None;
 
         // Check if worktree already exists
         if worktree_path.exists() {
@@ -825,9 +901,11 @@ impl Cli {
                 !no_cow && config.use_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false);
 
             if use_cow {
-                println!("⚡ Using Copy-on-Write for instant creation...");
+                println!("⚡ Using Copy-on-Write for instant setup...");
 
-                // Create worktree using traditional method first
+                // Create the real linked worktree first. `git worktree add`
+                // produces the correct `.git` gitfile and checks out the branch;
+                // CoW only needs to add the files git can't reproduce.
                 Self::create_worktree_for_source_with_recovery(
                     &git_repo,
                     &branch,
@@ -835,44 +913,14 @@ impl Cli {
                     &branch_source,
                 )?;
 
-                // If we have existing worktrees, try CoW enhancement
-                let worktrees = git_repo.list_worktrees()?;
-                if let Some(main_worktree) = worktrees.iter().find(|wt| wt.is_primary) {
-                    // Remove the traditionally created worktree files
-                    if worktree_path.exists() {
-                        std::fs::remove_dir_all(&worktree_path)?;
-                    }
-
-                    // Clone using CoW
-                    if let Err(e) = cow::clone_directory(&main_worktree.path, &worktree_path) {
-                        log::warn!("CoW failed, falling back to traditional method: {}", e);
-                        // Recreate using traditional method
-                        Self::create_worktree_for_source_with_recovery(
-                            &git_repo,
-                            &branch,
-                            &worktree_path,
-                            &branch_source,
-                        )?;
-                    } else {
-                        // Rewrite paths in the CoW copy
-                        let rewriter = PathRewriter::new(&main_worktree.path, &worktree_path);
-                        if let Err(e) = rewriter.rewrite_paths() {
-                            log::warn!("Path rewriting failed: {}", e);
-                        }
-
-                        // Switch to the correct branch
-                        let output = Command::new("git")
-                            .args(["checkout", branch.as_str()])
-                            .current_dir(&worktree_path)
-                            .output()?;
-
-                        if !output.status.success() {
-                            let error = String::from_utf8_lossy(&output.stderr);
-                            let error = error.trim().to_string();
-                            log::warn!("Failed to checkout branch in CoW worktree: {}", error);
-                            checkout_warning = Some(error);
-                        }
-                    }
+                // Overlay the primary worktree's untracked & ignored files
+                // (node_modules, .env, local caches) via CoW — never `.git` or
+                // tracked files. If the overlay does nothing the worktree is
+                // still a fully valid linked worktree.
+                if let Err(e) =
+                    Self::cow_overlay_untracked(&git_repo, &worktree_path, &config.cow.exclude)
+                {
+                    log::warn!("CoW overlay skipped ({e}); worktree is still usable");
                 }
             } else {
                 println!("📦 Using traditional Git worktree creation...");
