@@ -207,7 +207,7 @@ irm https://raw.githubusercontent.com/denysbutenko/git-warp/main/uninstall.ps1 |
 
 The PowerShell uninstaller mirrors the Bash one:
 - Removes agent hook entries from Claude/Codex settings using `warp.exe` before its deletion (opt out with `$env:GIT_WARP_KEEP_HOOKS = '1'`).
-- Removes `%LOCALAPPDATA%\Programs\git-warp\bin\warp.exe` (or `$env:GIT_WARP_INSTALL_DIR\warp.exe`). Drops the install directory if it ends up empty.
+- Removes `%LOCALAPPDATA%\Programs\git-warp\bin\warp.exe` (or `$env:GIT_WARP_INSTALL_DIR\warp.exe`). For a Cargo install with a custom root, pass `-InstallRoot` (or set `$env:GIT_WARP_INSTALL_ROOT`) to target `<root>\bin\warp.exe`. Drops the install directory if it ends up empty.
 - Scans the four `$PROFILE.*` PowerShell-profile paths for leftover `warp_cd` / `warp __complete` snippets and prints cleanup hints.
 - Lists any other detected `warp.exe` installs (Cargo, custom directories) without touching them.
 

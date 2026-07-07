@@ -1,9 +1,118 @@
-use git_warp::cow::{clone_directory, is_cow_supported};
-use git_warp::git::GitRepository;
+use git_warp::cow::{clone_directory, clone_entry, is_cow_supported, should_overlay_entry};
+use git_warp::git::{GitRepository, list_untracked_and_ignored};
 use git_warp::rewrite::PathRewriter;
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
+
+/// End-to-end check of the untracked-overlay worktree creation: a real
+/// `git worktree add` followed by CoW-overlaying only the primary's untracked
+/// and ignored files. Mirrors `Cli::cow_overlay_untracked`.
+#[test]
+fn test_untracked_overlay_keeps_linked_worktree_and_skips_git_and_excludes() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_git_repository();
+    let repo_path = temp_dir.path();
+
+    // Primary has: an ignored dep dir (node_modules, worth copying), an ignored
+    // build dir (target, excluded), an untracked local file (.env), and a
+    // config baking in the primary's absolute path.
+    fs::create_dir_all(repo_path.join("node_modules/pkg")).unwrap();
+    fs::write(repo_path.join("node_modules/pkg/index.js"), b"dep").unwrap();
+    fs::create_dir_all(repo_path.join("target/debug")).unwrap();
+    fs::write(repo_path.join("target/debug/app"), b"binary").unwrap();
+    fs::write(
+        repo_path.join(".env"),
+        format!("ROOT={}\n", repo_path.display()),
+    )
+    .unwrap();
+    // node_modules & *.log are ignored by setup_git_repository's .gitignore;
+    // also ignore target here.
+    fs::write(
+        repo_path.join(".gitignore"),
+        "node_modules/\n*.log\ntarget/\n.env\n",
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["add", ".gitignore"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-q", "-m", "ignore build dirs"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+
+    // Sibling worktree (the default git-warp layout), so the primary's own
+    // status never lists the worktree-storage dir.
+    let wt_root = tempdir().unwrap();
+    let worktree_path = wt_root.path().join("feature-overlay");
+
+    // 1. Real linked worktree.
+    let ok = Command::new("git")
+        .args(["worktree", "add", "-b", "feature-overlay"])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    assert!(ok, "git worktree add failed");
+
+    if !is_cow_supported(&worktree_path).unwrap_or(false) {
+        // No CoW here (e.g. ext4 CI): the linked worktree invariant still holds.
+        assert!(worktree_path.join(".git").is_file());
+        return;
+    }
+
+    // 2. Overlay untracked/ignored entries, excluding build output.
+    let exclude = vec!["target".to_string()];
+    let mut copied = Vec::new();
+    for rel in list_untracked_and_ignored(repo_path).unwrap() {
+        if !should_overlay_entry(&rel, &exclude) {
+            continue;
+        }
+        let src = repo_path.join(&rel);
+        let dst = worktree_path.join(&rel);
+        if dst.exists() {
+            continue;
+        }
+        clone_entry(&src, &dst).unwrap();
+        copied.push(dst);
+    }
+    PathRewriter::new(repo_path, &worktree_path)
+        .rewrite_paths_under(&copied)
+        .unwrap();
+
+    // `.git` stays a linked-worktree pointer FILE, never a copied directory.
+    assert!(
+        worktree_path.join(".git").is_file(),
+        ".git must remain a linked-worktree file, not a copied directory"
+    );
+    // Worth-copying untracked deps came across.
+    assert!(worktree_path.join("node_modules/pkg/index.js").is_file());
+    assert!(worktree_path.join(".env").is_file());
+    // Excluded build output did NOT.
+    assert!(
+        !worktree_path.join("target").exists(),
+        "excluded build dir must not be overlaid"
+    );
+    // Baked path in the overlaid file was rewritten to the new worktree.
+    let env = fs::read_to_string(worktree_path.join(".env")).unwrap();
+    assert!(env.contains(&worktree_path.to_string_lossy().to_string()));
+    assert!(!env.contains(&format!("ROOT={}\n", repo_path.display())));
+
+    git_repo_remove(repo_path, &worktree_path);
+}
+
+fn git_repo_remove(repo_path: &std::path::Path, worktree_path: &std::path::Path) {
+    let _ = Command::new("git")
+        .args(["worktree", "remove", "--force"])
+        .arg(worktree_path)
+        .current_dir(repo_path)
+        .output();
+}
 
 #[test]
 fn test_cow_clone_with_git_worktree_registration() {
