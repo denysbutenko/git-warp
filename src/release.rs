@@ -219,15 +219,21 @@ pub fn collect_metadata_checks(
         "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, and Get-FileHash -Algorithm SHA256 verification",
     ));
 
-    let uninstall_ps1_requirements: &[(&str, &str)] = &[(
-        "hooks-remove --level user",
-        "the user-level hooks-remove call",
-    )];
+    let uninstall_ps1_requirements: &[(&str, &str)] = &[
+        (
+            "hooks-remove --level user",
+            "the user-level hooks-remove call",
+        ),
+        (
+            "GIT_WARP_INSTALL_ROOT",
+            "the GIT_WARP_INSTALL_ROOT / -InstallRoot handling",
+        ),
+    ];
     checks.push(content_guard(
         "uninstall.ps1",
         &uninstall_ps1,
         uninstall_ps1_requirements,
-        "uninstall.ps1 must keep the warp hooks-remove --level user invocation",
+        "uninstall.ps1 must keep the warp hooks-remove --level user invocation and honor -InstallRoot / GIT_WARP_INSTALL_ROOT",
     ));
 
     let uninstall_sh_requirements: &[(&str, &str)] = &[(

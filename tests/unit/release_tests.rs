@@ -113,7 +113,8 @@ fn test_collect_metadata_checks_all_pass() {
     .unwrap();
     fs::write(
         temp.path().join("uninstall.ps1"),
-        "& $Target hooks-remove --level user --runtime all *> $null\n",
+        "$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null\n\
+         & $Target hooks-remove --level user --runtime all *> $null\n",
     )
     .unwrap();
     fs::write(
@@ -240,7 +241,8 @@ fn test_install_ps1_missing_checksum_fails() {
     .unwrap();
     fs::write(
         temp.path().join("uninstall.ps1"),
-        "& $Target hooks-remove --level user --runtime all *> $null\n",
+        "$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null\n\
+         & $Target hooks-remove --level user --runtime all *> $null\n",
     )
     .unwrap();
 
@@ -282,7 +284,8 @@ fn test_uninstall_ps1_missing_hooks_remove_fails() {
     // uninstall.ps1 forgot the hooks-remove call.
     fs::write(
         temp.path().join("uninstall.ps1"),
-        "Remove-Item -LiteralPath $target -Force\n",
+        "$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null\n\
+         Remove-Item -LiteralPath $target -Force\n",
     )
     .unwrap();
 
@@ -297,6 +300,45 @@ fn test_uninstall_ps1_missing_hooks_remove_fails() {
     assert!(
         checks[6].detail.contains("user-level hooks-remove call"),
         "fail detail should call out the missing hooks-remove, got: {}",
+        checks[6].detail
+    );
+}
+
+#[test]
+fn test_uninstall_ps1_missing_installroot_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $tag = $env:GIT_WARP_VERSION\n\
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+    )
+    .unwrap();
+    // uninstall.ps1 keeps hooks-remove but lost the InstallRoot handling.
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "& $Target hooks-remove --level user --runtime all *> $null\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert!(checks[5].ok, "install.ps1 guard should pass");
+    assert_eq!(checks[6].label, "uninstall.ps1");
+    assert!(
+        !checks[6].ok,
+        "uninstall.ps1 without InstallRoot handling should fail"
+    );
+    assert!(
+        checks[6]
+            .detail
+            .contains("GIT_WARP_INSTALL_ROOT / -InstallRoot handling"),
+        "fail detail should call out the missing InstallRoot handling, got: {}",
         checks[6].detail
     );
 }
