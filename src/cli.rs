@@ -689,6 +689,19 @@ impl Cli {
         }
     }
 
+    /// Render a path with the user's home directory collapsed to `~` for
+    /// terser, less noisy output.
+    fn abbreviate_path(path: &Path) -> String {
+        let display = path.display().to_string();
+        if let Some(home) = dirs::home_dir() {
+            let home = home.display().to_string();
+            if let Some(rest) = display.strip_prefix(&home) {
+                return format!("~{}", rest);
+            }
+        }
+        display
+    }
+
     fn handle_switcher_remove(&self, target: crate::tui::WorktreeRemovalTarget) -> Result<()> {
         use crate::config::ConfigManager;
         use crate::git::GitRepository;
@@ -696,22 +709,22 @@ impl Cli {
         let git_repo = GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
         let auto_prune = ConfigManager::new()?.get().git.auto_prune;
 
-        println!(
-            "Removing worktree for branch '{}'{}: {}",
-            target.branch,
-            if target.force { " (force, dirty)" } else { "" },
-            target.path.display()
-        );
+        let force_note = if target.force { " (forced)" } else { "" };
         git_repo.remove_worktree(&target.path, target.force)?;
 
         match git_repo.delete_branch(&target.branch, target.force) {
             Ok(()) => {
-                println!("Removed worktree and branch: {}", target.branch);
+                println!(
+                    "🗑️  Removed worktree and branch '{}'{} ({})",
+                    target.branch,
+                    force_note,
+                    Self::abbreviate_path(&target.path)
+                );
             }
             Err(err) => {
                 println!(
-                    "Removed worktree but kept branch '{}': {}",
-                    target.branch, err
+                    "⚠️  Removed worktree '{}'{} but kept branch: {}",
+                    target.branch, force_note, err
                 );
             }
         }
@@ -764,31 +777,31 @@ impl Cli {
         let mut failed = 0;
 
         for target in batch.targets {
-            println!(
-                "Removing worktree for branch '{}'{}: {}",
-                target.branch,
-                if target.force { " (force, dirty)" } else { "" },
-                target.path.display()
-            );
+            let force_note = if target.force { " (forced)" } else { "" };
 
             match git_repo.remove_worktree(&target.path, target.force) {
                 Ok(()) => {
                     removed += 1;
                     match git_repo.delete_branch(&target.branch, target.force) {
                         Ok(()) => {
-                            println!("Removed worktree and branch: {}", target.branch);
+                            println!(
+                                "🗑️  Removed worktree and branch '{}'{} ({})",
+                                target.branch,
+                                force_note,
+                                Self::abbreviate_path(&target.path)
+                            );
                         }
                         Err(err) => {
                             println!(
-                                "Removed worktree but kept branch '{}': {}",
-                                target.branch, err
+                                "⚠️  Removed worktree '{}'{} but kept branch: {}",
+                                target.branch, force_note, err
                             );
                         }
                     }
                 }
                 Err(err) => {
                     failed += 1;
-                    println!("Failed to remove worktree '{}': {}", target.branch, err);
+                    println!("❌ Failed to remove worktree '{}': {}", target.branch, err);
                 }
             }
         }
