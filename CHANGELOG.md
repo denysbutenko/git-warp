@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- `warp cleanup --kill` on Windows now honors `[process].kill_timeout`. The
+  Windows branch of `ProcessManager::terminate_single_process` fires a single
+  `taskkill /T` for the graceful attempt, waits on the process handle via
+  `WaitForSingleObject(kill_timeout)`, then falls back to `TerminateProcess`
+  through the same handle instead of a second `taskkill /F` spawn. (#212)
+
 ## v0.4.0 - 2026-07-02
 
 Third public Git-Warp release. Highlights: Windows support (prebuilt binary,
