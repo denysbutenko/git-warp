@@ -3,7 +3,7 @@
 Run the release check before tagging a Git-Warp release.
 
 ```bash
-warp release-check --version v0.3.0
+warp release-check --version v0.4.0
 ```
 
 The command validates release metadata first, then runs the release verification
@@ -11,12 +11,12 @@ commands. It stops at the first failing command.
 
 ## Metadata Checks
 
-`warp release-check --version v0.3.0` verifies that:
+`warp release-check --version v0.4.0` verifies that:
 
-- `Cargo.toml` has package version `0.3.0`.
-- `CHANGELOG.md` has a `v0.3.0` release heading.
-- `docs/releases/v0.3.0.md` exists.
-- `docs/install.md` mentions `GIT_WARP_VERSION=v0.3.0`.
+- `Cargo.toml` has package version `0.4.0`.
+- `CHANGELOG.md` has a `v0.4.0` release heading.
+- `docs/releases/v0.4.0.md` exists.
+- `docs/install.md` mentions `GIT_WARP_VERSION=v0.4.0`.
 - `install.sh` keeps the `${GIT_WARP_VERSION:-...}` env override and resolves
   the latest tag via `api.github.com/repos/.../releases/latest`. This is a
   shape check, independent of the prepared tag.
@@ -24,7 +24,7 @@ commands. It stops at the first failing command.
 Use the fast metadata-only mode while preparing notes:
 
 ```bash
-warp release-check --metadata-only --version v0.3.0
+warp release-check --metadata-only --version v0.4.0
 ```
 
 ## Full Verification
