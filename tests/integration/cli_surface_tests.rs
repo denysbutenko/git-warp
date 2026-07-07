@@ -1977,7 +1977,7 @@ fn test_doctor_shell_check_recognizes_powershell() {
 
     assert!(output.status.success(), "{stdout}{stderr}");
     assert!(
-        stdout.contains("PowerShell integration is not yet shipped"),
+        stdout.contains("Run `warp shell-config powershell`"),
         "{stdout}"
     );
     assert!(
