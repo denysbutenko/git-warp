@@ -108,7 +108,8 @@ fn test_collect_metadata_checks_all_pass() {
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $envVersion = [Environment]::GetEnvironmentVariable('GIT_WARP_VERSION')\n\
          if ($envVersion) { $tag = $env:GIT_WARP_VERSION }\n\
-         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
     )
     .unwrap();
     fs::write(
@@ -279,6 +280,46 @@ fn test_install_ps1_missing_checksum_fails() {
 }
 
 #[test]
+fn test_install_ps1_missing_skip_checksum_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.ps1 keeps env override + API lookup + Get-FileHash SHA256 but lost the SkipChecksum opt-out.
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $tag = $env:GIT_WARP_VERSION\n\
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null\n\
+         & $Target hooks-remove --level user --runtime all *> $null\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks[5].label, "install.ps1");
+    assert!(
+        !checks[5].ok,
+        "install.ps1 without SkipChecksum opt-out should fail the check"
+    );
+    assert!(
+        checks[5]
+            .detail
+            .contains("GIT_WARP_SKIP_CHECKSUM / -SkipChecksum opt-out"),
+        "fail detail should call out the missing SkipChecksum opt-out, got: {}",
+        checks[5].detail
+    );
+    assert!(checks[6].ok, "uninstall.ps1 guard should still pass");
+}
+
+#[test]
 fn test_uninstall_ps1_missing_hooks_remove_fails() {
     let temp = tempdir().unwrap();
     let expected = ReleaseVersion {
@@ -290,7 +331,8 @@ fn test_uninstall_ps1_missing_hooks_remove_fails() {
         temp.path().join("install.ps1"),
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $tag = $env:GIT_WARP_VERSION\n\
-         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
     )
     .unwrap();
     // uninstall.ps1 forgot the hooks-remove call.
@@ -328,7 +370,8 @@ fn test_uninstall_ps1_missing_installroot_fails() {
         temp.path().join("install.ps1"),
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $tag = $env:GIT_WARP_VERSION\n\
-         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
     )
     .unwrap();
     // uninstall.ps1 keeps hooks-remove but lost the InstallRoot handling.
@@ -538,7 +581,8 @@ fn test_uninstall_script_missing_hooks_remove_fails() {
         temp.path().join("install.ps1"),
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $tag = $env:GIT_WARP_VERSION\n\
-         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n",
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
     )
     .unwrap();
     fs::write(
