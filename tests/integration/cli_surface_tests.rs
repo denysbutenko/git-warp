@@ -658,7 +658,7 @@ fn test_release_check_metadata_only_accepts_current_release_metadata() {
 #[test]
 fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
-        .args(["release-check", "--metadata-only", "--version", "v0.5.0"])
+        .args(["release-check", "--metadata-only", "--version", "v0.6.0"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap();
@@ -667,11 +667,11 @@ fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
 
     assert!(!output.status.success(), "{stdout}");
     assert!(
-        stderr.contains("Cargo.toml package version is 0.4.0, expected 0.5.0"),
+        stderr.contains("Cargo.toml package version is 0.5.0, expected 0.6.0"),
         "{stderr}"
     );
     assert!(
-        normalized_path_text(&stderr).contains("docs/releases/v0.5.0.md is missing"),
+        normalized_path_text(&stderr).contains("docs/releases/v0.6.0.md is missing"),
         "{stderr}"
     );
 }
