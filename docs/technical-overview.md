@@ -63,17 +63,18 @@ Git-Warp follows a modular, layered architecture designed for performance, maint
 [dependencies]
 # CLI & TUI Framework
 clap = "4.5.4"          # Modern CLI argument parsing
-ratatui = "0.26.2"      # Rich Terminal User Interfaces
-crossterm = "0.27.0"    # Cross-platform terminal manipulation
+ratatui = "0.30.0"      # Rich Terminal User Interfaces
+crossterm = "0.29.0"    # Cross-platform terminal manipulation
 
 # System Integration
-nix = "0.28.0"          # Unix system calls (CoW support)
-sysinfo = "0.30.12"     # System process information
+nix = "0.31.3"          # Unix system calls (CoW support)
+sysinfo = "0.39.3"      # System process information
 
 # Configuration
 figment = "0.10.19"     # Layered configuration management
 serde = "1.0.203"       # Serialization framework
-toml = "0.8.13"         # TOML configuration format
+serde_json = "1.0.117"  # JSON for hooks and agent metadata
+toml = "0.9.6"          # TOML configuration format
 
 # Performance
 rayon = "1.10.0"        # Data parallelism
@@ -81,9 +82,18 @@ ignore = "0.4.22"       # Fast gitignore-aware file traversal
 
 # Utilities
 anyhow = "1.0.86"       # Flexible error handling
-thiserror = "1.0.61"    # Custom error types
+thiserror = "2.0.18"    # Custom error types
+log = "0.4.21"          # Logging facade
+env_logger = "0.11.3"   # Env-driven log backend
+dirs = "6.0.0"          # Platform config directories
 chrono = "0.4.38"       # Date/time handling
+tempfile = "3.10.1"     # Scratch dirs for atomic writes
+
+# Windows
+windows-sys = "0.60"    # Win32 process handling (kill_timeout)
 ```
+
+Exact pins live in `Cargo.toml`; this list documents intent, not the ledger.
 
 ### Technology Rationale
 
@@ -104,20 +114,34 @@ chrono = "0.4.38"       # Date/time handling
 
 ### Core Modules
 
-```rust
+```text
 src/
-├── main.rs           // Application entry point
-├── cli.rs            // Command-line interface (612 lines)
-├── config.rs         // Configuration management (465 lines)
-├── cow.rs            // Copy-on-Write implementation (132 lines)
-├── error.rs          // Error types and handling (39 lines)
-├── git.rs            // Git repository operations (392 lines)
-├── hooks.rs          // Claude Code integration (190 lines)
-├── process.rs        // Process management (285 lines)
-├── rewrite.rs        // Path rewriting engine (155 lines)
-├── terminal.rs       // Terminal integration (206 lines)
-└── tui.rs            // Text User Interface (367 lines)
+├── main.rs           // Binary entry point
+├── lib.rs            // Library root, re-exports
+├── error.rs          // Structured error types
+├── cli.rs            // Clap definitions + top-level command routing
+├── config.rs         // Layered configuration (figment)
+├── git.rs            // Git worktree / repo operations (shells out to `git`)
+├── cow.rs            // Copy-on-Write clone engine (APFS + reflink + Windows fallback)
+├── rewrite.rs        // Post-clone path rewriting (rayon-parallel)
+├── process.rs        // Process discovery + graceful termination
+├── terminal.rs       // Terminal detection + tab/window automation
+├── hooks.rs          // Claude Code agent-status hook install/uninstall
+├── agents.rs         // Agent session discovery (Claude, Codex) + state
+├── post_create.rs    // Package-manager post-create hooks (pnpm/yarn/bun/npm/cargo)
+├── fs_atomic.rs      // Crash-safe temp-file + rename writes
+├── release.rs        // `warp release-check` for install/uninstall scripts
+└── tui/              // Text User Interfaces (ratatui)
+    ├── mod.rs
+    ├── terminal.rs       // TuiTerminalGuard + shared helpers
+    ├── switcher.rs       // Interactive `warp switch` picker
+    ├── agents.rs         // Agents dashboard
+    ├── cleanup.rs        // Interactive `warp cleanup`
+    ├── config_editor.rs  // `warp config edit`
+    └── shell.rs          // Shell-config emitters (bash/zsh/fish/PowerShell)
 ```
+
+Line counts intentionally omitted — they drift on every refactor. Run `wc -l src/*.rs src/tui/*.rs` for the current sizes.
 
 ### Module Dependencies
 
@@ -127,13 +151,20 @@ graph TD
     B --> C[git.rs]
     B --> D[config.rs]
     B --> E[process.rs]
-    B --> F[tui.rs]
+    B --> F[tui/]
+    B --> K[hooks.rs]
+    B --> L[agents.rs]
+    B --> M[post_create.rs]
+    B --> N[release.rs]
     C --> G[cow.rs]
     C --> H[rewrite.rs]
     C --> I[terminal.rs]
+    D --> O[fs_atomic.rs]
+    K --> O
     F --> C
+    F --> L
+    F --> D
     H --> J[error.rs]
-    All --> J
 ```
 
 ### Design Patterns
