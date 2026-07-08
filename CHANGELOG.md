@@ -1,14 +1,56 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 - 2026-07-08
+
+Follow-up release to v0.4.0. It finishes the Windows shell story with a
+PowerShell shell-config emitter, and fixes `warp switch` so a new worktree
+overlays only the primary's untracked and ignored files instead of copying the
+whole tree.
+
+Release notes: [docs/releases/v0.5.0.md](docs/releases/v0.5.0.md)
+
+### Added
+
+- PowerShell shell-config: `warp shell-config powershell` (alias `pwsh`) emits a
+  `warp_cd` helper and a `Register-ArgumentCompleter` block for branch
+  completion. `warp doctor` recognizes PowerShell via `PSModulePath` and points
+  at the `warp shell-config powershell` snippet and `$env:PATH` instead of the
+  old "not yet shipped" placeholder. (#219)
+- `[cow] exclude` config knob: a list of untracked/ignored paths to skip when a
+  new worktree overlays the primary. It defaults to build and cache output;
+  `node_modules` is still copied so a fresh worktree stays runnable. (#227)
+
+### Changed
+
+- Worktree removal prints a single terser line.
 
 ### Fixed
 
-- `warp cleanup --kill` on Windows now honors `[process].kill_timeout`. The
-  Windows branch of `ProcessManager::terminate_single_process` fires a single
+- `warp switch` keeps the real `git worktree add` and CoW-overlays only the
+  primary worktree's untracked and ignored files (`git status -z --ignored`).
+  The previous path did `git worktree add`, `rm -rf`, then cloned the entire
+  primary tree — `.git` and build output included — which copied the whole
+  object store for nothing, walked all of it during path rewriting, and left
+  the worktree with a copied `.git` instead of a linked-worktree pointer.
+  Rewriting is now scoped to the overlaid files so tracked files never gain
+  spurious diffs, and a failed overlay is removed so no half-copied state
+  survives. (#227)
+- `warp cleanup --kill` on Windows honors `[process].kill_timeout`. The Windows
+  branch of `ProcessManager::terminate_single_process` fires a single
   `taskkill /T` for the graceful attempt, waits on the process handle via
   `WaitForSingleObject(kill_timeout)`, then falls back to `TerminateProcess`
   through the same handle instead of a second `taskkill /F` spawn. (#212)
+- `uninstall.ps1` honors `-InstallRoot` / `GIT_WARP_INSTALL_ROOT`, mirroring
+  `install.ps1`, so a Cargo install with a custom root uninstalls from the right
+  place. (#218)
+- `warp release-check` guards `install.sh` and `uninstall.sh` contents, so a
+  release can't ship scripts that dropped the checksum verification or the
+  `hooks-remove` cleanup. (#214)
+
+### Dependencies
+
+- Bump `crossbeam-epoch` to 0.9.20 (RUSTSEC-2026-0204).
+- Bump the cargo minor-and-patch group across 7 updates. (#224)
 
 ## v0.4.0 - 2026-07-02
 
