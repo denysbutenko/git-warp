@@ -65,9 +65,8 @@ fn bench_git_operations(c: &mut Criterion) {
 
     let temp_dir = setup_git_repository();
     let repo_path = temp_dir.path();
-    std::env::set_current_dir(repo_path).unwrap();
 
-    let git_repo = GitRepository::find().unwrap();
+    let git_repo = GitRepository::open(repo_path).unwrap();
 
     // Benchmark worktree listing
     group.bench_function("list_worktrees", |b| {
@@ -241,16 +240,14 @@ max_activities = 100
 fn bench_filesystem_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("filesystem");
 
-    // Test CoW support detection
-    group.bench_function("cow_support_detection", |b| {
-        b.iter(|| {
-            let _ = is_cow_supported(".");
-        })
-    });
-
-    // Test directory traversal
     let temp_dir = create_nested_directory_structure();
     let test_path = temp_dir.path();
+
+    group.bench_function("cow_support_detection", |b| {
+        b.iter(|| {
+            let _ = is_cow_supported(test_path);
+        })
+    });
 
     group.bench_function("directory_traversal", |b| {
         b.iter(|| {
