@@ -212,12 +212,16 @@ pub fn collect_metadata_checks(
         ),
         ("Get-FileHash", "the Get-FileHash checksum step"),
         ("-Algorithm SHA256", "the SHA256 algorithm flag"),
+        (
+            "GIT_WARP_SKIP_CHECKSUM",
+            "the GIT_WARP_SKIP_CHECKSUM / -SkipChecksum opt-out",
+        ),
     ];
     checks.push(content_guard(
         "install.ps1",
         &install_ps1,
         install_ps1_requirements,
-        "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, and Get-FileHash -Algorithm SHA256 verification",
+        "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, Get-FileHash -Algorithm SHA256 verification, and GIT_WARP_SKIP_CHECKSUM / -SkipChecksum opt-out",
     ));
 
     let uninstall_ps1_requirements: &[(&str, &str)] = &[
