@@ -506,11 +506,22 @@ impl HooksManager {
     /// TUI dashboard. Called from the hidden `warp __hook-status` subcommand
     /// installed into Claude/Codex hook configs (#189).
     pub fn write_runtime_status(runtime_arg: &str, status: &str) -> Result<()> {
-        let runtime = HookRuntime::parse_single(runtime_arg)?;
-
         let repo_root = crate::git::GitRepository::find()
             .map(|repo| repo.root_path().to_path_buf())
             .or_else(|_| std::env::current_dir())?;
+
+        Self::write_runtime_status_with_root(&repo_root, runtime_arg, status)
+    }
+
+    /// Root-explicit variant of [`Self::write_runtime_status`]. Keeps tests
+    /// off the process-wide CWD (#238) so parallel lib-crate unit tests do
+    /// not race on `std::env::set_current_dir`.
+    pub fn write_runtime_status_with_root(
+        repo_root: &Path,
+        runtime_arg: &str,
+        status: &str,
+    ) -> Result<()> {
+        let runtime = HookRuntime::parse_single(runtime_arg)?;
 
         let dir = repo_root.join(runtime.status_root_dir()).join("git-warp");
         fs::create_dir_all(&dir)?;
@@ -671,32 +682,13 @@ mod tests {
     #[test]
     fn test_write_runtime_status_writes_json() {
         let temp_dir = tempfile::tempdir().unwrap();
-        // Initialise a real git repo so `GitRepository::find()` resolves to
-        // the temp dir rather than wandering up into the user's checkout.
-        let init = std::process::Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(temp_dir.path())
-            .status()
-            .unwrap();
-        assert!(init.success());
+        // canonicalize so we match whatever `/private/var/...`-style path
+        // the platform actually resolves the tempdir to.
+        let repo_root = std::fs::canonicalize(temp_dir.path()).unwrap();
 
-        let prev_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-        let result = HooksManager::write_runtime_status("claude", "waiting");
-        std::env::set_current_dir(&prev_cwd).unwrap();
-        result.unwrap();
+        HooksManager::write_runtime_status_with_root(&repo_root, "claude", "waiting").unwrap();
 
-        // git rev-parse --show-toplevel may return a /private/var-style
-        // canonical path on macOS, so look the file up under the resolved
-        // toplevel instead of `temp_dir.path()` directly.
-        let toplevel = std::process::Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .current_dir(temp_dir.path())
-            .output()
-            .unwrap();
-        let toplevel = PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim().to_string());
-        let status_path = toplevel.join(".claude").join("git-warp").join("status");
-
+        let status_path = repo_root.join(".claude").join("git-warp").join("status");
         let body = fs::read_to_string(&status_path).unwrap();
         let parsed: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["status"].as_str(), Some("waiting"));
