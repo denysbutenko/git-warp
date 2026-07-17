@@ -692,10 +692,16 @@ impl Cli {
     /// Render a path with the user's home directory collapsed to `~` for
     /// terser, less noisy output.
     fn abbreviate_path(path: &Path) -> String {
+        Self::abbreviate_path_with_home(path, dirs::home_dir().as_deref())
+    }
+
+    fn abbreviate_path_with_home(path: &Path, home: Option<&Path>) -> String {
         let display = path.display().to_string();
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home {
             let home = home.display().to_string();
-            if let Some(rest) = display.strip_prefix(&home) {
+            if let Some(rest) = display.strip_prefix(&home)
+                && (rest.is_empty() || rest.starts_with(std::path::is_separator))
+            {
                 return format!("~{}", rest);
             }
         }
@@ -2835,5 +2841,46 @@ mod tests {
     #[test]
     fn resolve_cleanup_kill_default_is_off() {
         assert!(!resolve_cleanup_kill(false, false, false));
+    }
+
+    #[test]
+    fn abbreviate_path_collapses_home_prefix() {
+        assert_eq!(
+            Cli::abbreviate_path_with_home(
+                Path::new("/tmp/alice/repo"),
+                Some(Path::new("/tmp/alice")),
+            ),
+            "~/repo",
+        );
+    }
+
+    #[test]
+    fn abbreviate_path_equal_to_home_returns_tilde() {
+        assert_eq!(
+            Cli::abbreviate_path_with_home(Path::new("/tmp/alice"), Some(Path::new("/tmp/alice")),),
+            "~",
+        );
+    }
+
+    #[test]
+    fn abbreviate_path_preserves_home_sibling() {
+        // Regression for #236: a sibling that shares the home dir as a byte
+        // prefix (e.g. `/tmp/alice-scratch/repo` when home is `/tmp/alice`)
+        // must not be abbreviated to `~-scratch/repo`.
+        assert_eq!(
+            Cli::abbreviate_path_with_home(
+                Path::new("/tmp/alice-scratch/repo"),
+                Some(Path::new("/tmp/alice")),
+            ),
+            "/tmp/alice-scratch/repo",
+        );
+    }
+
+    #[test]
+    fn abbreviate_path_without_home_returns_display() {
+        assert_eq!(
+            Cli::abbreviate_path_with_home(Path::new("/tmp/alice/repo"), None),
+            "/tmp/alice/repo",
+        );
     }
 }
