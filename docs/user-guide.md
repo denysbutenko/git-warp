@@ -286,6 +286,16 @@ auto_install = true
 enabled = true
 refresh_rate = 1000
 max_activities = 100
+
+[cow]
+# Names to skip when copying the primary worktree's untracked & ignored files
+# into a new worktree. Matched per path component. `.git` and tracked files are
+# never copied. `node_modules` is kept on purpose. Set to [] to copy everything.
+exclude = [
+    "target", "dist", "build", "out", "coverage",
+    ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".gradle",
+]
 ```
 
 `[git].auto_fetch` controls whether `warp cleanup` runs `git fetch --all --prune`
@@ -304,6 +314,14 @@ creates a new worktree. Lockfile detection order is `pnpm-lock.yaml` →
 `yarn.lock` → `bun.lock` → `bun.lockb` → `package-lock.json` → `Cargo.toml`; the first match wins. Set
 `auto_install = false` to skip the install step entirely.
 
+`[cow].exclude` lists path components to skip when Git-Warp overlays the primary
+worktree's untracked and ignored files onto a fresh worktree. Matching is
+name-based per path component against entries reported by
+`git status -z --ignored`, so `target` also drops `crates/foo/target/`. Entries
+are bare directory or file names, not globs. `.git` and tracked files are never
+copied; `node_modules` is kept by default. Set `exclude = []` to copy every
+untracked and ignored path.
+
 Environment variables override config file values. Top-level keys map
 directly; nested sections use `__` (double underscore) as the path
 separator (`GIT_WARP_<section>__<field>`):
@@ -320,6 +338,7 @@ export GIT_WARP_PROCESS__AUTO_KILL=true
 export GIT_WARP_TERMINAL__APP=iterm2
 export GIT_WARP_AGENT__REFRESH_RATE=2000
 export GIT_WARP_POST_CREATE__AUTO_INSTALL=false
+export GIT_WARP_COW__EXCLUDE='["target","dist"]'
 ```
 
 Command-line options have the highest priority:
