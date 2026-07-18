@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Ship MIT `LICENSE` at repo root, matching the `license = "MIT"` field
+  already declared in `Cargo.toml`. (#246)
+
+### Fixed
+
+- `abbreviate_path` no longer collapses a sibling of the home directory
+  (e.g. `/Users/alice-scratch` → `~-scratch`) in the worktree switcher's
+  removal messages. The strip only applies when the remainder is empty or
+  starts with a path separator. (#236)
+- `warp release-check` guards the `-SkipChecksum` / `GIT_WARP_SKIP_CHECKSUM`
+  opt-out in `install.ps1`, mirroring the existing `install.sh` guard so a
+  release cannot ship a Windows installer that dropped the opt-out. (#231)
+
+### Dependencies
+
+- Bump `windows-sys` from 0.60.2 to 0.61.2. (#243)
+- Bump the cargo minor-and-patch group across 3 updates
+  (`clap`, `ignore`, `sysinfo`). (#245)
+
 ## v0.5.0 - 2026-07-08
 
 Follow-up release to v0.4.0. It finishes the Windows shell story with a
