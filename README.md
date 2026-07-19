@@ -28,7 +28,7 @@ normal `git worktree` creation when CoW is not available.
   per-scope `Complete` / `Partial` / `Missing` / `Conflicting` diagnostics and
   the exact repair command.
 - Shows a TUI dashboard for live hook data and recent local agent sessions.
-- Generates shell completion snippets for Bash, Zsh, and Fish.
+- Generates shell completion snippets for Bash, Zsh, Fish, and PowerShell.
 - Validates release metadata before tagging with `warp release-check`.
 
 ## Install
