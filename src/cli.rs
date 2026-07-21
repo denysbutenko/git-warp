@@ -2749,8 +2749,8 @@ complete -c warp -n '__fish_seen_subcommand_from switch' -f -a '(warp __complete
             "branches" => {
                 let git_repo =
                     crate::git::GitRepository::find().map_err(|_| Self::not_in_git_repo_error())?;
-                for branch in git_repo.list_local_branches_matching_prefix(prefix.unwrap_or(""))? {
-                    println!("{branch}");
+                for name in git_repo.list_switchable_refs_matching_prefix(prefix.unwrap_or(""))? {
+                    println!("{name}");
                 }
                 Ok(())
             }
