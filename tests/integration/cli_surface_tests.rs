@@ -1945,7 +1945,14 @@ fn test_doctor_shell_check_handles_unknown_shell() {
         stdout.contains("unsupported shell `/usr/bin/tcsh`"),
         "{stdout}"
     );
-    assert!(stdout.contains("supported: bash, zsh, fish"), "{stdout}");
+    assert!(
+        stdout.contains("supported: bash, zsh, fish, powershell"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("(or use PowerShell), then run `warp shell-config <shell>`"),
+        "{stdout}"
+    );
 }
 
 #[cfg(windows)]

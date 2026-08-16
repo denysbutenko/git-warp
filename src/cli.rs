@@ -2230,12 +2230,14 @@ impl Cli {
             }
             DoctorShell::Unknown { value } => {
                 let detail = match value {
-                    Some(v) => format!("unsupported shell `{v}`; supported: bash, zsh, fish"),
+                    Some(v) => {
+                        format!("unsupported shell `{v}`; supported: bash, zsh, fish, powershell")
+                    }
                     None => "SHELL is not set".to_string(),
                 };
                 Self::doctor_warn("Shell integration", detail);
                 next_steps.push(
-                    "Set SHELL to bash, zsh, or fish, then run `warp shell-config` for setup snippets.".to_string(),
+                    "Set SHELL to bash, zsh, or fish (or use PowerShell), then run `warp shell-config <shell>` for setup snippets.".to_string(),
                 );
             }
         }
