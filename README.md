@@ -18,7 +18,8 @@ normal `git worktree` creation when CoW is not available.
   current terminal, or prints the target path/command.
 - Lists worktrees with primary/current/dirty/detached/busy state, ordered for
   fast scanning in busy repositories.
-- Bare `warp` opens an interactive switcher with multi-select and batch removal.
+- Bare `warp` opens an interactive switcher with multi-select and batch removal;
+  press `Tab` to toggle to the agent session dashboard and `Tab` again to return.
 - Cleans up eligible worktrees with dry-run, interactive selection, process
   checks, protected branches, optional process termination, and per-worktree
   eligibility reasons.
@@ -121,6 +122,11 @@ dirty worktrees and running processes before removing anything.
 The agent dashboard is optional. It shows live hook records when hooks are
 installed, plus recent local Claude/Codex session history for the current
 repository and its worktrees.
+
+Two entry points open it: `warp agents` jumps in directly, and pressing `Tab`
+inside the bare `warp` switcher toggles between the switcher and the dashboard.
+When `agent.enabled=false` in the config, `Tab` shows a notice instead of
+switching.
 
 ```bash
 warp hooks-install --level user --runtime all

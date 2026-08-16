@@ -133,7 +133,9 @@ branch, or new branch and prints a labeled status line. When a branch only
 exists on a remote, Git-Warp creates a local tracking branch from that remote
 ref instead of branching from `HEAD`. Running bare `warp` opens an interactive
 switcher with a `local-only` badge for branches with no matching remote ref;
-`Space` and `a` toggle multi-select for batch worktree removal.
+`Space` and `a` toggle multi-select for batch worktree removal. Press `Tab` to
+switch the surface to the [Agent Session Dashboard](#agent-session-dashboard)
+and `Tab` again to return.
 
 Terminal handoff modes:
 
@@ -203,6 +205,12 @@ checks.
 
 The `agents` command opens a TUI dashboard for live hook records and recent local
 Claude/Codex session history scoped to the current repository and its worktrees.
+
+The dashboard has two entry points: `warp agents` opens it directly, and
+pressing `Tab` inside the [bare `warp` switcher](#switching-worktrees) toggles
+between the switcher and the dashboard. `Tab` again returns to the switcher.
+When `agent.enabled=false` in the config, `Tab` shows a notice instead of
+switching.
 
 ```bash
 warp hooks-install --level user --runtime all
