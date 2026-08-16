@@ -1,5 +1,6 @@
 mod agents;
 mod cli;
+mod commands;
 mod config;
 mod cow;
 mod error;
