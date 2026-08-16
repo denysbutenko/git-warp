@@ -1215,6 +1215,52 @@ fn test_complete_branches_outputs_local_branches_matching_prefix() {
 }
 
 #[test]
+fn test_complete_branches_includes_remote_tracking_tags_and_dedupes() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+
+    run_git(repo_path, &["branch", "254-local"]);
+    run_git(repo_path, &["tag", "254-tag"]);
+    run_git(
+        repo_path,
+        &["update-ref", "refs/remotes/origin/254-remote-only", "HEAD"],
+    );
+    run_git(repo_path, &["branch", "254-dup"]);
+    run_git(
+        repo_path,
+        &["update-ref", "refs/remotes/origin/254-dup", "HEAD"],
+    );
+    run_git(
+        repo_path,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/254-remote-only",
+        ],
+    );
+
+    let output = warp_command(repo_path)
+        .args(["__complete", "branches", "254"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines.contains(&"254-local"), "{stdout}");
+    assert!(lines.contains(&"254-tag"), "{stdout}");
+    assert!(lines.contains(&"254-remote-only"), "{stdout}");
+    assert!(lines.contains(&"254-dup"), "{stdout}");
+    assert_eq!(
+        lines.iter().filter(|l| **l == "254-dup").count(),
+        1,
+        "expected 254-dup exactly once, got {stdout}"
+    );
+    assert!(!lines.contains(&"HEAD"), "{stdout}");
+    assert!(!lines.contains(&"origin/254-remote-only"), "{stdout}");
+}
+
+#[test]
 fn test_shell_config_zsh_outputs_branch_completion_for_root_and_switch() {
     let output = Command::new(env!("CARGO_BIN_EXE_warp"))
         .args(["shell-config", "zsh"])

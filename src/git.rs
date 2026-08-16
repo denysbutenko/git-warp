@@ -879,30 +879,57 @@ impl GitRepository {
         Ok(output.status.success())
     }
 
-    /// List local branches matching a prefix for shell completion
-    pub fn list_local_branches_matching_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+    /// List refs (local branches, remote-tracking branches, tags) that `warp switch`
+    /// can resolve, matching a prefix for shell completion. Remote-tracking branches
+    /// are exposed by their trailing name (`origin/foo` → `foo`) so users can complete
+    /// a fetched-but-not-checked-out branch and let `warp switch` create the local
+    /// tracking branch. Duplicates (same name local and on a remote) collapse into
+    /// one suggestion; the symbolic `refs/remotes/<remote>/HEAD` alias is skipped.
+    pub fn list_switchable_refs_matching_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        use std::collections::BTreeSet;
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+            .args([
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ])
             .current_dir(&self.repo_path)
             .output()
-            .map_err(|e| anyhow::anyhow!("Failed to list local branches: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to list refs: {}", e))?;
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to list local branches: {}", error));
+            return Err(anyhow::anyhow!("Failed to list refs: {}", error));
         }
 
-        let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|branch| branch.starts_with(prefix))
-            .map(str::to_string)
-            .collect();
-        branches.sort();
-        branches.dedup();
+        let mut refs: BTreeSet<String> = BTreeSet::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let name = if let Some(rest) = line.strip_prefix("refs/heads/") {
+                rest
+            } else if let Some(rest) = line.strip_prefix("refs/remotes/") {
+                let Some((_, branch)) = rest.split_once('/') else {
+                    continue;
+                };
+                if branch == "HEAD" {
+                    continue;
+                }
+                branch
+            } else if let Some(rest) = line.strip_prefix("refs/tags/") {
+                rest
+            } else {
+                continue;
+            };
 
-        Ok(branches)
+            if name.starts_with(prefix) {
+                refs.insert(name.to_string());
+            }
+        }
+
+        Ok(refs.into_iter().collect())
     }
 
     /// Get the current HEAD commit
