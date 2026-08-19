@@ -2687,7 +2687,7 @@ _warp_completion() {{
     if (( CURRENT == 2 )); then
         compadd -- \"${{commands[@]}}\"
         _warp_branch_completions
-    elif [[ ${{words[2]}} == switch && CURRENT == 3 ]]; then
+    elif [[ ${{words[2]}} == switch && $CURRENT == 3 ]]; then
         _warp_branch_completions
     fi
 }}
