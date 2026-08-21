@@ -455,6 +455,12 @@ impl Cli {
         }
     }
 
+    /// Decide whether a switch should use CoW. Kept out of `handle_switch` so the
+    /// dry-run preview and the real run stay in lockstep.
+    fn compute_use_cow(no_cow: bool, cfg: &crate::config::Config, path: &Path) -> bool {
+        !no_cow && cfg.use_cow && crate::cow::is_cow_supported(path).unwrap_or(false)
+    }
+
     fn dry_run_source_label(branch: &str, source: &crate::git::BranchSource) -> String {
         match source {
             crate::git::BranchSource::ExistingWorktree { path } => {
@@ -856,7 +862,6 @@ impl Cli {
         no_cow: bool,
     ) -> Result<()> {
         use crate::config::ConfigManager;
-        use crate::cow;
         use crate::git::GitRepository;
         use crate::post_create::{PostCreateSetupStatus, run_post_create_setup};
 
@@ -894,7 +899,7 @@ impl Cli {
             println!("{}", Self::dry_run_source_label(&branch, &branch_source));
             if worktree_path.exists() {
                 println!("Would reuse existing worktree");
-            } else if !no_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false) {
+            } else if Self::compute_use_cow(no_cow, config, &worktree_path) {
                 println!("Would use Copy-on-Write for fast worktree creation");
             } else {
                 println!("Would use traditional Git worktree creation");
@@ -916,8 +921,7 @@ impl Cli {
             println!("{}", Self::source_announcement(&branch, &branch_source));
 
             // Choose creation method based on CoW support and user preference
-            let use_cow =
-                !no_cow && config.use_cow && cow::is_cow_supported(&worktree_path).unwrap_or(false);
+            let use_cow = Self::compute_use_cow(no_cow, config, &worktree_path);
 
             if use_cow {
                 println!("⚡ Using Copy-on-Write for instant setup...");

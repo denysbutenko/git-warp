@@ -2096,6 +2096,29 @@ fn setup_repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {
 }
 
 #[test]
+fn test_switch_dry_run_honors_use_cow_false_config() {
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+
+    let output = warp_command(repo_path)
+        .args(["--dry-run", "switch", "fresh-feature"])
+        .env("GIT_WARP_USE_COW", "false")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Would use traditional Git worktree creation"),
+        "dry-run should honor GIT_WARP_USE_COW=false but stdout was: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Would use Copy-on-Write"),
+        "dry-run should not announce CoW when disabled: {stdout}"
+    );
+}
+
+#[test]
 fn test_switch_dry_run_labels_new_branch_source() {
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();
