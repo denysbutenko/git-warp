@@ -205,6 +205,14 @@ fn resolve_cleanup_kill(flag_kill: bool, flag_no_kill: bool, config_auto_kill: b
     flag_kill || config_auto_kill
 }
 
+/// Decide whether `warp ls` should open the interactive switcher instead of
+/// printing the table. `--interactive` always wins; on a plain TTY without
+/// flags we default to the switcher, but `--dry-run` and `--debug` both ask
+/// for the table path explicitly (regression for #269).
+fn should_open_ls_switcher(interactive: bool, is_tty: bool, dry_run: bool, debug: bool) -> bool {
+    interactive || (is_tty && !dry_run && !debug)
+}
+
 fn public_subcommand_names() -> Vec<String> {
     use clap::CommandFactory;
     let mut names = Vec::new();
@@ -1237,7 +1245,12 @@ impl Cli {
 
         info!("Listing worktrees");
 
-        if interactive || (std::io::stdout().is_terminal() && !self.dry_run) {
+        if should_open_ls_switcher(
+            interactive,
+            std::io::stdout().is_terminal(),
+            self.dry_run,
+            debug,
+        ) {
             return self.handle_default_switcher();
         }
 
@@ -2888,5 +2901,36 @@ mod tests {
             Cli::abbreviate_path_with_home(Path::new("/tmp/alice/repo"), None),
             "/tmp/alice/repo",
         );
+    }
+
+    #[test]
+    fn ls_switcher_gate_non_tty_prints_table() {
+        assert!(!should_open_ls_switcher(false, false, false, false));
+        assert!(!should_open_ls_switcher(false, false, true, false));
+        assert!(!should_open_ls_switcher(false, false, false, true));
+    }
+
+    #[test]
+    fn ls_switcher_gate_tty_opens_switcher_by_default() {
+        assert!(should_open_ls_switcher(false, true, false, false));
+    }
+
+    #[test]
+    fn ls_switcher_gate_debug_on_tty_prints_table() {
+        // Regression for #269: `warp ls --debug` on a TTY must fall through to
+        // the debug-row-printing path instead of silently opening the switcher.
+        assert!(!should_open_ls_switcher(false, true, false, true));
+    }
+
+    #[test]
+    fn ls_switcher_gate_dry_run_on_tty_prints_table() {
+        assert!(!should_open_ls_switcher(false, true, true, false));
+    }
+
+    #[test]
+    fn ls_switcher_gate_interactive_wins_over_debug() {
+        // Explicit `--interactive` overrides `--debug` even on a TTY.
+        assert!(should_open_ls_switcher(true, true, false, true));
+        assert!(should_open_ls_switcher(true, false, false, true));
     }
 }
