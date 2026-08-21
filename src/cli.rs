@@ -2228,7 +2228,7 @@ impl Cli {
                         "PowerShell warp_cd helper is not installed",
                     );
                     next_steps.push(
-                        "Run `warp shell-config powershell` and append the output to $PROFILE.CurrentUserAllHosts to enable `warp_cd` and completions.".to_string(),
+                        "Run `warp shell-config powershell` and append the output to $PROFILE.CurrentUserAllHosts to enable `warp_cd` and completions. OneDrive-redirected profile locations (under `OneDrive\\Documents\\PowerShell`) are also checked.".to_string(),
                     );
                 }
                 if let Some(dir) = &default_dir {
@@ -2348,20 +2348,120 @@ impl Cli {
     }
 
     fn powershell_profile_paths() -> Vec<PathBuf> {
-        let mut paths = Vec::new();
         let Some(home) = dirs::home_dir() else {
-            return paths;
+            return Vec::new();
         };
-        let documents = home.join("Documents");
-        for host in ["PowerShell", "WindowsPowerShell"] {
-            paths.push(documents.join(host).join("profile.ps1"));
-            paths.push(
-                documents
-                    .join(host)
-                    .join("Microsoft.PowerShell_profile.ps1"),
-            );
+        let docs = Self::powershell_documents_dirs(&home);
+        Self::powershell_profile_paths_with_documents(&docs)
+    }
+
+    /// Produce the candidate `$PROFILE` file paths under each Documents dir.
+    /// Order matches PowerShell's precedence: `profile.ps1` (AllHosts) before
+    /// `Microsoft.PowerShell_profile.ps1` (CurrentHost), for both the modern
+    /// `PowerShell` host and the legacy `WindowsPowerShell` host.
+    fn powershell_profile_paths_with_documents(documents: &[PathBuf]) -> Vec<PathBuf> {
+        let mut paths = Vec::with_capacity(documents.len() * 4);
+        for docs in documents {
+            for host in ["PowerShell", "WindowsPowerShell"] {
+                paths.push(docs.join(host).join("profile.ps1"));
+                paths.push(docs.join(host).join("Microsoft.PowerShell_profile.ps1"));
+            }
         }
         paths
+    }
+
+    /// Resolve every Documents directory PowerShell could be using: the
+    /// Windows Known Folder (which follows OneDrive KFM redirection), the
+    /// `OneDrive` / `OneDriveCommercial` environment fallbacks OneDrive
+    /// exports on managed installs, `home/OneDrive/Documents`, and the plain
+    /// `home/Documents` legacy path. Order is preserved so higher-precedence
+    /// hits are probed first; duplicates are removed.
+    fn powershell_documents_dirs(home: &Path) -> Vec<PathBuf> {
+        let known = Self::documents_known_folder();
+        let onedrive = std::env::var_os("OneDrive").map(PathBuf::from);
+        let onedrive_commercial = std::env::var_os("OneDriveCommercial").map(PathBuf::from);
+        Self::powershell_documents_dirs_with_env(
+            home,
+            known.as_deref(),
+            onedrive.as_deref(),
+            onedrive_commercial.as_deref(),
+        )
+    }
+
+    fn powershell_documents_dirs_with_env(
+        home: &Path,
+        known: Option<&Path>,
+        onedrive: Option<&Path>,
+        onedrive_commercial: Option<&Path>,
+    ) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let mut push = |candidate: PathBuf| {
+            if candidate.as_os_str().is_empty() {
+                return;
+            }
+            if !dirs.iter().any(|existing| existing == &candidate) {
+                dirs.push(candidate);
+            }
+        };
+        if let Some(known) = known {
+            push(known.to_path_buf());
+        }
+        for base in [onedrive, onedrive_commercial].into_iter().flatten() {
+            push(base.join("Documents"));
+        }
+        push(home.join("OneDrive").join("Documents"));
+        push(home.join("Documents"));
+        dirs
+    }
+
+    #[cfg(windows)]
+    fn documents_known_folder() -> Option<PathBuf> {
+        use std::ffi::{OsString, c_void};
+        use std::os::windows::ffi::OsStringExt;
+        use std::ptr;
+        use windows_sys::Win32::System::Com::CoTaskMemFree;
+        use windows_sys::Win32::UI::Shell::{
+            FOLDERID_Documents, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+        };
+
+        let mut wpath: windows_sys::core::PWSTR = ptr::null_mut();
+        // SAFETY: FFI call into the Shell known-folder API. `wpath` is an out
+        // parameter the callee allocates via `CoTaskMemAlloc`; we free it via
+        // `CoTaskMemFree` on every exit path (including error).
+        let hr = unsafe {
+            SHGetKnownFolderPath(
+                &FOLDERID_Documents,
+                KF_FLAG_DEFAULT as u32,
+                ptr::null_mut(),
+                &mut wpath,
+            )
+        };
+        if hr < 0 || wpath.is_null() {
+            if !wpath.is_null() {
+                unsafe { CoTaskMemFree(wpath.cast::<c_void>()) };
+            }
+            return None;
+        }
+        let mut len = 0isize;
+        // SAFETY: SHGetKnownFolderPath returned a NUL-terminated UTF-16 buffer.
+        while unsafe { *wpath.offset(len) } != 0 {
+            len += 1;
+        }
+        // SAFETY: `len` bounds the buffer up to (but not including) the NUL.
+        let slice = unsafe { std::slice::from_raw_parts(wpath, len as usize) };
+        let os = OsString::from_wide(slice);
+        unsafe { CoTaskMemFree(wpath.cast::<c_void>()) };
+        let path = PathBuf::from(os);
+        if path.as_os_str().is_empty() {
+            None
+        } else {
+            Some(path)
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn documents_known_folder() -> Option<PathBuf> {
+        None
     }
 
     fn doctor_install_candidates() -> Vec<DoctorInstallEntry> {
@@ -2932,5 +3032,104 @@ mod tests {
         // Explicit `--interactive` overrides `--debug` even on a TTY.
         assert!(should_open_ls_switcher(true, true, false, true));
         assert!(should_open_ls_switcher(true, false, false, true));
+    }
+
+    #[test]
+    fn powershell_profile_paths_expands_each_documents_dir() {
+        let docs = vec![
+            PathBuf::from("/users/alice/OneDrive/Documents"),
+            PathBuf::from("/users/alice/Documents"),
+        ];
+        assert_eq!(
+            Cli::powershell_profile_paths_with_documents(&docs),
+            vec![
+                PathBuf::from("/users/alice/OneDrive/Documents/PowerShell/profile.ps1"),
+                PathBuf::from(
+                    "/users/alice/OneDrive/Documents/PowerShell/Microsoft.PowerShell_profile.ps1"
+                ),
+                PathBuf::from("/users/alice/OneDrive/Documents/WindowsPowerShell/profile.ps1"),
+                PathBuf::from(
+                    "/users/alice/OneDrive/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1"
+                ),
+                PathBuf::from("/users/alice/Documents/PowerShell/profile.ps1"),
+                PathBuf::from("/users/alice/Documents/PowerShell/Microsoft.PowerShell_profile.ps1"),
+                PathBuf::from("/users/alice/Documents/WindowsPowerShell/profile.ps1"),
+                PathBuf::from(
+                    "/users/alice/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1"
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn powershell_profile_paths_empty_when_no_documents_dirs() {
+        assert!(Cli::powershell_profile_paths_with_documents(&[]).is_empty());
+    }
+
+    #[test]
+    fn documents_dirs_prefer_known_folder_and_include_plain_fallback() {
+        // Simulates OneDrive KFM: the Known Folder resolves to the OneDrive
+        // Documents path, but the legacy `~/Documents` probe is still added
+        // last so redirected and non-redirected setups both keep working.
+        let home = PathBuf::from("/users/alice");
+        let known = PathBuf::from("/users/alice/OneDrive/Documents");
+        let dirs = Cli::powershell_documents_dirs_with_env(&home, Some(&known), None, None);
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/users/alice/OneDrive/Documents"),
+                PathBuf::from("/users/alice/Documents"),
+            ],
+        );
+    }
+
+    #[test]
+    fn documents_dirs_honor_onedrive_env_when_known_folder_missing() {
+        let home = PathBuf::from("/users/alice");
+        let onedrive = PathBuf::from("/users/alice/OneDrive - Contoso");
+        let dirs = Cli::powershell_documents_dirs_with_env(&home, None, Some(&onedrive), None);
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/users/alice/OneDrive - Contoso/Documents"),
+                PathBuf::from("/users/alice/OneDrive/Documents"),
+                PathBuf::from("/users/alice/Documents"),
+            ],
+        );
+    }
+
+    #[test]
+    fn documents_dirs_dedupe_overlapping_sources() {
+        // Known Folder, `$env:OneDrive\Documents`, and `home/OneDrive/Documents`
+        // can all resolve to the same location; probe it only once.
+        let home = PathBuf::from("/users/alice");
+        let onedrive = PathBuf::from("/users/alice/OneDrive");
+        let known = PathBuf::from("/users/alice/OneDrive/Documents");
+        let dirs = Cli::powershell_documents_dirs_with_env(
+            &home,
+            Some(&known),
+            Some(&onedrive),
+            Some(&onedrive),
+        );
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/users/alice/OneDrive/Documents"),
+                PathBuf::from("/users/alice/Documents"),
+            ],
+        );
+    }
+
+    #[test]
+    fn documents_dirs_fallback_when_no_hints() {
+        let home = PathBuf::from("/users/alice");
+        let dirs = Cli::powershell_documents_dirs_with_env(&home, None, None, None);
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/users/alice/OneDrive/Documents"),
+                PathBuf::from("/users/alice/Documents"),
+            ],
+        );
     }
 }
