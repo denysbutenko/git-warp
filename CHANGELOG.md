@@ -10,6 +10,15 @@
   their trailing name so `origin/feature-x` completes as `feature-x`) and tags,
   deduped against local branches. (#254)
 
+### Changed
+
+- Split the monolithic `src/cli.rs` (~2900 lines) into per-subcommand
+  modules under `src/commands/{switch,ls,cleanup,config,doctor,agents,
+  hooks,shell_config,complete,util}.rs`. `src/cli.rs` now only defines
+  the Clap `Cli` / `Commands` types and dispatches into the modules.
+  Release-check now guards the PowerShell shell-config emitter in
+  `src/commands/shell_config.rs`. (#142)
+
 ### Fixed
 
 - `abbreviate_path` no longer collapses a sibling of the home directory

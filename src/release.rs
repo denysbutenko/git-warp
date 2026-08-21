@@ -115,7 +115,12 @@ pub fn collect_metadata_checks(
     let install_ps1 = read_optional(repo_root.join("install.ps1"))?;
     let uninstall_script = read_optional(repo_root.join("uninstall.sh"))?;
     let uninstall_ps1 = read_optional(repo_root.join("uninstall.ps1"))?;
-    let cli_rs = read_optional(repo_root.join("src").join("cli.rs"))?;
+    let shell_config_rs = read_optional(
+        repo_root
+            .join("src")
+            .join("commands")
+            .join("shell_config.rs"),
+    )?;
     let release_notes_path = repo_root
         .join("docs")
         .join("releases")
@@ -260,10 +265,10 @@ pub fn collect_metadata_checks(
         ),
     ];
     checks.push(content_guard(
-        "src/cli.rs",
-        &cli_rs,
+        "src/commands/shell_config.rs",
+        &shell_config_rs,
         cli_ps_requirements,
-        "src/cli.rs must keep the PowerShell shell-config emitter (warp_cd + Register-ArgumentCompleter)",
+        "src/commands/shell_config.rs must keep the PowerShell shell-config emitter (warp_cd + Register-ArgumentCompleter)",
     ));
 
     Ok(checks)

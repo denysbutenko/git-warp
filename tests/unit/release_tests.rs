@@ -124,11 +124,11 @@ fn test_collect_metadata_checks_all_pass() {
     )
     .unwrap();
 
-    // 6. src/cli.rs with the PowerShell shell-config emitter
-    let src_dir = temp.path().join("src");
-    fs::create_dir_all(&src_dir).unwrap();
+    // 6. src/commands/shell_config.rs with the PowerShell shell-config emitter
+    let commands_dir = temp.path().join("src").join("commands");
+    fs::create_dir_all(&commands_dir).unwrap();
     fs::write(
-        src_dir.join("cli.rs"),
+        commands_dir.join("shell_config.rs"),
         "// function warp_cd emitter\n\
          // Register-ArgumentCompleter -CommandName warp -Native\n",
     )
@@ -210,7 +210,7 @@ fn test_collect_metadata_checks_failures() {
             .detail
             .contains("warp hooks-remove --level user invocation")
     );
-    assert_eq!(checks[8].label, "src/cli.rs");
+    assert_eq!(checks[8].label, "src/commands/shell_config.rs");
     assert!(checks[8].detail.contains("PowerShell shell-config emitter"));
 }
 
@@ -406,21 +406,21 @@ fn test_cli_rs_missing_powershell_emitter_fails() {
         tag: "v0.3.0".to_string(),
     };
 
-    // src/cli.rs kept warp_cd but lost the Register-ArgumentCompleter line.
-    let src_dir = temp.path().join("src");
-    fs::create_dir_all(&src_dir).unwrap();
+    // src/commands/shell_config.rs kept warp_cd but lost the Register-ArgumentCompleter line.
+    let commands_dir = temp.path().join("src").join("commands");
+    fs::create_dir_all(&commands_dir).unwrap();
     fs::write(
-        src_dir.join("cli.rs"),
-        "fn handle_shell_config() { println!(\"function warp_cd\"); }\n",
+        commands_dir.join("shell_config.rs"),
+        "fn run() { println!(\"function warp_cd\"); }\n",
     )
     .unwrap();
 
     let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
 
-    assert_eq!(checks[8].label, "src/cli.rs");
+    assert_eq!(checks[8].label, "src/commands/shell_config.rs");
     assert!(
         !checks[8].ok,
-        "src/cli.rs without Register-ArgumentCompleter should fail"
+        "src/commands/shell_config.rs without Register-ArgumentCompleter should fail"
     );
     assert!(
         checks[8]
