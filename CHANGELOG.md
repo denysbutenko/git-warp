@@ -6,6 +6,9 @@
 
 - Ship MIT `LICENSE` at repo root, matching the `license = "MIT"` field
   already declared in `Cargo.toml`. (#246)
+- `warp __complete branches` now includes remote-tracking branches (exposed by
+  their trailing name so `origin/feature-x` completes as `feature-x`) and tags,
+  deduped against local branches. (#254)
 
 ### Fixed
 
@@ -22,6 +25,10 @@
 - Bump `windows-sys` from 0.60.2 to 0.61.2. (#243)
 - Bump the cargo minor-and-patch group across 3 updates
   (`clap`, `ignore`, `sysinfo`). (#245)
+- Bump the cargo minor-and-patch group across 6 updates
+  (`clap`, `ignore`, `serde`, `serde_json`, `anyhow`, `thiserror`). (#259)
+- Bump `lru` from 0.18.0 to 0.18.2 to pick up `RUSTSEC-2026-0253` (panic-safety
+  fix in `LruCache::pop()`). (#260)
 
 ## v0.5.0 - 2026-07-08
 
