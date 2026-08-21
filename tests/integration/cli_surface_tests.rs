@@ -1273,7 +1273,7 @@ fn test_shell_config_zsh_outputs_branch_completion_for_root_and_switch() {
     assert!(stdout.contains("compdef _warp_completion warp"));
     assert!(stdout.contains("warp __complete branches \"$PREFIX\""));
     assert!(stdout.contains("CURRENT == 2"));
-    assert!(stdout.contains("${words[2]} == switch && CURRENT == 3"));
+    assert!(stdout.contains("${words[2]} == switch && $CURRENT == 3"));
 }
 
 #[test]
