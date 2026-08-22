@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use log::info;
 use std::fmt;
@@ -355,6 +355,12 @@ pub fn run(
         "📊 Cleanup complete: {} removed, {} failed",
         cleaned, failed
     );
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "Cleanup finished with {failed} failed removal(s) (removed {cleaned})"
+        ));
+    }
 
     Ok(())
 }
