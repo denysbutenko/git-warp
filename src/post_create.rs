@@ -171,7 +171,11 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
     };
 
     let info_dir = common_dir.join("info");
-    if std::fs::create_dir_all(&info_dir).is_err() {
+    if let Err(e) = std::fs::create_dir_all(&info_dir) {
+        log::warn!(
+            "Failed to create {} for git-warp exclude entries: {e}",
+            info_dir.display()
+        );
         return;
     }
     let exclude_path = info_dir.join("exclude");
@@ -199,7 +203,12 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
         out.push_str(entry);
         out.push('\n');
     }
-    let _ = crate::fs_atomic::write_atomic(&exclude_path, out.as_bytes());
+    if let Err(e) = crate::fs_atomic::write_atomic(&exclude_path, out.as_bytes()) {
+        log::warn!(
+            "Failed to append git-warp entries to {}: {e}",
+            exclude_path.display()
+        );
+    }
 }
 
 fn detect_manager(worktree_path: &Path) -> Option<PackageManager> {
