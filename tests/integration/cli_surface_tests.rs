@@ -987,6 +987,46 @@ fn test_cleanup_uses_primary_branch_as_base_and_prints_candidate_reasons() {
 }
 
 #[test]
+fn test_cleanup_returns_error_when_removal_fails() {
+    let temp_dir = setup_test_repo_with_initial_branch("trunk");
+    let repo_path = temp_dir.path();
+    let worktree_path = create_worktree(repo_path, "feature/locked");
+
+    let lock_output = Command::new("git")
+        .args(["worktree", "lock", "--reason", "held for test"])
+        .arg(&worktree_path)
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(
+        lock_output.status.success(),
+        "git worktree lock failed: {}",
+        String::from_utf8_lossy(&lock_output.stderr)
+    );
+
+    let output = warp_command(repo_path)
+        .args(["--auto-confirm", "cleanup", "--mode", "merged", "--no-kill"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "cleanup should exit non-zero when a removal fails; stdout={stdout}, stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("Failed to remove worktree feature/locked"),
+        "cleanup should report the failed removal: {stdout}"
+    );
+    assert!(
+        stdout.contains("Cleanup complete: 0 removed, 1 failed"),
+        "cleanup should still print the summary: {stdout}"
+    );
+    assert!(worktree_path.exists());
+}
+
+#[test]
 fn test_cleanup_rejects_unknown_mode() {
     let temp_dir = setup_test_repo();
     let repo_path = temp_dir.path();

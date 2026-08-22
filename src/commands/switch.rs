@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -480,6 +480,12 @@ fn run_switcher_batch_remove(batch: crate::tui::WorktreeBatchRemoval) -> Result<
         batch.skipped.len(),
         failed
     );
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "Batch removal finished with {failed} failed removal(s) (removed {removed})"
+        ));
+    }
 
     Ok(())
 }
