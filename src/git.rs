@@ -176,10 +176,8 @@ impl GitRepository {
 
     /// List all worktrees
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
-        use std::process::Command;
-
         let output = Command::new("git")
-            .args(["worktree", "list", "--porcelain"])
+            .args(["worktree", "list", "--porcelain", "-z"])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to list worktrees: {}", e))?;
@@ -188,49 +186,54 @@ impl GitRepository {
             return Err(anyhow::anyhow!("Git worktree list failed"));
         }
 
-        let output_str = String::from_utf8_lossy(&output.stdout);
+        // With `-z`, each porcelain field is terminated by NUL and records are
+        // separated by an empty field (`\0\0`). Paths in the `worktree <path>`
+        // field arrive as raw bytes, so parse on the byte stream and use
+        // `bytes_to_path` for the path — otherwise a legal newline in a path
+        // would split one record across two, and non-UTF-8 bytes would round
+        // to U+FFFD and mis-target later `remove_worktree` / `switch` calls.
         let mut worktrees = Vec::new();
         let mut current_worktree: Option<WorktreeInfo> = None;
 
-        for line in output_str.lines() {
-            if line.starts_with("worktree ") {
-                // Save previous worktree if exists
+        for field in output.stdout.split(|&b| b == 0) {
+            if field.is_empty() {
                 if let Some(wt) = current_worktree.take() {
                     worktrees.push(wt);
                 }
+                continue;
+            }
 
-                let path = line.strip_prefix("worktree ").unwrap_or("");
+            if let Some(rest) = field.strip_prefix(b"worktree ") {
+                if let Some(wt) = current_worktree.take() {
+                    worktrees.push(wt);
+                }
                 current_worktree = Some(WorktreeInfo {
-                    path: PathBuf::from(path),
+                    path: bytes_to_path(rest),
                     branch: String::new(),
                     head: String::new(),
                     is_primary: false,
                     is_current: false,
                     is_detached: false,
                 });
-            } else if line.starts_with("HEAD ") {
+            } else if let Some(rest) = field.strip_prefix(b"HEAD ") {
                 if let Some(ref mut wt) = current_worktree {
-                    wt.head = line.strip_prefix("HEAD ").unwrap_or("").to_string();
+                    wt.head = String::from_utf8_lossy(rest).into_owned();
                 }
-            } else if line.starts_with("branch refs/heads/") {
+            } else if let Some(rest) = field.strip_prefix(b"branch refs/heads/") {
                 if let Some(ref mut wt) = current_worktree {
-                    wt.branch = line
-                        .strip_prefix("branch refs/heads/")
-                        .unwrap_or("")
-                        .to_string();
+                    wt.branch = String::from_utf8_lossy(rest).into_owned();
                 }
-            } else if line == "bare" {
+            } else if field == b"bare" {
                 if let Some(ref mut wt) = current_worktree {
                     wt.is_primary = true;
                 }
-            } else if line == "detached"
+            } else if field == b"detached"
                 && let Some(ref mut wt) = current_worktree
             {
                 wt.is_detached = true;
             }
         }
 
-        // Add the last worktree
         if let Some(wt) = current_worktree {
             worktrees.push(wt);
         }
@@ -1171,6 +1174,69 @@ mod tests {
                 .any(|e| e != Path::new("node_modules") && e.starts_with("node_modules")),
             "whole ignored dir must not be expanded to files: {entries:?}"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_list_worktrees_roundtrips_newline_in_path() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["config", "user.email", "t@e.com"][..],
+            &["config", "user.name", "T"][..],
+            &["commit", "--allow-empty", "-q", "-m", "init"][..],
+        ] {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        // A directory whose name contains a literal newline — legal on Unix,
+        // and the exact case the pre-`-z` parser split across two bogus rows.
+        let odd_dir = temp.path().join("odd\nname");
+        std::fs::create_dir(&odd_dir).unwrap();
+        let wt_path = odd_dir.join("wt");
+
+        let out = Command::new("git")
+            .args(["worktree", "add", "-b", "newline-test"])
+            .arg(&wt_path)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git worktree add: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let repo_obj = GitRepository::open(&repo).unwrap();
+        let worktrees = repo_obj.list_worktrees().unwrap();
+
+        let matched: Vec<_> = worktrees
+            .iter()
+            .filter(|wt| wt.branch == "newline-test")
+            .collect();
+        assert_eq!(
+            matched.len(),
+            1,
+            "expected one newline-test worktree, got: {worktrees:?}"
+        );
+        // Compare canonicalized paths — `git worktree add` records the
+        // real path, which may differ from the input on macOS (`/private` prefix).
+        let want = wt_path.canonicalize().unwrap();
+        let got = matched[0].path.canonicalize().unwrap();
+        assert_eq!(got, want, "worktree path must round-trip newline exactly");
     }
 
     #[test]

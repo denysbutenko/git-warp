@@ -21,6 +21,11 @@
 
 ### Fixed
 
+- `GitRepository::list_worktrees` now runs `git worktree list --porcelain -z`
+  and parses the raw byte stream via `bytes_to_path`, so paths that contain a
+  newline or non-UTF-8 bytes round-trip verbatim instead of splitting one
+  worktree across two bogus rows (which would mis-target later
+  `remove_worktree` / `switch` operations). (#277)
 - `abbreviate_path` no longer collapses a sibling of the home directory
   (e.g. `/Users/alice-scratch` → `~-scratch`) in the worktree switcher's
   removal messages. The strip only applies when the remainder is empty or
