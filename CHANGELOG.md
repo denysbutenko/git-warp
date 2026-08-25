@@ -48,6 +48,12 @@
   removal) fails, so `set -e`, `&&` chains, and CI jobs no longer treat a
   partial cleanup as success. The human-readable summary line still prints
   before the error propagates. (#275)
+- Terminal launch now rejects resolved commands containing a NUL, `\n`, or
+  `\r`, so a `[terminal].init_commands` entry or substituted `{{branch}}` /
+  `{{repo}}` / `{{path}}` value cannot break out of the AppleScript string
+  literal on macOS (or split a single-line `cmd.exe /K` / PowerShell
+  `-Command` argument on Windows). `escape_applescript_string` additionally
+  escapes `\t`, `\n`, and `\r` as a defense-in-depth measure. (#282)
 
 ### Dependencies
 
