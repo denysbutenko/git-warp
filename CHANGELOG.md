@@ -28,6 +28,12 @@
 - `warp release-check` guards the `-SkipChecksum` / `GIT_WARP_SKIP_CHECKSUM`
   opt-out in `install.ps1`, mirroring the existing `install.sh` guard so a
   release cannot ship a Windows installer that dropped the opt-out. (#231)
+- Terminal launch now rejects resolved commands containing a NUL, `\n`, or
+  `\r`, so a `[terminal].init_commands` entry or substituted `{{branch}}` /
+  `{{repo}}` / `{{path}}` value cannot break out of the AppleScript string
+  literal on macOS (or split a single-line `cmd.exe /K` / PowerShell
+  `-Command` argument on Windows). `escape_applescript_string` additionally
+  escapes `\t`, `\n`, and `\r` as a defense-in-depth measure. (#282)
 
 ### Dependencies
 
