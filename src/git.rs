@@ -290,12 +290,8 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args([
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{}^{{commit}}", name),
-            ])
+            .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+            .arg(format!("{}^{{commit}}", name))
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to resolve commit-ish: {}", e))?;
@@ -392,7 +388,7 @@ impl GitRepository {
             )),
             BranchSource::LocalBranch => {
                 let output = Command::new("git")
-                    .args(["worktree", "add"])
+                    .args(["worktree", "add", "--"])
                     .arg(&git_worktree_path)
                     .arg(branch_name)
                     .current_dir(&self.repo_path)
@@ -407,7 +403,7 @@ impl GitRepository {
             }
             BranchSource::RemoteBranch { remote_ref } => {
                 let output = Command::new("git")
-                    .args(["worktree", "add", "-b", branch_name])
+                    .args(["worktree", "add", "-b", branch_name, "--"])
                     .arg(&git_worktree_path)
                     .arg(remote_ref)
                     .current_dir(&self.repo_path)
@@ -427,7 +423,7 @@ impl GitRepository {
             }
             BranchSource::CommitIsh { sha } => {
                 let output = Command::new("git")
-                    .args(["worktree", "add", "-b", branch_name])
+                    .args(["worktree", "add", "-b", branch_name, "--"])
                     .arg(&git_worktree_path)
                     .arg(sha)
                     .current_dir(&self.repo_path)
@@ -447,7 +443,7 @@ impl GitRepository {
             }
             BranchSource::NewBranch => {
                 let output = Command::new("git")
-                    .args(["worktree", "add", "-b", branch_name])
+                    .args(["worktree", "add", "-b", branch_name, "--"])
                     .arg(&git_worktree_path)
                     .arg("HEAD")
                     .current_dir(&self.repo_path)
@@ -483,7 +479,7 @@ impl GitRepository {
         if self.branch_exists(branch_name)? {
             // Create worktree from existing branch
             let mut cmd = Command::new("git");
-            cmd.args(["worktree", "add"])
+            cmd.args(["worktree", "add", "--"])
                 .arg(&git_worktree_path)
                 .arg(branch_name)
                 .current_dir(&self.repo_path);
@@ -499,7 +495,7 @@ impl GitRepository {
         } else if let Some(remote_ref) = self.find_remote_branch_ref(branch_name)? {
             // Track remote branch as new local branch
             let mut cmd = Command::new("git");
-            cmd.args(["worktree", "add", "-b", branch_name])
+            cmd.args(["worktree", "add", "-b", branch_name, "--"])
                 .arg(&git_worktree_path)
                 .arg(&remote_ref)
                 .current_dir(&self.repo_path);
@@ -518,7 +514,7 @@ impl GitRepository {
         } else {
             // Create new branch and worktree
             let mut cmd = Command::new("git");
-            cmd.args(["worktree", "add", "-b", branch_name])
+            cmd.args(["worktree", "add", "-b", branch_name, "--"])
                 .arg(&git_worktree_path);
 
             if let Some(commit) = from_commit {
@@ -558,7 +554,9 @@ impl GitRepository {
         if force {
             cmd.arg("--force");
         }
-        cmd.arg(git_worktree_path).current_dir(&self.repo_path);
+        cmd.arg("--")
+            .arg(git_worktree_path)
+            .current_dir(&self.repo_path);
 
         let output = cmd
             .output()
@@ -579,7 +577,7 @@ impl GitRepository {
         let delete_flag = if force { "-D" } else { "-d" };
 
         let output = Command::new("git")
-            .args(["branch", delete_flag, branch_name])
+            .args(["branch", delete_flag, "--", branch_name])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to delete branch: {}", e))?;
@@ -744,6 +742,7 @@ impl GitRepository {
                     .args([
                         "merge-base",
                         "--is-ancestor",
+                        "--end-of-options",
                         branch,
                         cleanup_base_branch_ref,
                     ])
@@ -753,7 +752,14 @@ impl GitRepository {
                     .unwrap_or(false);
 
                 let is_identical = Command::new("git")
-                    .args(["diff", "--quiet", cleanup_base_branch_ref, branch])
+                    .args([
+                        "diff",
+                        "--quiet",
+                        "--end-of-options",
+                        cleanup_base_branch_ref,
+                        branch,
+                        "--",
+                    ])
                     .current_dir(repo_path)
                     .output()
                     .map(|o| o.status.success())
@@ -869,12 +875,8 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args([
-                "show-ref",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{}", branch_name),
-            ])
+            .args(["show-ref", "--verify", "--quiet", "--end-of-options"])
+            .arg(format!("refs/heads/{}", branch_name))
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to check branch existence: {}", e))?;
@@ -1037,7 +1039,13 @@ impl GitRepository {
         use std::process::Command;
 
         let output = Command::new("git")
-            .args(["merge-base", "--is-ancestor", branch, target_branch])
+            .args([
+                "merge-base",
+                "--is-ancestor",
+                "--end-of-options",
+                branch,
+                target_branch,
+            ])
             .current_dir(&self.repo_path)
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to check merge status: {}", e))?;
@@ -1282,5 +1290,84 @@ mod tests {
         // Test opening the repository
         let git_repo = GitRepository::open(repo_path);
         assert!(git_repo.is_ok());
+    }
+
+    /// A user-controlled ref name that begins with `-` (e.g. `--upload-pack=…`)
+    /// used to reach git as a positional and be mis-parsed as an option. Git's
+    /// own ref-format rules forbid creating such a branch, so we cannot round-
+    /// trip through a real branch here — instead assert the guard turns a
+    /// leading-dash argument into a benign "unknown revision" outcome rather
+    /// than "unknown option `--upload-pack=…`" (which would prove the argument
+    /// was still being option-parsed by git).
+    #[test]
+    fn test_leading_dash_ref_is_not_parsed_as_git_option() {
+        let temp = tempdir().unwrap();
+        let repo_path = temp.path();
+
+        for cmd in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@e.com"][..],
+            &["config", "user.name", "T"][..],
+        ] {
+            Command::new("git")
+                .args(cmd)
+                .current_dir(repo_path)
+                .output()
+                .unwrap();
+        }
+        std::fs::write(repo_path.join("f.txt"), "x").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-q", "-m", "init"])
+            .current_dir(repo_path)
+            .output()
+            .unwrap();
+
+        let git_repo = GitRepository::open(repo_path).unwrap();
+
+        // A name git recognises as an option but that isn't a valid ref. With
+        // no `--end-of-options` / `--` guard, `git rev-parse` / `show-ref` /
+        // `merge-base` would fail with "unknown option" and the helper would
+        // bubble that up as `Err`. With the guard, git parses the argument as
+        // a ref, finds nothing, and the helper returns a clean negative.
+        let evil = "--upload-pack=/tmp/git-warp-should-never-run";
+
+        assert!(
+            !git_repo
+                .branch_exists(evil)
+                .expect("branch_exists must not surface an option-parse error"),
+            "branch_exists must return false for an unknown ref"
+        );
+
+        assert!(
+            git_repo
+                .resolve_commit_ish(evil)
+                .expect("resolve_commit_ish must not surface an option-parse error")
+                .is_none(),
+            "resolve_commit_ish must return None for an unknown ref, not error"
+        );
+
+        assert!(
+            !git_repo
+                .is_branch_merged(evil, "HEAD")
+                .expect("is_branch_merged must not surface an option-parse error"),
+            "is_branch_merged must return false for an unknown ref"
+        );
+
+        // `delete_branch` on a non-existent branch legitimately errors ("branch
+        // not found"), but the message must be about the ref, not about an
+        // unknown option like `--upload-pack=…`.
+        let delete_err = git_repo
+            .delete_branch(evil, true)
+            .expect_err("delete_branch on a missing ref should error")
+            .to_string();
+        assert!(
+            !delete_err.contains("unknown option") && !delete_err.contains("unknown switch"),
+            "delete_branch must not let `{evil}` reach git as an option: {delete_err}"
+        );
     }
 }

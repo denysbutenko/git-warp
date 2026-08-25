@@ -31,6 +31,11 @@
   newline or non-UTF-8 bytes round-trip verbatim instead of splitting one
   worktree across two bogus rows (which would mis-target later
   `remove_worktree` / `switch` operations). (#277)
+- Guard user-controlled ref and branch names in `git` subprocess calls with
+  `--` or `--end-of-options` so a name like `-x` (or a crafted
+  `--upload-pack=…`) reaches git as data instead of being parsed as a flag.
+  Covers `worktree add / remove`, `branch -d/-D`, `rev-parse … ^{commit}`,
+  `show-ref --verify`, `merge-base --is-ancestor`, and `diff --quiet`. (#281)
 - `abbreviate_path` no longer collapses a sibling of the home directory
   (e.g. `/Users/alice-scratch` → `~-scratch`) in the worktree switcher's
   removal messages. The strip only applies when the remainder is empty or
