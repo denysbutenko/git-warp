@@ -517,3 +517,49 @@ fn test_discover_caps_recent_history_to_default_max_activities() {
 
     assert_eq!(sessions.len(), 100);
 }
+
+#[test]
+fn test_discover_caches_parsed_sessions_and_prunes_removed_files() {
+    let _guard = home_guard();
+    let temp_home = tempfile::tempdir().unwrap();
+    let repo_root = tempfile::tempdir().unwrap();
+    let worktree_root = repo_root.path().join(".worktrees").join("feat");
+    let codex_sessions = temp_home.path().join(".codex").join("sessions");
+
+    fs::create_dir_all(&codex_sessions).unwrap();
+
+    let write_session = |name: &str, id: &str| {
+        fs::write(
+            codex_sessions.join(name),
+            format!(
+                r#"{{"timestamp":"2026-04-22T09:00:00.000Z","type":"session_meta","payload":{{"id":"{id}","timestamp":"2026-04-22T09:00:00.000Z","cwd":"{}","originator":"codex-tui","agent_nickname":"Parfit","agent_role":"worker","git":{{"branch":"feat"}}}}}}
+{{"timestamp":"2026-04-22T10:00:00.000Z","type":"event","payload":{{"kind":"step"}}}}"#,
+                json_path(&worktree_root)
+            ),
+        )
+        .unwrap();
+    };
+    write_session("session-a.jsonl", "session-1");
+    write_session("session-b.jsonl", "session-2");
+
+    let _home_override = HomeOverride::set(&temp_home.path().to_path_buf());
+
+    let discovery =
+        AgentDiscovery::new(vec![repo_root.path().to_path_buf(), worktree_root.clone()]);
+    let now = Local.with_ymd_and_hms(2026, 4, 23, 12, 0, 0).unwrap();
+
+    let first = discovery.discover(now).unwrap();
+    assert_eq!(first.len(), 2);
+    assert_eq!(discovery.session_cache_len(), 2);
+
+    let second = discovery.discover(now).unwrap();
+    assert_eq!(second.len(), 2);
+    assert_eq!(discovery.session_cache_len(), 2);
+
+    fs::remove_file(codex_sessions.join("session-b.jsonl")).unwrap();
+
+    let third = discovery.discover(now).unwrap();
+    assert_eq!(third.len(), 1);
+    assert_eq!(discovery.session_cache_len(), 1);
+    assert_eq!(third[0].session_id.as_deref(), Some("session-1"));
+}

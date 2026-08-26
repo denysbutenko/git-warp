@@ -21,6 +21,12 @@
 
 ### Fixed
 
+- `AgentDiscovery::discover` now caches per-file parses keyed by
+  `(path, modified)`, so successive refreshes skip the tail read and JSON parse
+  for `.jsonl` session files that have not changed. Canonicalization of
+  monitored roots is hoisted into `AgentDiscovery::with_max_history_sessions`
+  and `keep_session` normalizes each session cwd once instead of per-root, so
+  the refresh cost is bounded to files that actually changed. (#283)
 - `abbreviate_path` no longer collapses a sibling of the home directory
   (e.g. `/Users/alice-scratch` → `~-scratch`) in the worktree switcher's
   removal messages. The strip only applies when the remainder is empty or
