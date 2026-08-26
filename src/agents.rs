@@ -2,7 +2,8 @@ use crate::error::Result;
 use chrono::{DateTime, Duration, Local};
 use ignore::WalkBuilder;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -47,17 +48,33 @@ pub struct AgentSessionSummary {
     pub source: AgentSessionSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AgentDiscovery {
     monitored_paths: Vec<PathBuf>,
     max_history_sessions: usize,
+    session_cache: RefCell<HashMap<PathBuf, CachedSession>>,
 }
+
+impl PartialEq for AgentDiscovery {
+    fn eq(&self, other: &Self) -> bool {
+        self.monitored_paths == other.monitored_paths
+            && self.max_history_sessions == other.max_history_sessions
+    }
+}
+
+impl Eq for AgentDiscovery {}
 
 #[derive(Debug, Clone)]
 struct SessionFileCandidate {
     runtime: AgentRuntime,
     path: PathBuf,
     modified: DateTime<Local>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedSession {
+    modified: DateTime<Local>,
+    summary: Option<AgentSessionSummary>,
 }
 
 fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
@@ -112,10 +129,8 @@ fn agent_home_dir() -> Option<PathBuf> {
         .or_else(dirs::home_dir)
 }
 
-fn is_path_within_root(path: &Path, root: &Path) -> bool {
-    let path = normalize_path(path);
-    let root = normalize_path(root);
-    path == root || path.starts_with(root)
+fn is_path_within_normalized_root(path: &Path, normalized_root: &Path) -> bool {
+    path == normalized_root || path.starts_with(normalized_root)
 }
 
 fn is_fallback_label(runtime: AgentRuntime, label: &str) -> bool {
@@ -212,9 +227,14 @@ impl AgentDiscovery {
         monitored_paths: Vec<PathBuf>,
         max_history_sessions: usize,
     ) -> Self {
+        let monitored_paths = monitored_paths
+            .into_iter()
+            .map(|path| normalize_path(&path))
+            .collect();
         Self {
             monitored_paths,
             max_history_sessions: max_history_sessions.max(1),
+            session_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -223,9 +243,10 @@ impl AgentDiscovery {
             return false;
         }
 
+        let normalized = normalize_path(&session.cwd);
         self.monitored_paths
             .iter()
-            .any(|root| is_path_within_root(&session.cwd, root))
+            .any(|root| is_path_within_normalized_root(&normalized, root))
     }
 
     pub fn discover(&self, now: DateTime<Local>) -> Result<Vec<AgentSessionSummary>> {
@@ -257,6 +278,7 @@ impl AgentDiscovery {
         now: DateTime<Local>,
     ) -> Result<Vec<AgentSessionSummary>> {
         let Some(home_dir) = agent_home_dir() else {
+            self.session_cache.borrow_mut().clear();
             return Ok(Vec::new());
         };
 
@@ -278,26 +300,52 @@ impl AgentDiscovery {
                 .then_with(|| b.path.cmp(&a.path))
         });
 
+        let seen_paths: HashSet<PathBuf> = candidates.iter().map(|c| c.path.clone()).collect();
         let mut sessions = Vec::new();
-        for candidate in candidates {
-            let summary = match candidate.runtime {
-                AgentRuntime::Codex => {
-                    parse_codex_session_file_at_path(&candidate.path, candidate.modified)
-                }
-                AgentRuntime::Claude => {
-                    parse_claude_session_file_at_path(&candidate.path, candidate.modified)
-                }
-            };
+        {
+            let mut cache = self.session_cache.borrow_mut();
+            for candidate in candidates {
+                let summary = match cache.get(&candidate.path) {
+                    Some(entry) if entry.modified == candidate.modified => entry.summary.clone(),
+                    _ => {
+                        let parsed = match candidate.runtime {
+                            AgentRuntime::Codex => parse_codex_session_file_at_path(
+                                &candidate.path,
+                                candidate.modified,
+                            ),
+                            AgentRuntime::Claude => parse_claude_session_file_at_path(
+                                &candidate.path,
+                                candidate.modified,
+                            ),
+                        };
+                        cache.insert(
+                            candidate.path.clone(),
+                            CachedSession {
+                                modified: candidate.modified,
+                                summary: parsed.clone(),
+                            },
+                        );
+                        parsed
+                    }
+                };
 
-            if let Some(session) = summary.filter(|session| self.keep_session(session, now)) {
-                sessions.push(session);
-                if sessions.len() >= self.max_history_sessions {
-                    break;
+                if let Some(session) = summary.filter(|session| self.keep_session(session, now)) {
+                    sessions.push(session);
+                    if sessions.len() >= self.max_history_sessions {
+                        break;
+                    }
                 }
             }
+            cache.retain(|path, _| seen_paths.contains(path));
         }
 
         Ok(sessions)
+    }
+
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub fn session_cache_len(&self) -> usize {
+        self.session_cache.borrow().len()
     }
 }
 
