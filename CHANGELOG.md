@@ -80,6 +80,11 @@
   patched in ≥0.8.6 / ≥0.10.1). git-warp only pulls `rand` for benches and
   tests, but `cargo audit` on the current lockfile no longer flags the
   advisory. (#199)
+- `anyhow` is at 1.0.104 in `Cargo.lock` (bumped from 1.0.102 via the
+  cargo-minor-and-patch group in #259), clearing `RUSTSEC-2026-0190`
+  (unsound `Error::downcast_mut` reachable via `Error::context`). git-warp
+  does not call `downcast_mut`, so the vulnerable path was never reachable.
+  (#210)
 
 ## v0.5.0 - 2026-07-08
 
