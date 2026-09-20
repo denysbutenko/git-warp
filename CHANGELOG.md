@@ -48,6 +48,10 @@
   (`clap`, `ignore`, `serde`, `serde_json`, `anyhow`, `thiserror`). (#259)
 - Bump `lru` from 0.18.0 to 0.18.2 to pick up `RUSTSEC-2026-0253` (panic-safety
   fix in `LruCache::pop()`). (#260)
+- Pick up `time` 0.3.49 (transitive via `ratatui-widgets` → `ratatui`), which
+  closes `RUSTSEC-2026-0009` (RFC 2822 parser stack exhaustion; patched in
+  ≥0.3.47). git-warp doesn't parse user-supplied dates, but `cargo audit` on
+  the current lockfile no longer flags the advisory. (#198)
 
 ## v0.5.0 - 2026-07-08
 
