@@ -28,6 +28,11 @@
 - `warp release-check` guards the `-SkipChecksum` / `GIT_WARP_SKIP_CHECKSUM`
   opt-out in `install.ps1`, mirroring the existing `install.sh` guard so a
   release cannot ship a Windows installer that dropped the opt-out. (#231)
+- `warp cleanup` and the switcher's multi-select batch removal now exit
+  non-zero when any worktree removal (or process-termination step gating a
+  removal) fails, so `set -e`, `&&` chains, and CI jobs no longer treat a
+  partial cleanup as success. The human-readable summary line still prints
+  before the error propagates. (#275)
 
 ### Dependencies
 
