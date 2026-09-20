@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 - 2026-09-20
+
+Hardening and correctness release. It closes two argument-injection paths (git
+subprocess flags and terminal launch commands), makes worktree listing survive
+newlines and non-UTF-8 bytes in paths, and stops `warp cleanup` from
+reporting success after a failed removal. `src/cli.rs` is split into
+per-subcommand modules, and agent discovery now caches session-file parses
+between refreshes.
+
+Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md)
 
 ### Added
 
