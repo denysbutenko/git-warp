@@ -74,6 +74,12 @@
   closes `RUSTSEC-2026-0009` (RFC 2822 parser stack exhaustion; patched in
   ≥0.3.47). git-warp doesn't parse user-supplied dates, but `cargo audit` on
   the current lockfile no longer flags the advisory. (#198)
+- Pick up `rand` 0.10.2 (dev-dep) and `rand` 0.8.6 (transitive via
+  `phf_generator`), which close `RUSTSEC-2026-0097` (`ThreadRng` unsound aliased
+  mutable reference when a custom logger reads `rand::rng()` during reseed;
+  patched in ≥0.8.6 / ≥0.10.1). git-warp only pulls `rand` for benches and
+  tests, but `cargo audit` on the current lockfile no longer flags the
+  advisory. (#199)
 
 ## v0.5.0 - 2026-07-08
 
