@@ -85,6 +85,11 @@
   (unsound `Error::downcast_mut` reachable via `Error::context`). git-warp
   does not call `downcast_mut`, so the vulnerable path was never reachable.
   (#210)
+- `crossbeam-epoch` resolves to 0.9.20 in `Cargo.lock`, clearing
+  `RUSTSEC-2026-0204` (invalid pointer dereference in `fmt::Pointer` for
+  `Atomic` / `Shared` when the underlying pointer is null). git-warp does not
+  reference `crossbeam_epoch::{Atomic, Shared}` in `src/`; the crate is a
+  transitive dep via `crossbeam-deque` / `rayon`. (#228)
 
 ## v0.5.0 - 2026-07-08
 
