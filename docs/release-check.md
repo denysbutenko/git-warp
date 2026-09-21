@@ -33,6 +33,7 @@ After metadata passes, the full command runs:
 
 ```bash
 cargo fmt --all -- --check
+git diff --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 cargo build --release --bin warp
