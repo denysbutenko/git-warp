@@ -84,8 +84,10 @@ remove_hooks() {
 }
 
 check_shell_rc() {
-  # Common shell RC files
-  files="${HOME}/.bashrc ${HOME}/.zshrc ${HOME}/.config/fish/config.fish"
+  # Common shell RC files. bash uses .bash_profile / .profile as login-shell
+  # candidates (default on macOS); zsh reads .zprofile / .zshenv in addition
+  # to .zshrc depending on invocation mode.
+  files="${HOME}/.bashrc ${HOME}/.bash_profile ${HOME}/.profile ${HOME}/.zshrc ${HOME}/.zprofile ${HOME}/.zshenv ${HOME}/.config/fish/config.fish"
   found=0
   for f in $files; do
     [ -f "$f" ] || continue
