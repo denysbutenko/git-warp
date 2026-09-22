@@ -119,7 +119,19 @@ src/
 ├── main.rs           // Binary entry point
 ├── lib.rs            // Library root, re-exports
 ├── error.rs          // Structured error types
-├── cli.rs            // Clap definitions + top-level command routing
+├── cli.rs            // Clap `Cli`/`Commands` types + dispatch to `src/commands/`
+├── commands/         // Per-subcommand handlers (dispatched from cli.rs)
+│   ├── mod.rs            // Module root, re-exports handlers
+│   ├── switch.rs         // `warp switch` (create/reuse worktree, terminal handoff)
+│   ├── ls.rs             // `warp ls` / `list` (with `--interactive` picker)
+│   ├── cleanup.rs        // `warp cleanup` (merged / remoteless / all / interactive)
+│   ├── config.rs         // `warp config` (show / edit / set / get)
+│   ├── doctor.rs         // `warp doctor` (environment + shell-integration probes)
+│   ├── agents.rs         // `warp agents` (dashboard + session discovery)
+│   ├── hooks.rs          // `warp hooks` (install/uninstall Claude Code hooks)
+│   ├── shell_config.rs   // `warp shell-config` (emit bash/zsh/fish/PowerShell)
+│   ├── complete.rs       // `warp complete` (shell completion generator)
+│   └── util.rs           // Shared helpers for the command handlers
 ├── config.rs         // Layered configuration (figment)
 ├── git.rs            // Git worktree / repo operations (shells out to `git`)
 ├── cow.rs            // Copy-on-Write clone engine (APFS + reflink + Windows fallback)
@@ -141,21 +153,22 @@ src/
     └── shell.rs          // Shell-config emitters (bash/zsh/fish/PowerShell)
 ```
 
-Line counts intentionally omitted — they drift on every refactor. Run `wc -l src/*.rs src/tui/*.rs` for the current sizes.
+Line counts intentionally omitted — they drift on every refactor. Run `wc -l src/*.rs src/commands/*.rs src/tui/*.rs` for the current sizes.
 
 ### Module Dependencies
 
 ```mermaid
 graph TD
     A[main.rs] --> B[cli.rs]
-    B --> C[git.rs]
-    B --> D[config.rs]
-    B --> E[process.rs]
-    B --> F[tui/]
-    B --> K[hooks.rs]
-    B --> L[agents.rs]
-    B --> M[post_create.rs]
-    B --> N[release.rs]
+    B --> P[commands/*]
+    P --> C[git.rs]
+    P --> D[config.rs]
+    P --> E[process.rs]
+    P --> F[tui/]
+    P --> K[hooks.rs]
+    P --> L[agents.rs]
+    P --> M[post_create.rs]
+    P --> N[release.rs]
     C --> G[cow.rs]
     C --> H[rewrite.rs]
     C --> I[terminal.rs]
@@ -311,36 +324,74 @@ pub fn find_processes_in_directory<P: AsRef<Path>>(&mut self, path: P) -> Result
 
 ### Graceful Termination
 
+Termination is signal-based, not `kill(1)`-based, and the grace budget is
+polled — a fixed sleep would either rush a slow-but-legitimate exit into
+`SIGKILL` or block longer than needed when `SIGTERM` was honored
+immediately. The Unix path uses `nix::sys::signal` directly:
+
 ```rust
-fn terminate_single_process(&self, pid: u32) -> bool {
-    // Try graceful termination first (SIGTERM)
-    let graceful_result = Command::new("kill")
-        .arg("-TERM")
-        .arg(pid.to_string())
-        .output();
-    
-    // Wait for graceful shutdown
-    std::thread::sleep(Duration::from_millis(2000));
-    
-    // Check if process still exists, force kill if needed
-    if process_still_running(pid) {
-        Command::new("kill")
-            .arg("-KILL")
-            .arg(pid.to_string())
-            .output()
+// src/process.rs — Unix branch of terminate_single_process
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
+
+let nix_pid = Pid::from_raw(pid as i32);
+signal::kill(nix_pid, Some(Signal::SIGTERM))?; // ESRCH => already gone
+
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+let deadline = Instant::now() + kill_timeout; // clamped to >= 100 ms
+
+let mut still_running = true;
+loop {
+    match signal::kill(nix_pid, None) {          // liveness probe
+        Ok(()) => {}
+        Err(Errno::ESRCH) => { still_running = false; break; }
+        Err(_) => break,
     }
+    if Instant::now() >= deadline { break; }
+    std::thread::sleep(POLL_INTERVAL);
+}
+
+if still_running {
+    signal::kill(nix_pid, Some(Signal::SIGKILL))?;
 }
 ```
 
+`kill_timeout` comes from `config.process.kill_timeout` and is clamped to
+at least 100 ms so a misconfigured 0 still gives the target one poll cycle
+to exit.
+
 ### Cross-Platform Support
 
-```rust
-#[cfg(unix)]
-fn terminate_process_unix(pid: u32) -> bool { /* SIGTERM/SIGKILL */ }
+On Windows the primitive is the Win32 process handle, not `taskkill`:
+`OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, …)` opens a waitable handle,
+`taskkill /PID <pid> /T` (no `/F`) fires a graceful nudge — `WM_CLOSE` to
+top-level windows and `CTRL+BREAK` to console apps in the target's tree,
+without disturbing our own console the way
+`GenerateConsoleCtrlEvent` from this process would — then
+`WaitForSingleObject` waits up to `kill_timeout` for the target to exit on
+its own, and `TerminateProcess` is called only if the wait times out. A
+short second `WaitForSingleObject` after `TerminateProcess` lets the
+kernel finish tearing the process down so a caller-side sysinfo refresh
+sees it gone.
 
-#[cfg(windows)]
-fn terminate_process_windows(pid: u32) -> bool { /* taskkill */ }
+```rust
+// src/process.rs — Windows branch of terminate_single_process
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+};
+const SYNCHRONIZE: u32 = 0x0010_0000;
+
+let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+// ... graceful nudge via `taskkill /PID <pid> /T` (no /F) ...
+let wait = unsafe { WaitForSingleObject(handle, grace_ms) };
+if wait == WAIT_TIMEOUT {
+    unsafe { TerminateProcess(handle, 1) };
+}
 ```
+
+Platforms that are neither Unix nor Windows fall through to `false`
+(termination unsupported) rather than pretending to have killed the
+process.
 
 ---
 
@@ -421,26 +472,46 @@ end tell
 }
 ```
 
-### Cross-Platform Terminal Detection
+### Cross-Platform Terminal Mode Dispatch
+
+`switch_to_worktree_with_options` is the single entry point every command
+uses to hand off to a shell. It splits modes into two groups: stdout-only
+modes (`Current`, `InPlace`, `Echo`) that work on every platform without
+touching a GUI terminal, and GUI-handoff modes (`Tab`, `Window`) that
+require a supported terminal application:
 
 ```rust
-pub fn get_default_terminal() -> Result<Box<dyn Terminal>> {
-    #[cfg(target_os = "macos")]
-    {
-        let iterm2 = ITerm2;
-        if iterm2.is_supported() {
-            Ok(Box::new(iterm2))
-        } else {
-            Ok(Box::new(AppleTerminal))
-        }
+// src/terminal.rs — TerminalManager::switch_to_worktree_with_options
+match mode {
+    TerminalMode::Current => return enter_current_shell(path, options),
+    TerminalMode::InPlace => {
+        print_shell_commands(path, options)?;
+        return Ok(());
     }
-    
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err(GitWarpError::TerminalNotSupported.into())
+    TerminalMode::Echo => {
+        println!("# Navigate to worktree:");
+        print_shell_commands(path, options)?;
+        return Ok(());
     }
+    TerminalMode::Tab | TerminalMode::Window => {}
+}
+
+let terminal = Self::get_terminal(preferred_app)?; // GUI handoff only
+match mode {
+    TerminalMode::Tab => terminal.open_tab(path, session_id, options),
+    TerminalMode::Window => terminal.open_window(path, session_id, options),
+    _ => unreachable!("stdout-only modes are handled before terminal lookup"),
 }
 ```
+
+`get_terminal` is where the platform gate lives: on macOS it resolves
+between iTerm2, Apple Terminal, and Warp based on
+`TERM_PROGRAM` / `--terminal-app`; on every other platform it returns
+`GitWarpError::TerminalNotSupported`. That error only surfaces when
+`Tab` / `Window` are requested somewhere without a supported GUI
+terminal — `Current`, `InPlace`, and `Echo` never reach this function, so
+Linux and Windows can drive `warp switch` in `--terminal current`,
+`inplace`, or `echo` mode without any AppleScript / GUI dependency.
 
 ### Terminal Mode Abstraction
 
