@@ -44,7 +44,8 @@ pub fn run(_cli: &Cli, shell: Option<&str>) -> Result<()> {
 
     match detected_shell.as_str() {
         "bash" => {
-            println!("# Add to ~/.bashrc");
+            println!("# Add to ~/.bashrc (or ~/.bash_profile on macOS, where bash");
+            println!("# runs as a login shell and does not source ~/.bashrc by default)");
             println!("warp_cd() {{ eval \"$(warp --terminal echo \"$@\")\"; }}");
             println!(
                 "_warp_completion() {{

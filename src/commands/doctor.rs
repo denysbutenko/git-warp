@@ -7,7 +7,7 @@ use crate::cli::Cli;
 enum DoctorShell {
     Known {
         name: &'static str,
-        rc_path: PathBuf,
+        rc_candidates: Vec<PathBuf>,
     },
     #[cfg_attr(not(windows), allow(dead_code))]
     PowerShell,
@@ -351,10 +351,12 @@ fn report_doctor_shell_integration(next_steps: &mut Vec<String>) {
 
     let shell = detect_shell();
     match &shell {
-        DoctorShell::Known { name, rc_path } => {
-            let rc_label = rc_path.display().to_string();
-            let configured = shell_rc_has_warp_integration(rc_path);
-            if configured {
+        DoctorShell::Known {
+            name,
+            rc_candidates,
+        } => {
+            if let Some(rc_path) = pick_installed_rc(rc_candidates) {
+                let rc_label = rc_path.display().to_string();
                 if active.is_none() {
                     doctor_warn(
                         "Shell integration",
@@ -370,6 +372,9 @@ fn report_doctor_shell_integration(next_steps: &mut Vec<String>) {
                     );
                 }
             } else {
+                let rc_label = pick_display_rc(rc_candidates)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 doctor_warn(
                     "Shell integration",
                     format!("warp_cd helper not found in {rc_label}"),
@@ -483,18 +488,44 @@ fn detect_shell() -> DoctorShell {
     match basename.as_deref() {
         Some("bash") => DoctorShell::Known {
             name: "bash",
-            rc_path: home.join(".bashrc"),
+            rc_candidates: bash_rc_candidates(&home),
         },
         Some("zsh") => DoctorShell::Known {
             name: "zsh",
-            rc_path: home.join(".zshrc"),
+            rc_candidates: vec![home.join(".zshrc")],
         },
         Some("fish") => DoctorShell::Known {
             name: "fish",
-            rc_path: home.join(".config").join("fish").join("config.fish"),
+            rc_candidates: vec![home.join(".config").join("fish").join("config.fish")],
         },
         _ => fallback_shell(raw),
     }
+}
+
+/// Ordered rc-file probe for bash. macOS bash launches as an interactive
+/// login shell that reads `~/.bash_profile` before `~/.bashrc`, so the
+/// snippet the docs point at may live in any of these files.
+fn bash_rc_candidates(home: &Path) -> Vec<PathBuf> {
+    vec![
+        home.join(".bashrc"),
+        home.join(".bash_profile"),
+        home.join(".profile"),
+    ]
+}
+
+fn pick_installed_rc(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|c| shell_rc_has_warp_integration(c))
+        .cloned()
+}
+
+fn pick_display_rc(candidates: &[PathBuf]) -> Option<&Path> {
+    candidates
+        .iter()
+        .find(|c| c.exists())
+        .map(PathBuf::as_path)
+        .or_else(|| candidates.first().map(PathBuf::as_path))
 }
 
 fn fallback_shell(raw: Option<String>) -> DoctorShell {
@@ -927,5 +958,65 @@ mod tests {
                 PathBuf::from("/users/alice/Documents"),
             ],
         );
+    }
+
+    #[test]
+    fn bash_rc_candidates_probe_bashrc_bash_profile_and_profile() {
+        let home = PathBuf::from("/users/alice");
+        assert_eq!(
+            bash_rc_candidates(&home),
+            vec![
+                PathBuf::from("/users/alice/.bashrc"),
+                PathBuf::from("/users/alice/.bash_profile"),
+                PathBuf::from("/users/alice/.profile"),
+            ],
+        );
+    }
+
+    #[test]
+    fn pick_installed_rc_finds_bash_profile_when_only_it_has_snippet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path();
+        let bash_profile = home.join(".bash_profile");
+        std::fs::write(
+            &bash_profile,
+            "# git-warp integration\nwarp_cd() { eval \"$(warp --terminal echo \"$@\")\"; }\n",
+        )
+        .unwrap();
+
+        let candidates = bash_rc_candidates(home);
+        let picked = pick_installed_rc(&candidates).expect("bash_profile picked");
+        assert_eq!(picked, bash_profile);
+    }
+
+    #[test]
+    fn pick_installed_rc_prefers_bashrc_when_both_contain_snippet() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path();
+        std::fs::write(home.join(".bashrc"), "warp_cd() { :; }\n").unwrap();
+        std::fs::write(home.join(".bash_profile"), "warp_cd() { :; }\n").unwrap();
+
+        let candidates = bash_rc_candidates(home);
+        let picked = pick_installed_rc(&candidates).expect("some rc picked");
+        assert_eq!(picked, home.join(".bashrc"));
+    }
+
+    #[test]
+    fn pick_display_rc_prefers_existing_candidate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path();
+        std::fs::write(home.join(".bash_profile"), "# empty\n").unwrap();
+
+        let candidates = bash_rc_candidates(home);
+        let picked = pick_display_rc(&candidates).expect("some rc picked");
+        assert_eq!(picked, home.join(".bash_profile"));
+    }
+
+    #[test]
+    fn pick_display_rc_falls_back_to_first_when_none_exist() {
+        let home = PathBuf::from("/nonexistent/home");
+        let candidates = bash_rc_candidates(&home);
+        let picked = pick_display_rc(&candidates).expect("first candidate");
+        assert_eq!(picked, PathBuf::from("/nonexistent/home/.bashrc"));
     }
 }
