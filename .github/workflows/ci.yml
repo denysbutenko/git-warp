@@ -72,3 +72,48 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
+
+  install-smoke:
+    name: install smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-14
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run install.sh (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./install.sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Run install.ps1 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pwsh ./install.ps1
+          "$env:LOCALAPPDATA\Programs\git-warp\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify installed binary (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          warp --version
+          warp doctor
+
+      - name: Verify installed binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          warp --version
+          warp doctor
