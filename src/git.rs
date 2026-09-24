@@ -970,7 +970,7 @@ impl GitRepository {
         branch_name: &str,
         worktrees_path: Option<&Path>,
     ) -> PathBuf {
-        let sanitized_branch = branch_name.trim_matches('/').replace(['/', '\\'], "-");
+        let sanitized_branch = sanitize_branch_name(branch_name);
 
         let base_path = match worktrees_path {
             Some(path) if path.is_absolute() => path.to_path_buf(),
@@ -1115,6 +1115,31 @@ fn bytes_to_path(bytes: &[u8]) -> PathBuf {
 #[cfg(not(unix))]
 fn bytes_to_path(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Sanitize a branch name for use as a filesystem directory name.
+///
+/// Replaces characters that are invalid or reserved on filesystems (especially Windows Win32):
+/// `/`, `\`, `<`, `>`, `:`, `"`, `|`, `?`, `*`, and ASCII control characters.
+/// Trims leading slashes, trailing dots and spaces, and provides a fallback name ("worktree")
+/// if the resulting string is empty.
+pub fn sanitize_branch_name(branch_name: &str) -> String {
+    let trimmed = branch_name.trim_matches('/');
+    let sanitized: String = trimmed
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
+            c if (c as u32) < 32 => '-',
+            c => c,
+        })
+        .collect();
+
+    let clean = sanitized.trim_end_matches(['.', ' ']);
+    if clean.is_empty() {
+        "worktree".to_string()
+    } else {
+        clean.to_string()
+    }
 }
 
 #[cfg(test)]

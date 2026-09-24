@@ -666,6 +666,45 @@ fn test_worktree_path_generation_with_relative_base() {
 }
 
 #[test]
+fn test_sanitize_branch_name_windows_reserved_characters() {
+    assert_eq!(
+        git_warp::git::sanitize_branch_name("feat/foo:bar?baz"),
+        "feat-foo-bar-baz"
+    );
+    assert_eq!(
+        git_warp::git::sanitize_branch_name("test<name>:\"pipe|star*\""),
+        "test-name---pipe-star--"
+    );
+}
+
+#[test]
+fn test_sanitize_branch_name_trailing_dots_and_spaces() {
+    assert_eq!(git_warp::git::sanitize_branch_name("feature."), "feature");
+    assert_eq!(git_warp::git::sanitize_branch_name("feature   "), "feature");
+    assert_eq!(git_warp::git::sanitize_branch_name("feature. "), "feature");
+}
+
+#[test]
+fn test_sanitize_branch_name_empty_fallback() {
+    assert_eq!(git_warp::git::sanitize_branch_name(""), "worktree");
+    assert_eq!(git_warp::git::sanitize_branch_name("///"), "worktree");
+    assert_eq!(git_warp::git::sanitize_branch_name("..."), "worktree");
+}
+
+#[test]
+fn test_worktree_path_with_windows_reserved_characters() {
+    let _cwd = crate::support::CurrentDirGuard::new();
+    let temp_dir = setup_test_repo();
+    let repo_path = temp_dir.path();
+    std::env::set_current_dir(repo_path).unwrap();
+
+    let git_repo = GitRepository::find().unwrap();
+    let worktree_path = git_repo.get_worktree_path("feat/foo:bar?baz");
+
+    assert!(worktree_path.to_string_lossy().contains("feat-foo-bar-baz"));
+}
+
+#[test]
 fn test_relative_worktrees_path_generation_uses_primary_root_from_linked_worktree() {
     let _cwd = crate::support::CurrentDirGuard::new();
     let temp_dir = setup_test_repo();
