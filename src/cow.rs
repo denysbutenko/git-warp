@@ -46,9 +46,7 @@ fn nearest_existing_ancestor(path: &Path) -> PathBuf {
 /// Returns `None` when `dest` is not inside `src` (the default git-warp layout,
 /// where worktrees live in a sibling `../worktrees` directory), so the fast
 /// whole-tree clone path is preserved.
-// Part of the whole-tree `clone_directory` API, which the `warp` bin no longer
-// calls (it uses the untracked overlay); still exercised by tests/benches.
-#[allow(dead_code)]
+#[allow(dead_code)] // Whole-tree `clone_directory` helper; exercised by tests.
 fn nested_dest_exclusion(src: &Path, dest: &Path) -> Option<PathBuf> {
     use std::path::Component;
 
@@ -64,7 +62,7 @@ fn nested_dest_exclusion(src: &Path, dest: &Path) -> Option<PathBuf> {
 /// Resolve `path` to an absolute, symlink-free form for containment checks,
 /// tolerating a not-yet-created leaf by canonicalizing the nearest existing
 /// ancestor and re-appending the missing tail components.
-#[allow(dead_code)] // Whole-tree clone helper; bin uses the untracked overlay.
+#[allow(dead_code)] // Whole-tree `clone_directory` helper; exercised by tests.
 fn resolve_for_containment(path: &Path) -> PathBuf {
     let ancestor = nearest_existing_ancestor(path);
     let base = ancestor.canonicalize().unwrap_or(ancestor.clone());
@@ -79,7 +77,7 @@ fn resolve_for_containment(path: &Path) -> PathBuf {
 /// The `warp` bin creates worktrees via `git worktree add` plus [`clone_entry`]
 /// overlay and no longer calls this; it remains part of the public library
 /// surface and is exercised by the integration tests and benchmarks.
-#[allow(dead_code)]
+#[allow(dead_code)] // Public library API; exercised by tests and benches.
 pub fn clone_directory<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
     let src = src.as_ref();
     let dest = dest.as_ref();
@@ -319,9 +317,7 @@ mod linux {
         clone_tree(src, dst, None)
     }
 
-    // Whole-tree reflink clone; reached only through the lib's `clone_directory`
-    // (tests/benches), not the `warp` bin, which overlays untracked files.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reached via the lib's `clone_directory`; exercised by tests.
     pub(super) fn clone_directory(src: &Path, dst: &Path, exclude: Option<&Path>) -> Result<()> {
         if dst.exists() {
             fs::remove_dir_all(dst)?;
@@ -418,7 +414,7 @@ mod linux {
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)] // Whole-tree clone path; bin overlays untracked files instead.
+#[allow(dead_code)] // Reached via the lib's `clone_directory`; exercised by tests.
 fn clone_directory_apfs(src: &Path, dest: &Path, exclude: Option<&Path>) -> Result<()> {
     // Ensure we're on APFS
     if !is_apfs(src)? {
@@ -486,7 +482,7 @@ fn cp_clone(from: &Path, to: &Path) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // Whole-tree clone path; bin overlays untracked files instead.
+#[allow(dead_code)] // Reached via the lib's `clone_directory`; exercised by tests.
 fn clone_directory_reflink(src: &Path, dest: &Path, exclude: Option<&Path>) -> Result<()> {
     linux::clone_directory(src, dest, exclude)
 }
