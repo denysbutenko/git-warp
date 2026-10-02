@@ -78,8 +78,13 @@ function Resolve-LatestTag {
     $slug = $Repo -replace '^https://github\.com/', ''
     $api = "https://api.github.com/repos/$slug/releases/latest"
 
+    $headers = @{ 'User-Agent' = 'git-warp-install' }
+    $token = Coalesce $null 'GITHUB_TOKEN' $null
+    if (-not $token) { $token = Coalesce $null 'GH_TOKEN' $null }
+    if ($token) { $headers['Authorization'] = "Bearer $token" }
+
     try {
-        $resp = Invoke-RestMethod -UseBasicParsing -Uri $api -Headers @{ 'User-Agent' = 'git-warp-install' }
+        $resp = Invoke-RestMethod -UseBasicParsing -Uri $api -Headers $headers
     } catch {
         Fail "GitHub release lookup failed at $api ($($_.Exception.Message))" $Repo
     }

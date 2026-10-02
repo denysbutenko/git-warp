@@ -133,10 +133,25 @@ resolve_latest_version() {
 
   api_url="https://api.github.com/repos/${repo_url#https://github.com/}/releases/latest"
 
+  token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  if [ -n "$token" ]; then
+    auth_header="Authorization: Bearer $token"
+  else
+    auth_header=""
+  fi
+
   if command -v curl >/dev/null 2>&1; then
-    body="$(curl -fsSL "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+    if [ -n "$auth_header" ]; then
+      body="$(curl -fsSL -H "$auth_header" "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+    else
+      body="$(curl -fsSL "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+    fi
   elif command -v wget >/dev/null 2>&1; then
-    body="$(wget -qO- "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+    if [ -n "$auth_header" ]; then
+      body="$(wget -qO- --header="$auth_header" "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+    else
+      body="$(wget -qO- "$api_url" 2>/dev/null)" || fail_version_lookup "GitHub release lookup failed at $api_url"
+    fi
   else
     fail_version_lookup "curl or wget is required to resolve the latest Git-Warp release"
   fi
