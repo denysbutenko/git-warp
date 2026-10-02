@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{GitWarpError, Result};
 use chrono::Local;
 use clap::ValueEnum;
 use serde_json::{Map, Value, json};
@@ -551,7 +551,7 @@ impl HooksManager {
 
         let hooks_config = Self::get_hooks_config(runtime);
         let hooks_to_merge = Self::hooks_object(&hooks_config, runtime)?;
-        let settings_hooks = Self::hooks_object_mut(&mut settings, runtime);
+        let settings_hooks = Self::hooks_object_mut(&mut settings, &settings_path, runtime)?;
 
         for (hook_type, new_entries) in hooks_to_merge {
             let entry = settings_hooks
@@ -590,7 +590,7 @@ impl HooksManager {
         let content = fs::read_to_string(&settings_path)?;
         let mut settings: Value = serde_json::from_str(&content)?;
 
-        let hooks = Self::hooks_object_mut(&mut settings, runtime);
+        let hooks = Self::hooks_object_mut(&mut settings, &settings_path, runtime)?;
         for hook_array in hooks.values_mut() {
             if let Some(array) = hook_array.as_array_mut() {
                 array.retain(|hook| !Self::is_git_warp_hook(hook));
@@ -622,9 +622,21 @@ impl HooksManager {
             .ok_or_else(|| anyhow::anyhow!("Hooks config is not a JSON object"))
     }
 
-    fn hooks_object_mut(settings: &mut Value, runtime: HookRuntime) -> &mut Map<String, Value> {
+    fn hooks_object_mut<'a>(
+        settings: &'a mut Value,
+        settings_path: &Path,
+        runtime: HookRuntime,
+    ) -> Result<&'a mut Map<String, Value>> {
         if !settings.is_object() {
-            *settings = json!({});
+            return Err(GitWarpError::ConfigError {
+                message: format!(
+                    "Refusing to overwrite non-object JSON root in {} (found {}). \
+                     Expected a JSON object at the top level; fix the file manually and re-run.",
+                    settings_path.display(),
+                    value_kind(settings)
+                ),
+            }
+            .into());
         }
 
         let root = settings.as_object_mut().expect("object ensured");
@@ -632,12 +644,20 @@ impl HooksManager {
             let hooks = root.entry("hooks".to_string()).or_insert_with(|| json!({}));
 
             if !hooks.is_object() {
-                *hooks = json!({});
+                return Err(GitWarpError::ConfigError {
+                    message: format!(
+                        "Refusing to overwrite non-object /hooks in {} (found {}). \
+                         Expected a JSON object at /hooks; fix the file manually and re-run.",
+                        settings_path.display(),
+                        value_kind(hooks)
+                    ),
+                }
+                .into());
             }
 
-            hooks.as_object_mut().expect("object ensured")
+            Ok(hooks.as_object_mut().expect("object ensured"))
         } else {
-            root
+            Ok(root)
         }
     }
 
@@ -646,6 +666,17 @@ impl HooksManager {
             .and_then(|id| id.as_str())
             .unwrap_or("")
             .starts_with(GIT_WARP_HOOK_PREFIX)
+    }
+}
+
+fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
     }
 }
 
@@ -905,6 +936,77 @@ mod tests {
             d.install_command(),
             "warp hooks-install --level user --runtime codex"
         );
+    }
+
+    #[test]
+    fn test_claude_merge_errors_on_non_object_root_array() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let settings_path = temp_dir.path().join("settings.json");
+        let original = "[\n  \"do-not-touch\"\n]\n";
+        fs::write(&settings_path, original).unwrap();
+
+        let err =
+            HooksManager::merge_hooks_into_settings(settings_path.clone(), HookRuntime::Claude)
+                .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("non-object JSON root"), "message: {msg}");
+        assert!(msg.contains("array"), "message: {msg}");
+        assert_eq!(fs::read_to_string(&settings_path).unwrap(), original);
+    }
+
+    #[test]
+    fn test_codex_merge_errors_on_non_object_root_string() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let hooks_path = temp_dir.path().join("hooks.json");
+        let original = "\"disabled\"";
+        fs::write(&hooks_path, original).unwrap();
+
+        let err = HooksManager::merge_hooks_into_settings(hooks_path.clone(), HookRuntime::Codex)
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("non-object JSON root"), "message: {msg}");
+        assert!(msg.contains("string"), "message: {msg}");
+        assert_eq!(fs::read_to_string(&hooks_path).unwrap(), original);
+    }
+
+    #[test]
+    fn test_claude_merge_errors_on_non_object_hooks_field() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let settings_path = temp_dir.path().join("settings.json");
+        let original = serde_json::to_string_pretty(&json!({
+            "hooks": [],
+            "keepMe": true
+        }))
+        .unwrap();
+        fs::write(&settings_path, &original).unwrap();
+
+        let err =
+            HooksManager::merge_hooks_into_settings(settings_path.clone(), HookRuntime::Claude)
+                .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("non-object /hooks"), "message: {msg}");
+        assert!(msg.contains("array"), "message: {msg}");
+        assert_eq!(fs::read_to_string(&settings_path).unwrap(), original);
+    }
+
+    #[test]
+    fn test_claude_remove_errors_on_non_object_root() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let settings_path = temp_dir.path().join("settings.json");
+        let original = "null";
+        fs::write(&settings_path, original).unwrap();
+
+        let err =
+            HooksManager::remove_hooks_from_settings(settings_path.clone(), HookRuntime::Claude)
+                .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("non-object JSON root"), "message: {msg}");
+        assert!(msg.contains("null"), "message: {msg}");
+        assert_eq!(fs::read_to_string(&settings_path).unwrap(), original);
     }
 
     #[test]
