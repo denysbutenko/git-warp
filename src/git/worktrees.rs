@@ -394,6 +394,7 @@ pub fn list_untracked_and_ignored(repo_dir: &Path) -> Result<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::super::GitRepository;
     use super::list_untracked_and_ignored;
     use std::path::{Path, PathBuf};
