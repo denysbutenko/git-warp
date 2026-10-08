@@ -13,10 +13,9 @@ mod unix;
 #[cfg(any(windows, test))]
 mod windows;
 
-pub use types::{
-    Terminal, TerminalLaunchOptions, TerminalMode, TerminalPreference, resolve_terminal_preference,
-    validate_terminal_app,
-};
+pub use types::{Terminal, TerminalLaunchOptions, TerminalMode, validate_terminal_app};
+#[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
+pub use types::{TerminalPreference, resolve_terminal_preference};
 
 #[cfg(target_os = "macos")]
 pub use macos::{AppleTerminal, ITerm2, WarpTerminal};
