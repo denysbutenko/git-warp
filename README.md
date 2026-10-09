@@ -58,7 +58,8 @@ Cargo is still available as a fallback:
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_METHOD=cargo sh
 ```
 
-Build from source when contributing or testing local changes:
+Build from source when contributing or testing local changes (requires Rust
+1.85 or newer — edition 2024):
 
 ```bash
 git clone https://github.com/denysbutenko/git-warp

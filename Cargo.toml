@@ -2,6 +2,7 @@
 name = "git-warp"
 version = "0.6.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Git-Warp Contributors"]
 description = "High-performance, UX-focused Git worktree manager combining CoW speed with advanced features"
 license = "MIT"

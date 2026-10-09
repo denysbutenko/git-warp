@@ -227,7 +227,8 @@ cargo uninstall git-warp
 
 ## Cargo Fallback
 
-Use Cargo only if you want to build during installation:
+Use Cargo only if you want to build during installation (requires Rust 1.85 or
+newer — edition 2024):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.sh | GIT_WARP_INSTALL_METHOD=cargo sh
@@ -235,7 +236,8 @@ curl -fsSL https://raw.githubusercontent.com/denysbutenko/git-warp/main/install.
 
 ## Build From Source
 
-Use this path when contributing or testing local changes:
+Use this path when contributing or testing local changes (requires Rust 1.85 or
+newer — edition 2024):
 
 ```bash
 git clone https://github.com/denysbutenko/git-warp
