@@ -9,4 +9,4 @@ pub mod process_tests;
 pub mod release_tests;
 pub mod rewrite_tests;
 pub mod terminal_tests;
-pub mod tui_tests;
+pub mod tui;
