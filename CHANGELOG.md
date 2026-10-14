@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Declare `rust-version = "1.95"` MSRV in `Cargo.toml` and document it next to
+  the build-from-source instructions; CI pins the toolchain so older compilers
+  fail fast instead of erroring on an unrelated edition / dependency message.
+  (#328)
+- Add a `docs` CI job that runs `cargo doc --no-deps --locked --workspace` with
+  `RUSTDOCFLAGS="-D warnings"` so broken intra-doc links fail PRs instead of
+  slipping in silently. (#329)
+- Add CI smoke tests for `install.sh` and `install.ps1` against the published
+  release assets so a release cannot ship a broken installer. (#303)
+
+### Changed
+
+- Split the monolithic `src/git.rs` (~1400 lines) into submodules under
+  `src/git/`. (#317)
+- Split the monolithic `src/terminal.rs` (~1200 lines) into submodules under
+  `src/terminal/`. (#318)
+- Split the monolithic `src/hooks.rs` (~1050 lines) into submodules under
+  `src/hooks/`. (#320)
+- Split the monolithic `src/tui/config_editor.rs` (~1180 lines) into submodules
+  under `src/tui/config_editor/`. (#321)
+- Split the monolithic `src/commands/switch.rs` (~870 lines) into submodules
+  under `src/commands/switch/`. (#312)
+- Split the monolithic `src/commands/doctor.rs` (~1020 lines) into submodules
+  under `src/commands/doctor/`. (#310)
+- Split the monolithic `tests/integration/cli_surface_tests.rs` into focused
+  per-area test modules. (#323)
+- Split the monolithic `tests/unit/tui_tests.rs` into focused per-area test
+  modules. (#327)
+- Audit the `#[allow(dead_code)]` annotations in `src/cow.rs` and keep each
+  one with a comment explaining the cfg-gated reachability. (#311)
+- Refresh the Module Design / Process / Terminal sections of the technical
+  overview to match the post-split source layout. (#298)
+- Document the `git diff --check` step in `docs/release-check.md`. (#294)
+
+### Fixed
+
+- `GitRepository` now sanitizes Windows-reserved characters (`<`, `>`, `:`,
+  `"`, `|`, `?`, `*`) in worktree path components so a branch name containing
+  them produces a path git can actually create on Windows. (#304)
+- `warp hooks` now rejects a non-object settings root instead of silently
+  overwriting it, so a corrupt or hand-edited `settings.json` cannot lose
+  data when the hook installer runs. (#302)
+- `warp doctor` now probes `~/.bash_profile` and `~/.profile` for the
+  `warp_cd` shell helper on macOS, matching how Terminal.app sources login
+  shells. (#297)
+
+### Dependencies
+
+- Bump `dirs` from 6.0.0 to 7.0.0. (#306)
+- Bump the cargo minor-and-patch group across 2 updates. (#313)
+
 ## v0.6.0 - 2026-09-20
 
 Hardening and correctness release. It closes two argument-injection paths (git
