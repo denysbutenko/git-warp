@@ -100,7 +100,7 @@ impl PathRewriter {
 
         // Write back if content changed
         if new_content != content {
-            crate::fs_atomic::write_atomic(file_path, new_content.as_bytes())?;
+            crate::fs_atomic::replace_contents_unsynced(file_path, new_content.as_bytes())?;
             log::debug!("Rewrote paths in: {}", file_path.display());
         }
 
@@ -341,6 +341,42 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dest_dir.join("tracked.config")).unwrap(),
             baked
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_rewrite_keeps_executable_bit_on_bin_shims() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().unwrap();
+        let src_dir = temp_dir.path().join("primary");
+        let dest_dir = temp_dir.path().join("worktree");
+        let shim = dest_dir.join("node_modules/.bin/nx");
+        fs::create_dir_all(shim.parent().unwrap()).unwrap();
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nexport NODE_PATH=\"{}/node_modules\"\n",
+                src_dir.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+
+        PathRewriter::new(&src_dir, &dest_dir)
+            .rewrite_paths_under(&[dest_dir.join("node_modules")])
+            .unwrap();
+
+        assert!(
+            fs::read_to_string(&shim)
+                .unwrap()
+                .contains(&dest_dir.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            fs::metadata(&shim).unwrap().permissions().mode() & 0o777,
+            0o755
         );
     }
 
