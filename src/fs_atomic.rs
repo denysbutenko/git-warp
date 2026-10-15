@@ -14,34 +14,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Write `contents` to `path` atomically: write to a sibling temp file,
 /// `sync_all`, then rename over the target. On any failure before the
 /// rename, the original file is left untouched and the temp is removed.
+///
+/// An existing target keeps its permission bits, so a `0600` config holding
+/// a token does not come back world-readable; a new file gets the default
+/// mode.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
-
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
-
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp_name = format!(
-        "{}.tmp.{}.{}",
-        file_name.to_string_lossy(),
-        process::id(),
-        nanos
-    );
-    let tmp_path = parent.join(tmp_name);
+    let existing_permissions = fs::metadata(path).ok().map(|meta| meta.permissions());
+    let tmp_path = sibling_temp_path(path)?;
 
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&tmp_path)?;
 
-    if let Err(e) = file.write_all(contents).and_then(|_| file.sync_all()) {
+    let written = file
+        .write_all(contents)
+        .and_then(|()| match existing_permissions {
+            Some(permissions) => fs::set_permissions(&tmp_path, permissions),
+            None => Ok(()),
+        });
+    if let Err(e) = written.and_then(|()| file.sync_all()) {
         drop(file);
         let _ = fs::remove_file(&tmp_path);
         return Err(e);
@@ -161,6 +157,25 @@ mod tests {
         write_atomic(&target, b"new bytes").unwrap();
 
         assert_eq!(fs::read(&target).unwrap(), b"new bytes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwrite_keeps_the_existing_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.toml");
+        fs::write(&target, b"token = \"secret\"").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomic(&target, b"token = \"rotated\"").unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"token = \"rotated\"");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
