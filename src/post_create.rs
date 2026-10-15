@@ -47,6 +47,8 @@ pub enum PostCreateSetupStatus {
     SkippedExistingWorktree,
     SkippedDisabled,
     SkippedNoLockfile,
+    /// The overlaid dependencies were installed from this exact lockfile.
+    SkippedUpToDate(PackageManager),
     Installed(PackageManager),
     Warned {
         manager: PackageManager,
@@ -118,6 +120,10 @@ where
     let Some(manager) = detect_manager(worktree_path) else {
         return PostCreateSetupStatus::SkippedNoLockfile;
     };
+
+    if installed_modules_match_lockfile(worktree_path, manager) {
+        return PostCreateSetupStatus::SkippedUpToDate(manager);
+    }
 
     let binary = resolve_binary(manager);
     match Command::new(&binary)
@@ -208,6 +214,24 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
             "Failed to append git-warp entries to {}: {e}",
             exclude_path.display()
         );
+    }
+}
+
+/// The CoW overlay hands a new worktree the primary's `node_modules`, and pnpm
+/// keeps a copy of the lockfile it installed from at
+/// `node_modules/.pnpm/lock.yaml`. When the branch's lockfile is byte-identical
+/// an install has nothing to link; it would only re-run pnpm's lockfile checks
+/// (about 8s on a 2k-package workspace).
+fn installed_modules_match_lockfile(worktree_path: &Path, manager: PackageManager) -> bool {
+    if manager != PackageManager::Pnpm {
+        return false;
+    }
+    match (
+        std::fs::read(worktree_path.join("pnpm-lock.yaml")),
+        std::fs::read(worktree_path.join("node_modules/.pnpm/lock.yaml")),
+    ) {
+        (Ok(lockfile), Ok(installed)) => lockfile == installed,
+        _ => false,
     }
 }
 
@@ -454,6 +478,74 @@ mod tests {
         let recorded = fs::canonicalize(fs::read_to_string(marker).unwrap()).unwrap();
         let expected = fs::canonicalize(temp.path()).unwrap();
         assert_eq!(recorded, expected);
+    }
+
+    #[test]
+    fn test_skips_pnpm_when_installed_modules_match_lockfile() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(
+            temp.path().join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("node_modules/.pnpm")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/.pnpm/lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+
+        let bin = temp.path().join("fake-pnpm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Pnpm, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::SkippedUpToDate(PackageManager::Pnpm)
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn test_runs_pnpm_when_installed_modules_lockfile_differs() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(
+            temp.path().join("pnpm-lock.yaml"),
+            "lockfileVersion: '9.0'\nnew: dep\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("node_modules/.pnpm")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/.pnpm/lock.yaml"),
+            "lockfileVersion: '9.0'\n",
+        )
+        .unwrap();
+
+        let bin = temp.path().join("fake-pnpm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Pnpm, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Pnpm)
+        );
+        assert!(marker.exists());
     }
 
     #[test]

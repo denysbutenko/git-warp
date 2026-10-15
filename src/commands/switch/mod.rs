@@ -198,6 +198,13 @@ pub fn run(
                 manager.install_label()
             );
         }
+        PostCreateSetupStatus::SkippedUpToDate(manager) => {
+            println!(
+                "📦 Dependencies already match the {} lockfile, skipped `{}`",
+                manager.binary(),
+                manager.install_label()
+            );
+        }
         PostCreateSetupStatus::Warned { manager, reason } => {
             println!(
                 "⚠️  Detected {} repo but `{}` failed: {}",

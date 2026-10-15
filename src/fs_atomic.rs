@@ -65,10 +65,74 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Replace an existing file's contents via a sibling temp file and rename,
+/// keeping the file's permission bits, without fsync.
+///
+/// For files inside a just-created worktree: a crash mid-switch discards the
+/// worktree anyway, while `sync_all` (`F_FULLFSYNC` on macOS) costs
+/// milliseconds per file across hundreds of rewrites. Keeping the mode
+/// matters because the rewritten files include executable `.bin` shims.
+pub fn replace_contents_unsynced(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let permissions = fs::metadata(path)?.permissions();
+    let tmp_path = sibling_temp_path(path)?;
+
+    let result = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
+        .and_then(|mut file| file.write_all(contents))
+        .and_then(|()| fs::set_permissions(&tmp_path, permissions))
+        .and_then(|()| fs::rename(&tmp_path, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+fn sibling_temp_path(path: &Path) -> io::Result<std::path::PathBuf> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Ok(parent.join(format!(
+        "{}.tmp.{}.{}",
+        file_name.to_string_lossy(),
+        process::id(),
+        nanos
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_contents_unsynced_keeps_mode_and_leaves_no_temp() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("shim");
+        fs::write(&target, b"old").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+
+        replace_contents_unsynced(&target, b"new").unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn write_atomic_full_cycle() {
