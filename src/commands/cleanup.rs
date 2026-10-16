@@ -4,6 +4,7 @@ use log::info;
 use std::fmt;
 
 use crate::cli::Cli;
+use crate::git::{BranchStatus, GitRepository};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum CleanupMode {
@@ -28,6 +29,23 @@ impl fmt::Display for CleanupMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// Whether a branch removed with its worktree may be deleted with
+/// `git branch -D`.
+///
+/// `git branch -d` trusts only ancestry, so it refuses squash-merged branches
+/// the analysis found merged. Forcing is safe only while the branch still
+/// points where the analysis saw it; a commit made since then, say by an
+/// agent still running in the worktree, falls back to git's own check.
+fn may_force_delete(git_repo: &GitRepository, candidate: &BranchStatus) -> bool {
+    candidate.is_merged
+        && !candidate.head.is_empty()
+        && git_repo
+            .resolve_commit_ish(&format!("refs/heads/{}", candidate.branch))
+            .ok()
+            .flatten()
+            .is_some_and(|oid| oid == candidate.head)
 }
 
 /// Resolve the effective kill behavior for cleanup. `--no-kill` always wins,
@@ -320,7 +338,8 @@ pub fn run(
             Ok(()) => {
                 // Try to delete the branch if it's safe
                 if candidate.is_merged || force {
-                    match git_repo.delete_branch(&candidate.branch, force) {
+                    let force_delete = force || may_force_delete(&git_repo, &candidate);
+                    match git_repo.delete_branch(&candidate.branch, force_delete) {
                         Ok(()) => {
                             println!("✅ Removed worktree and branch: {}", candidate.branch)
                         }
@@ -386,5 +405,75 @@ mod tests {
     #[test]
     fn resolve_cleanup_kill_default_is_off() {
         assert!(!resolve_cleanup_kill(false, false, false));
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn analyzed_feature(repo: &std::path::Path, is_merged: bool) -> BranchStatus {
+        BranchStatus {
+            branch: "feature".to_string(),
+            path: repo.join("feature"),
+            head: git(repo, &["rev-parse", "feature"]),
+            has_remote: false,
+            is_merged,
+            is_identical: false,
+            has_uncommitted_changes: false,
+        }
+    }
+
+    fn repo_with_feature_branch() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        git(repo, &["init", "-q", "-b", "main"]);
+        git(repo, &["config", "user.email", "test@example.com"]);
+        git(repo, &["config", "user.name", "Test User"]);
+        git(repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(repo, &["branch", "feature"]);
+        temp
+    }
+
+    #[test]
+    fn may_force_delete_a_merged_branch_that_has_not_moved() {
+        let temp = repo_with_feature_branch();
+        let candidate = analyzed_feature(temp.path(), true);
+        let git_repo = GitRepository::open(temp.path()).unwrap();
+
+        assert!(may_force_delete(&git_repo, &candidate));
+    }
+
+    #[test]
+    fn may_not_force_delete_a_branch_that_moved_after_analysis() {
+        let temp = repo_with_feature_branch();
+        let repo = temp.path();
+        let candidate = analyzed_feature(repo, true);
+        git(repo, &["checkout", "-q", "feature"]);
+        git(
+            repo,
+            &["commit", "-q", "--allow-empty", "-m", "work since analysis"],
+        );
+        let git_repo = GitRepository::open(repo).unwrap();
+
+        assert!(!may_force_delete(&git_repo, &candidate));
+    }
+
+    #[test]
+    fn may_not_force_delete_an_unmerged_branch() {
+        let temp = repo_with_feature_branch();
+        let candidate = analyzed_feature(temp.path(), false);
+        let git_repo = GitRepository::open(temp.path()).unwrap();
+
+        assert!(!may_force_delete(&git_repo, &candidate));
     }
 }

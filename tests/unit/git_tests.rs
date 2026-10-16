@@ -916,3 +916,188 @@ fn test_create_worktree_for_remote_branch_creates_local_tracking() {
         .to_string();
     assert_eq!(head_branch, "feature-track");
 }
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A `feature` worktree two commits ahead of `main`: one rewrites line 2 of
+/// `lines.txt`, the other adds `new.txt`.
+fn setup_feature_worktree(repo: &std::path::Path) -> std::path::PathBuf {
+    fs::write(repo.join("lines.txt"), "1\n2\n3\n4\n5\n6\n7\n8\n").unwrap();
+    git(repo, &["add", "lines.txt"]);
+    git(repo, &["commit", "-qm", "add lines"]);
+
+    git(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            "worktrees/feature",
+        ],
+    );
+    let worktree = repo.join("worktrees").join("feature");
+    fs::write(worktree.join("lines.txt"), "1\ntwo\n3\n4\n5\n6\n7\n8\n").unwrap();
+    git(&worktree, &["commit", "-qam", "edit line 2"]);
+    fs::write(worktree.join("new.txt"), "new\n").unwrap();
+    git(&worktree, &["add", "new.txt"]);
+    git(&worktree, &["commit", "-qm", "add new file"]);
+    worktree
+}
+
+fn squash_merge_feature(repo: &std::path::Path) {
+    git(repo, &["merge", "-q", "--squash", "feature"]);
+    git(repo, &["commit", "-qm", "feature (#1)"]);
+}
+
+fn feature_status(repo: &std::path::Path) -> git_warp::git::BranchStatus {
+    let git_repo = GitRepository::open(repo).unwrap();
+    let worktrees = git_repo.list_worktrees().unwrap();
+    git_repo
+        .analyze_branches_for_cleanup(&worktrees)
+        .unwrap()
+        .into_iter()
+        .find(|status| status.branch == "feature")
+        .expect("feature worktree should be a cleanup candidate")
+}
+
+#[test]
+fn test_cleanup_analysis_treats_squash_merged_branch_as_merged() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    setup_feature_worktree(repo);
+
+    squash_merge_feature(repo);
+
+    assert!(feature_status(repo).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_treats_squash_merged_branch_as_merged_after_base_edits_same_lines() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    setup_feature_worktree(repo);
+    squash_merge_feature(repo);
+
+    fs::write(repo.join("lines.txt"), "1\nTWO\n3\n4\n5\n6\n7\n8\n").unwrap();
+    git(repo, &["commit", "-qam", "rework line 2"]);
+
+    assert!(feature_status(repo).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_keeps_branch_with_commits_after_squash_merge() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    let worktree = setup_feature_worktree(repo);
+    squash_merge_feature(repo);
+
+    fs::write(worktree.join("later.txt"), "later\n").unwrap();
+    git(&worktree, &["add", "later.txt"]);
+    git(&worktree, &["commit", "-qm", "work after merge"]);
+
+    assert!(!feature_status(repo).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_detects_merge_on_remote_base_before_local_base_is_pulled() {
+    let origin_dir = setup_test_repo();
+    let origin = origin_dir.path();
+    git(
+        origin,
+        &["config", "receive.denyCurrentBranch", "updateInstead"],
+    );
+    let clone_dir = tempdir().unwrap();
+    git(
+        clone_dir.path(),
+        &["clone", "-q", origin.to_str().unwrap(), "local"],
+    );
+    let local = clone_dir.path().join("local");
+    git(&local, &["config", "user.email", "test@example.com"]);
+    git(&local, &["config", "user.name", "Test User"]);
+    let worktree = setup_feature_worktree(&local);
+    git(&local, &["push", "-q", "origin", "main"]);
+    git(&worktree, &["push", "-q", "origin", "feature"]);
+
+    // Merged on the server; the local `main` has not been pulled since.
+    squash_merge_feature(origin);
+    git(&local, &["fetch", "-q", "origin"]);
+
+    assert!(feature_status(&local).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_keeps_branch_with_whitespace_only_commit_after_squash_merge() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    let worktree = setup_feature_worktree(repo);
+    squash_merge_feature(repo);
+
+    // Indentation and trailing spaces carry meaning in YAML, Python, Markdown.
+    fs::write(worktree.join("lines.txt"), "1\ntwo  \n3\n4\n5\n6\n7\n8\n").unwrap();
+    git(
+        &worktree,
+        &["commit", "-qam", "trailing spaces after merge"],
+    );
+
+    assert!(!feature_status(repo).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_checks_the_branch_not_a_tag_with_its_name() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    setup_feature_worktree(repo);
+    git(repo, &["tag", "feature", "main"]);
+
+    assert!(!feature_status(repo).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_treats_rebase_merged_branch_as_merged() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    setup_feature_worktree(repo);
+    fs::write(repo.join("other.txt"), "other\n").unwrap();
+    git(repo, &["add", "other.txt"]);
+    git(repo, &["commit", "-qm", "unrelated work on main"]);
+
+    // What a "rebase and merge" leaves on main: copies of each branch commit.
+    git(repo, &["cherry-pick", "main..feature"]);
+
+    assert!(feature_status(repo).is_merged);
+}
+
+#[test]
+fn test_cleanup_analysis_keeps_branch_whose_merge_commit_adds_work() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    let worktree = setup_feature_worktree(repo);
+    fs::write(repo.join("other.txt"), "other\n").unwrap();
+    git(repo, &["add", "other.txt"]);
+    git(repo, &["commit", "-qm", "unrelated work on main"]);
+
+    // A merge commit carrying its own change, as a conflict resolution can.
+    git(
+        &worktree,
+        &["merge", "-q", "--no-ff", "--no-commit", "main"],
+    );
+    fs::write(worktree.join("in-merge.txt"), "only in the merge\n").unwrap();
+    git(&worktree, &["add", "in-merge.txt"]);
+    git(&worktree, &["commit", "-qm", "merge main"]);
+    git(repo, &["cherry-pick", "feature^1^", "feature^1"]);
+
+    assert!(!feature_status(repo).is_merged);
+}

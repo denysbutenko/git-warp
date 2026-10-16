@@ -166,6 +166,14 @@ details for diagnostics.
 Git-Warp analyzes worktrees before removal. Protected branches default to
 `main` and `develop`.
 
+`--mode merged` counts a branch as merged once all of its changes are on the
+base branch or on `origin/<base>`, whether the PR was merged with a merge
+commit, squashed, or rebased. Cleanup fetches first (`git.auto_fetch`), so
+running it right after a PR merges on GitHub works without pulling. A merged
+branch is deleted along with its worktree, unless it gained commits while
+cleanup was running. Matching is exact, so a branch whose PR was rebased onto
+nearby edits before being squashed is not recognized and is kept.
+
 ```bash
 warp cleanup --mode merged
 warp cleanup --mode remoteless

@@ -1,5 +1,5 @@
 use crate::integration::cli_surface_support::{
-    create_worktree, setup_test_repo, setup_test_repo_with_initial_branch, warp_command,
+    create_worktree, run_git, setup_test_repo, setup_test_repo_with_initial_branch, warp_command,
 };
 use std::fs;
 use std::process::Command;
@@ -30,6 +30,42 @@ fn test_cleanup_uses_primary_branch_as_base_and_prints_candidate_reasons() {
         "cleanup should remove the merged worktree and branch: {stdout}"
     );
     assert!(!worktree_path.exists());
+}
+
+#[test]
+fn test_cleanup_removes_squash_merged_worktree_and_branch() {
+    let temp_dir = setup_test_repo_with_initial_branch("trunk");
+    let repo_path = temp_dir.path();
+    let worktree_path = create_worktree(repo_path, "feature/squashed");
+    fs::write(worktree_path.join("feature.txt"), "feature\n").unwrap();
+    run_git(&worktree_path, &["add", "feature.txt"]);
+    run_git(&worktree_path, &["commit", "-m", "Add feature"]);
+    run_git(repo_path, &["merge", "--squash", "feature/squashed"]);
+    run_git(repo_path, &["commit", "-m", "Add feature (#1)"]);
+
+    let output = warp_command(repo_path)
+        .args(["--auto-confirm", "cleanup", "--mode", "merged", "--no-kill"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Removed worktree and branch: feature/squashed"),
+        "cleanup should remove the squash-merged worktree and branch: {stdout}"
+    );
+    assert!(!worktree_path.exists());
+    let branch = Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature/squashed",
+        ])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(!branch.status.success(), "branch should be deleted");
 }
 
 #[test]

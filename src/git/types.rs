@@ -14,6 +14,9 @@ pub struct WorktreeInfo {
 pub struct BranchStatus {
     pub branch: String,
     pub path: PathBuf,
+    /// Commit the branch pointed at when it was analyzed, or empty if it
+    /// could not be resolved.
+    pub head: String,
     pub has_remote: bool,
     pub is_merged: bool,
     pub is_identical: bool,
