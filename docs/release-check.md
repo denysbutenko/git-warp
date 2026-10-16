@@ -36,6 +36,7 @@ cargo fmt --all -- --check
 git diff --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --workspace
 cargo build --release --bin warp
 ./target/release/warp --version
 ./target/release/warp --help
@@ -45,15 +46,9 @@ cargo build --release --bin warp
 ```
 
 These mirror the gates in `.github/workflows/ci.yml`, so a tree that passes
-release-check stays green on CI.
-
-CI additionally runs `cargo doc --no-deps --locked --workspace` with
-`RUSTDOCFLAGS="-D warnings"` to catch broken intra-doc links. Reproduce
-locally with:
-
-```bash
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --workspace
-```
+release-check stays green on CI. The `cargo doc` step runs with
+`RUSTDOCFLAGS="-D warnings"` scoped to that process so broken intra-doc links
+fail the check without leaking the flag into neighboring steps.
 
 For source builds, this covers the contributor path. For public installs, the
 metadata checks cover the install script default, pinned install docs, release

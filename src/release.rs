@@ -331,22 +331,40 @@ fn print_metadata_checks(checks: &[ReleaseCheck]) {
 }
 
 fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<()> {
+    println!("Release command checks:");
+
+    for step in release_commands(repo_root) {
+        run_step(repo_root, step)?;
+    }
+
+    println!("Release checks passed for {}", expected.tag);
+    Ok(())
+}
+
+/// Build the ordered list of commands run by the full-verification mode of
+/// `warp release-check`. Exposed so tests can assert the step set tracks the
+/// CI gates in `.github/workflows/ci.yml`.
+pub fn release_commands(repo_root: &Path) -> Vec<ReleaseCommand> {
     let binary_name = warp_executable_name();
-    let release_binary = repo_root.join("target").join("release").join(&binary_name);
-    let release_binary = release_binary.to_string_lossy().into_owned();
+    let release_binary = repo_root
+        .join("target")
+        .join("release")
+        .join(&binary_name)
+        .to_string_lossy()
+        .into_owned();
     let warp_label = format!("./target/release/{binary_name}");
 
-    let steps = [
+    vec![
         ReleaseCommand::new(
             "cargo fmt --all -- --check",
             "cargo",
-            &["fmt", "--all", "--", "--check"],
+            ["fmt", "--all", "--", "--check"],
         ),
-        ReleaseCommand::new("git diff --check", "git", &["diff", "--check"]),
+        ReleaseCommand::new("git diff --check", "git", ["diff", "--check"]),
         ReleaseCommand::new(
             "cargo clippy --all-targets --locked -- -D warnings",
             "cargo",
-            &[
+            [
                 "clippy",
                 "--all-targets",
                 "--locked",
@@ -355,69 +373,89 @@ fn run_release_commands(repo_root: &Path, expected: &ReleaseVersion) -> Result<(
                 "warnings",
             ],
         ),
-        ReleaseCommand::new("cargo test --locked", "cargo", &["test", "--locked"]),
+        ReleaseCommand::new("cargo test --locked", "cargo", ["test", "--locked"]),
+        ReleaseCommand::new(
+            "cargo doc --no-deps --locked --workspace",
+            "cargo",
+            ["doc", "--no-deps", "--locked", "--workspace"],
+        )
+        .with_env([("RUSTDOCFLAGS", "-D warnings")]),
         ReleaseCommand::new(
             "cargo build --release --bin warp",
             "cargo",
-            &["build", "--release", "--bin", "warp"],
+            ["build", "--release", "--bin", "warp"],
         ),
         ReleaseCommand::new(
             format!("{warp_label} --version"),
             release_binary.as_str(),
-            &["--version"],
+            ["--version"],
         ),
         ReleaseCommand::new(
             format!("{warp_label} --help"),
             release_binary.as_str(),
-            &["--help"],
+            ["--help"],
         ),
         ReleaseCommand::new(
             format!("{warp_label} switch --help"),
             release_binary.as_str(),
-            &["switch", "--help"],
+            ["switch", "--help"],
         ),
         ReleaseCommand::new(
             format!("{warp_label} cleanup --help"),
             release_binary.as_str(),
-            &["cleanup", "--help"],
+            ["cleanup", "--help"],
         ),
         ReleaseCommand::new(
             format!("{warp_label} doctor"),
             release_binary.as_str(),
-            &["doctor"],
+            ["doctor"],
         ),
-    ];
-
-    println!("Release command checks:");
-
-    for step in steps {
-        run_step(repo_root, step)?;
-    }
-
-    println!("Release checks passed for {}", expected.tag);
-    Ok(())
+    ]
 }
 
-struct ReleaseCommand<'a> {
+pub struct ReleaseCommand {
     label: String,
-    program: &'a str,
-    args: &'a [&'a str],
+    program: String,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
 }
 
-impl<'a> ReleaseCommand<'a> {
-    fn new(label: impl Into<String>, program: &'a str, args: &'a [&'a str]) -> Self {
+impl ReleaseCommand {
+    fn new<S, A>(label: impl Into<String>, program: impl Into<String>, args: A) -> Self
+    where
+        A: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         Self {
             label: label.into(),
-            program,
-            args,
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
+            env: Vec::new(),
         }
+    }
+
+    fn with_env<K, V, I>(mut self, env: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env = env.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        self
+    }
+
+    /// Shell-style command label used by `warp release-check` output.
+    #[allow(dead_code)] // consumed by integration tests via git_warp::release
+    pub fn label(&self) -> &str {
+        &self.label
     }
 }
 
-fn run_step(repo_root: &Path, step: ReleaseCommand<'_>) -> Result<()> {
+fn run_step(repo_root: &Path, step: ReleaseCommand) -> Result<()> {
     println!("$ {}", step.label);
-    let status = Command::new(step.program)
-        .args(step.args)
+    let status = Command::new(&step.program)
+        .args(&step.args)
+        .envs(step.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(repo_root)
         .status()
         .with_context(|| format!("failed to run {}", step.label))?;

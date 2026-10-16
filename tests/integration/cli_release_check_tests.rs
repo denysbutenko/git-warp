@@ -1,4 +1,6 @@
 use crate::integration::cli_surface_support::normalized_path_text;
+use git_warp::release::release_commands;
+use std::path::Path;
 use std::process::Command;
 
 #[test]
@@ -45,5 +47,20 @@ fn test_release_check_metadata_only_rejects_missing_future_release_updates() {
     assert!(
         normalized_path_text(&stderr).contains("docs/releases/v0.7.0.md is missing"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn test_release_check_steps_include_cargo_doc_gate() {
+    let labels: Vec<String> = release_commands(Path::new("."))
+        .iter()
+        .map(|step| step.label().to_string())
+        .collect();
+
+    assert!(
+        labels
+            .iter()
+            .any(|label| label == "cargo doc --no-deps --locked --workspace"),
+        "release-check step list is missing the cargo doc gate: {labels:?}"
     );
 }
