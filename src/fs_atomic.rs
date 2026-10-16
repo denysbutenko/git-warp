@@ -19,10 +19,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// a token does not come back world-readable; a new file gets the default
 /// mode.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
     let existing_permissions = fs::metadata(path).ok().map(|meta| meta.permissions());
     let tmp_path = sibling_temp_path(path)?;
 
@@ -51,6 +47,10 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 
     #[cfg(unix)]
     {
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
         // Fsync the parent directory to ensure the rename is persisted.
         // We open it read-only as that is sufficient for fsync on most Unix systems.
         if let Ok(dir) = fs::File::open(parent) {
