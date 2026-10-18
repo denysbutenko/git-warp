@@ -35,22 +35,30 @@ fn resolve_commit(repo_path: &Path, rev: &str) -> Option<String> {
     )
 }
 
-/// Commits a branch must be merged into to count as merged: the base branch
-/// and its `origin` counterpart, which a fetch moves as soon as a PR merges
-/// while the local base waits for a pull.
-fn merge_targets(repo_path: &Path, base_branch: &str) -> Vec<String> {
+/// Commits a branch must be merged into to count as merged, and the branches
+/// among `branches` they come from. Each branch counts locally and on
+/// `origin`, which a fetch moves as soon as a PR merges while the local branch
+/// waits for a pull.
+fn merge_targets(repo_path: &Path, branches: &[&str]) -> (Vec<String>, Vec<String>) {
     let mut targets = Vec::new();
-    for rev in [
-        format!("refs/heads/{base_branch}"),
-        format!("refs/remotes/origin/{base_branch}"),
-    ] {
-        if let Some(oid) = resolve_commit(repo_path, &rev)
-            && !targets.contains(&oid)
-        {
-            targets.push(oid);
+    let mut found = Vec::new();
+    for branch in branches {
+        for rev in [
+            format!("refs/heads/{branch}"),
+            format!("refs/remotes/origin/{branch}"),
+        ] {
+            let Some(oid) = resolve_commit(repo_path, &rev) else {
+                continue;
+            };
+            if !found.iter().any(|name| name == branch) {
+                found.push(branch.to_string());
+            }
+            if !targets.contains(&oid) {
+                targets.push(oid);
+            }
         }
     }
-    targets
+    (targets, found)
 }
 
 /// Whitespace-preserving patch ids of the patches `git <diff_args>` prints,
@@ -321,7 +329,18 @@ impl GitRepository {
         let repo_path: &Path = &self.repo_path;
         let cleanup_base_branch_ref: &str = &cleanup_base_branch;
         let remotes_ref = &remotes;
-        let merge_targets = merge_targets(repo_path, cleanup_base_branch_ref);
+        // PRs can land in any long-lived branch, not only the base: gitflow
+        // repos merge into `develop` while `origin/HEAD` names `main`.
+        // Candidates are never the base or protected, so none is checked
+        // against itself.
+        let mut merge_branches = vec![cleanup_base_branch_ref];
+        for protected in protected_branches {
+            let protected = protected.trim();
+            if !protected.is_empty() && !merge_branches.contains(&protected) {
+                merge_branches.push(protected);
+            }
+        }
+        let (merge_targets, merge_branches) = merge_targets(repo_path, &merge_branches);
         let merge_targets_ref = &merge_targets;
 
         let entries: Vec<CleanupEntry> = worktrees
@@ -407,6 +426,7 @@ impl GitRepository {
             candidates,
             skipped,
             base_branch: cleanup_base_branch,
+            merge_branches,
         })
     }
 }

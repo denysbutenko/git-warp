@@ -56,6 +56,9 @@ pub struct CleanupAnalysis {
     pub candidates: Vec<BranchStatus>,
     pub skipped: Vec<CleanupSkip>,
     pub base_branch: String,
+    /// Existing branches a candidate counts as merged into: the base and any
+    /// protected branch.
+    pub merge_branches: Vec<String>,
 }
 
 /// Where the branch for `warp switch <branch>` comes from.

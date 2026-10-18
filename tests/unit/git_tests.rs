@@ -984,6 +984,27 @@ fn test_cleanup_analysis_treats_squash_merged_branch_as_merged() {
     assert!(feature_status(repo).is_merged);
 }
 
+/// Gitflow repos merge PRs into `develop` while the remote default branch, and
+/// so the cleanup base, stays `main`.
+#[test]
+fn test_cleanup_analysis_treats_branch_squash_merged_into_develop_as_merged() {
+    let temp_dir = setup_test_repo();
+    let repo = temp_dir.path();
+    setup_feature_worktree(repo);
+    git(repo, &["switch", "-qc", "develop"]);
+    squash_merge_feature(repo);
+    git(repo, &["switch", "-q", "main"]);
+
+    let git_repo = GitRepository::open(repo).unwrap();
+    let worktrees = git_repo.list_worktrees().unwrap();
+    let analysis = git_repo
+        .analyze_worktrees_for_cleanup_with_config(&worktrees, &GitConfig::default())
+        .unwrap();
+    assert_eq!(analysis.base_branch, "main");
+    assert_eq!(analysis.merge_branches, ["main", "develop"]);
+    assert!(feature_status(repo).is_merged);
+}
+
 #[test]
 fn test_cleanup_analysis_treats_squash_merged_branch_as_merged_after_base_edits_same_lines() {
     let temp_dir = setup_test_repo();

@@ -98,7 +98,21 @@ pub fn run(
     let worktrees = git_repo.list_worktrees()?;
     let analysis = git_repo.analyze_worktrees_for_cleanup_with_config(&worktrees, &git_config)?;
 
-    println!("🧭 Cleanup base branch: {}", analysis.base_branch);
+    let also_merged_into: Vec<&str> = analysis
+        .merge_branches
+        .iter()
+        .map(String::as_str)
+        .filter(|branch| *branch != analysis.base_branch)
+        .collect();
+    if also_merged_into.is_empty() {
+        println!("🧭 Cleanup base branch: {}", analysis.base_branch);
+    } else {
+        println!(
+            "🧭 Cleanup base branch: {} (merges into {} also count)",
+            analysis.base_branch,
+            also_merged_into.join(", ")
+        );
+    }
 
     if !analysis.skipped.is_empty() {
         println!("🛡️  Skipped (not eligible for cleanup):");
