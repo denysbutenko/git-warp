@@ -116,7 +116,9 @@ warp cleanup --mode merged --force
 ```
 
 Protected branches default to `main` and `develop`. Cleanup also checks for
-dirty worktrees and running processes before removing anything.
+dirty worktrees and running processes before removing anything. `merged` mode
+recognizes squash and rebase merges into the base or any protected branch,
+including ones that only exist on `origin` so far.
 
 ## Agent Session Dashboard
 

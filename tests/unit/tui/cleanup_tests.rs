@@ -8,6 +8,7 @@ fn test_build_cleanup_rows_explains_candidate_status_with_text() {
         &[BranchStatus {
             branch: "feature/old".to_string(),
             path: PathBuf::from("/repo/.worktrees/feature-old"),
+            head: String::new(),
             has_remote: true,
             is_merged: true,
             is_identical: false,
@@ -38,6 +39,7 @@ fn test_build_cleanup_rows_explains_remoteless_candidates() {
         &[BranchStatus {
             branch: "feature/local-only".to_string(),
             path: PathBuf::from("/repo/.worktrees/local-only"),
+            head: String::new(),
             has_remote: false,
             is_merged: false,
             is_identical: false,
@@ -58,6 +60,7 @@ fn test_cleanup_reason_label_for_mode_disambiguates_all_mode_fallback() {
     let plain_candidate = BranchStatus {
         branch: "feature/active".to_string(),
         path: PathBuf::from("/repo/.worktrees/active"),
+        head: String::new(),
         has_remote: true,
         is_merged: false,
         is_identical: false,
