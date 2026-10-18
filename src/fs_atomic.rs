@@ -53,12 +53,50 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         };
         // Fsync the parent directory to ensure the rename is persisted.
         // We open it read-only as that is sufficient for fsync on most Unix systems.
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
+        // ENOTSUP/EINVAL are expected on filesystems that do not support directory
+        // fsync (per #102); surface anything else so a durable write is
+        // distinguishable from a best-effort one that silently skipped the fsync.
+        match fs::File::open(parent) {
+            Ok(dir) => {
+                if let Err(e) = dir.sync_all() {
+                    if is_fsync_unsupported(&e) {
+                        log::debug!(
+                            "parent directory fsync unsupported for {}: {e}",
+                            parent.display()
+                        );
+                    } else {
+                        log::warn!(
+                            "parent directory fsync failed for {}: {e}",
+                            parent.display()
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                if is_fsync_unsupported(&e) {
+                    log::debug!(
+                        "could not open parent directory for fsync at {}: {e}",
+                        parent.display()
+                    );
+                } else {
+                    log::warn!(
+                        "could not open parent directory for fsync at {}: {e}",
+                        parent.display()
+                    );
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+#[cfg(unix)]
+fn is_fsync_unsupported(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
+    )
 }
 
 /// Replace an existing file's contents via a sibling temp file and rename,
