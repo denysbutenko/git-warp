@@ -98,7 +98,9 @@ fn test_collect_metadata_checks_all_pass() {
         temp.path().join("install.sh"),
         "version=\"${GIT_WARP_VERSION:-}\"\n\
          api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
-         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n",
+         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n\
+         install_tmp=\"${install_dir}/.warp.$$.tmp\"\n\
+         mv -f \"$install_tmp\" \"${install_dir}/warp\"\n",
     )
     .unwrap();
 
@@ -109,7 +111,8 @@ fn test_collect_metadata_checks_all_pass() {
          $envVersion = [Environment]::GetEnvironmentVariable('GIT_WARP_VERSION')\n\
          if ($envVersion) { $tag = $env:GIT_WARP_VERSION }\n\
          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
-         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n\
+         Move-Item -Force -Path $stagePath -Destination $finalPath\n",
     )
     .unwrap();
     fs::write(
@@ -163,6 +166,18 @@ fn test_collect_metadata_checks_failures() {
         checks[0]
             .detail
             .contains("Cargo.toml package version is 0.2.0, expected 0.3.0")
+    );
+    assert!(
+        checks[4]
+            .detail
+            .contains("sibling-temp staging + mv -f atomic install"),
+        "install.sh fail detail should call out the missing atomic staging, got: {}",
+        checks[4].detail
+    );
+    assert!(
+        checks[5].detail.contains("Move-Item -Force"),
+        "install.ps1 fail detail should call out the missing Move-Item -Force rename, got: {}",
+        checks[5].detail
     );
     assert!(
         checks[1]
@@ -332,7 +347,8 @@ fn test_uninstall_ps1_missing_hooks_remove_fails() {
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $tag = $env:GIT_WARP_VERSION\n\
          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
-         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n\
+         Move-Item -Force -Path $stagePath -Destination $finalPath\n",
     )
     .unwrap();
     // uninstall.ps1 forgot the hooks-remove call.
@@ -371,7 +387,8 @@ fn test_uninstall_ps1_missing_installroot_fails() {
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $tag = $env:GIT_WARP_VERSION\n\
          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
-         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n\
+         Move-Item -Force -Path $stagePath -Destination $finalPath\n",
     )
     .unwrap();
     // uninstall.ps1 keeps hooks-remove but lost the InstallRoot handling.
@@ -562,6 +579,80 @@ fn test_install_script_missing_skip_env_fails() {
 }
 
 #[test]
+fn test_install_script_missing_atomic_rename_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.sh keeps every other guard but copies warp into place without the sibling-temp staging.
+    fs::write(
+        temp.path().join("install.sh"),
+        "version=\"${GIT_WARP_VERSION:-}\"\n\
+         api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n\
+         cp \"${tmp_dir}/warp\" \"${install_dir}/warp\"\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks[4].label, "install.sh");
+    assert!(
+        !checks[4].ok,
+        "install.sh without the sibling-temp staging + mv should fail"
+    );
+    assert!(
+        checks[4]
+            .detail
+            .contains("sibling-temp staging + mv -f atomic install"),
+        "fail detail should call out the missing atomic rename, got: {}",
+        checks[4].detail
+    );
+}
+
+#[test]
+fn test_install_ps1_missing_atomic_rename_fails() {
+    let temp = tempdir().unwrap();
+    let expected = ReleaseVersion {
+        number: "0.3.0".to_string(),
+        tag: "v0.3.0".to_string(),
+    };
+
+    // install.ps1 keeps every other guard but overwrites warp.exe with Copy-Item instead of staging + Move-Item.
+    fs::write(
+        temp.path().join("install.ps1"),
+        "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
+         $tag = $env:GIT_WARP_VERSION\n\
+         $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n\
+         Copy-Item -Force -Path $binary -Destination (Join-Path $Dir 'warp.exe')\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("uninstall.ps1"),
+        "$installRoot = Coalesce $InstallRoot 'GIT_WARP_INSTALL_ROOT' $null\n\
+         & $Target hooks-remove --level user --runtime all *> $null\n",
+    )
+    .unwrap();
+
+    let checks = collect_metadata_checks(temp.path(), &expected, "0.3.0").unwrap();
+
+    assert_eq!(checks[5].label, "install.ps1");
+    assert!(
+        !checks[5].ok,
+        "install.ps1 without Move-Item -Force staging rename should fail"
+    );
+    assert!(
+        checks[5].detail.contains("Move-Item -Force"),
+        "fail detail should call out the missing Move-Item -Force, got: {}",
+        checks[5].detail
+    );
+    assert!(checks[6].ok, "uninstall.ps1 guard should still pass");
+}
+
+#[test]
 fn test_uninstall_script_missing_hooks_remove_fails() {
     let temp = tempdir().unwrap();
     let expected = ReleaseVersion {
@@ -574,7 +665,9 @@ fn test_uninstall_script_missing_hooks_remove_fails() {
         temp.path().join("install.sh"),
         "version=\"${GIT_WARP_VERSION:-}\"\n\
          api_url=\"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
-         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n",
+         if [ \"${GIT_WARP_SKIP_CHECKSUM:-0}\" != \"1\" ]; then sha256sum -c \"$sums\"; fi\n\
+         install_tmp=\"${install_dir}/.warp.$$.tmp\"\n\
+         mv -f \"$install_tmp\" \"${install_dir}/warp\"\n",
     )
     .unwrap();
     fs::write(
@@ -582,7 +675,8 @@ fn test_uninstall_script_missing_hooks_remove_fails() {
         "$api = \"https://api.github.com/repos/denysbutenko/git-warp/releases/latest\"\n\
          $tag = $env:GIT_WARP_VERSION\n\
          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash\n\
-         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n",
+         $skipEnv = [Environment]::GetEnvironmentVariable('GIT_WARP_SKIP_CHECKSUM')\n\
+         Move-Item -Force -Path $stagePath -Destination $finalPath\n",
     )
     .unwrap();
     fs::write(
