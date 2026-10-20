@@ -124,3 +124,45 @@ pub(super) fn clonefile_tree(from: &Path, to: &Path) -> std::io::Result<()> {
         Err(std::io::Error::last_os_error())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::clonefile_tree;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    #[test]
+    fn clonefile_tree_clones_a_directory_in_one_call() {
+        let temp = tempdir().unwrap();
+        let src = temp.path().join("node_modules");
+        fs::create_dir_all(src.join("pkg/lib")).unwrap();
+        fs::write(src.join("pkg/lib/index.js"), "module.exports = 1;\n").unwrap();
+        std::os::unix::fs::symlink("pkg", src.join("alias")).unwrap();
+        let dst = temp.path().join("clone");
+
+        clonefile_tree(&src, &dst).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dst.join("pkg/lib/index.js")).unwrap(),
+            "module.exports = 1;\n"
+        );
+        assert_eq!(
+            fs::read_link(dst.join("alias")).unwrap(),
+            PathBuf::from("pkg")
+        );
+    }
+
+    #[test]
+    fn clonefile_tree_refuses_an_existing_destination() {
+        let temp = tempdir().unwrap();
+        let src = temp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        let dst = temp.path().join("dst");
+        fs::create_dir_all(&dst).unwrap();
+
+        let err = clonefile_tree(&src, &dst).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+}
