@@ -263,8 +263,20 @@ install_from_binary() {
   fi
 
   mkdir -p "$install_dir"
-  cp "${tmp_dir}/warp" "${install_dir}/warp"
-  chmod 755 "${install_dir}/warp"
+  install_tmp="${install_dir}/.warp.$$.tmp"
+  rm -f "$install_tmp"
+  if ! cp "${tmp_dir}/warp" "$install_tmp"; then
+    rm -f "$install_tmp"
+    fail "failed to stage warp binary at ${install_tmp}"
+  fi
+  if ! chmod 755 "$install_tmp"; then
+    rm -f "$install_tmp"
+    fail "failed to set permissions on ${install_tmp}"
+  fi
+  if ! mv -f "$install_tmp" "${install_dir}/warp"; then
+    rm -f "$install_tmp"
+    fail "failed to install warp binary at ${install_dir}/warp"
+  fi
 }
 
 install_from_cargo() {

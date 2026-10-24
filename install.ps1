@@ -272,7 +272,15 @@ function Install-Binary {
         }
 
         New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-        Copy-Item -Force -Path $binary -Destination (Join-Path $Dir 'warp.exe')
+        $finalPath = Join-Path $Dir 'warp.exe'
+        $stagePath = Join-Path $Dir ("warp." + [System.Guid]::NewGuid().ToString('N') + ".tmp")
+        try {
+            Copy-Item -Force -Path $binary -Destination $stagePath
+            Move-Item -Force -Path $stagePath -Destination $finalPath
+        } catch {
+            Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $stagePath
+            Fail "failed to install warp.exe at $finalPath ($($_.Exception.Message))" $Repo
+        }
     } finally {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $tmp
     }

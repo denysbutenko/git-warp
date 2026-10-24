@@ -197,13 +197,13 @@ pub fn collect_metadata_checks(
     if install_sh_missing.is_empty() {
         checks.push(ReleaseCheck::pass(
             "install.sh",
-            "resolves GIT_WARP_VERSION dynamically, verifies the archive checksum, and honors the skip env",
+            "resolves GIT_WARP_VERSION dynamically, verifies the archive checksum, atomically renames the staged binary into place, and honors the skip env",
         ));
     } else {
         checks.push(ReleaseCheck::fail(
             "install.sh",
             format!(
-                "install.sh must keep the ${{GIT_WARP_VERSION:-...}} override, call api.github.com/repos/.../releases/latest, run shasum -a 256 -c or sha256sum -c, and honor GIT_WARP_SKIP_CHECKSUM; missing: {}",
+                "install.sh must keep the ${{GIT_WARP_VERSION:-...}} override, call api.github.com/repos/.../releases/latest, run shasum -a 256 -c or sha256sum -c, stage warp into a sibling temp inside the install dir and mv it into place, and honor GIT_WARP_SKIP_CHECKSUM; missing: {}",
                 install_sh_missing.join(", ")
             ),
         ));
@@ -221,12 +221,16 @@ pub fn collect_metadata_checks(
             "GIT_WARP_SKIP_CHECKSUM",
             "the GIT_WARP_SKIP_CHECKSUM / -SkipChecksum opt-out",
         ),
+        (
+            "Move-Item -Force",
+            "the atomic Move-Item -Force rename of the staged warp.exe into place",
+        ),
     ];
     checks.push(content_guard(
         "install.ps1",
         &install_ps1,
         install_ps1_requirements,
-        "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, Get-FileHash -Algorithm SHA256 verification, and GIT_WARP_SKIP_CHECKSUM / -SkipChecksum opt-out",
+        "install.ps1 must keep the GitHub releases lookup, $env:GIT_WARP_VERSION override, Get-FileHash -Algorithm SHA256 verification, GIT_WARP_SKIP_CHECKSUM / -SkipChecksum opt-out, and the Move-Item -Force staging rename",
     ));
 
     let uninstall_ps1_requirements: &[(&str, &str)] = &[
@@ -287,6 +291,9 @@ fn install_sh_missing_parts(script: &str) -> Vec<&'static str> {
     }
     if !script.contains("GIT_WARP_SKIP_CHECKSUM") {
         missing.push("the GIT_WARP_SKIP_CHECKSUM opt-out guard");
+    }
+    if !script.contains("install_tmp=") || !script.contains("mv -f \"$install_tmp\"") {
+        missing.push("the sibling-temp staging + mv -f atomic install of warp into place");
     }
     missing
 }
