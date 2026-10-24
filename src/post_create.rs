@@ -217,20 +217,23 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
     }
 }
 
-/// The CoW overlay hands a new worktree the primary's `node_modules`, and pnpm
-/// keeps a copy of the lockfile it installed from at
-/// `node_modules/.pnpm/lock.yaml`. When the branch's lockfile is byte-identical
-/// an install has nothing to link; it would only re-run pnpm's lockfile checks
-/// (about 8s on a 2k-package workspace).
+/// The CoW overlay hands a new worktree the primary's `node_modules`, and the
+/// package manager keeps a copy of the lockfile it installed from inside that
+/// tree: pnpm at `node_modules/.pnpm/lock.yaml`, npm (v7+) at
+/// `node_modules/.package-lock.json`. When the branch's lockfile is byte-equal
+/// to the installed mirror an install has nothing to link; it would only
+/// re-run the manager's lockfile checks (about 8s on a 2k-package workspace).
 fn installed_modules_match_lockfile(worktree_path: &Path, manager: PackageManager) -> bool {
-    if manager != PackageManager::Pnpm {
-        return false;
-    }
+    let (lockfile, mirror) = match manager {
+        PackageManager::Pnpm => ("pnpm-lock.yaml", "node_modules/.pnpm/lock.yaml"),
+        PackageManager::Npm => ("package-lock.json", "node_modules/.package-lock.json"),
+        _ => return false,
+    };
     match (
-        std::fs::read(worktree_path.join("pnpm-lock.yaml")),
-        std::fs::read(worktree_path.join("node_modules/.pnpm/lock.yaml")),
+        std::fs::read(worktree_path.join(lockfile)),
+        std::fs::read(worktree_path.join(mirror)),
     ) {
-        (Ok(lockfile), Ok(installed)) => lockfile == installed,
+        (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
 }
@@ -675,6 +678,74 @@ mod tests {
             status,
             PostCreateSetupStatus::Installed(PackageManager::Npm)
         );
+    }
+
+    #[test]
+    fn test_skips_npm_when_installed_modules_match_lockfile() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(
+            temp.path().join("package-lock.json"),
+            "{\"lockfileVersion\":3}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/.package-lock.json"),
+            "{\"lockfileVersion\":3}\n",
+        )
+        .unwrap();
+
+        let bin = temp.path().join("fake-npm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Npm, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::SkippedUpToDate(PackageManager::Npm)
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn test_runs_npm_when_installed_modules_lockfile_differs() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(
+            temp.path().join("package-lock.json"),
+            "{\"lockfileVersion\":3,\"new\":\"dep\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/.package-lock.json"),
+            "{\"lockfileVersion\":3}\n",
+        )
+        .unwrap();
+
+        let bin = temp.path().join("fake-npm");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Npm, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Npm)
+        );
+        assert!(marker.exists());
     }
 
     #[test]
