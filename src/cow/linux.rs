@@ -167,3 +167,81 @@ fn clone_regular_file(src: &Path, dst: &Path, mode: u32) -> Result<()> {
     })?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{clone_directory, is_cow_supported};
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::thread;
+    use tempfile::tempdir;
+
+    #[test]
+    fn clone_tree_via_ficlone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().unwrap();
+        let src_dir = temp_dir.path().join("src");
+        let dest_dir = temp_dir.path().join("dest");
+
+        if !is_cow_supported(temp_dir.path()).unwrap_or(false) {
+            return;
+        }
+
+        fs::create_dir(&src_dir).unwrap();
+        fs::create_dir(src_dir.join("nested")).unwrap();
+        fs::write(src_dir.join("a.txt"), b"hello").unwrap();
+        fs::write(src_dir.join("nested/b.bin"), b"world").unwrap();
+        fs::set_permissions(src_dir.join("a.txt"), fs::Permissions::from_mode(0o640)).unwrap();
+        std::os::unix::fs::symlink("a.txt", src_dir.join("link")).unwrap();
+
+        clone_directory(&src_dir, &dest_dir).expect("ficlone clone should succeed");
+
+        assert_eq!(fs::read(dest_dir.join("a.txt")).unwrap(), b"hello");
+        assert_eq!(fs::read(dest_dir.join("nested/b.bin")).unwrap(), b"world");
+        assert!(
+            fs::symlink_metadata(dest_dir.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "symlink must be preserved verbatim, not dereferenced"
+        );
+        assert_eq!(
+            fs::read_link(dest_dir.join("link")).unwrap(),
+            Path::new("a.txt")
+        );
+        assert_eq!(
+            fs::metadata(dest_dir.join("a.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn probe_leaves_no_trace() {
+        let dir = Arc::new(tempdir().unwrap());
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let dir = Arc::clone(&dir);
+            handles.push(thread::spawn(move || {
+                let _ = is_cow_supported(dir.path());
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        for entry in fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with(".git-warp-reflink-") && !name.starts_with(".reflink_test_"),
+                "probe leaked file: {name}"
+            );
+        }
+    }
+}

@@ -7,7 +7,7 @@ mod macos;
 #[cfg(target_os = "linux")]
 mod linux;
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(test)]
 mod tests;
 
 /// Check if Copy-on-Write is supported for the given path.
