@@ -115,6 +115,93 @@ exit 22
 
 #[cfg(unix)]
 #[test]
+fn test_installer_cargo_method_points_path_hint_at_cargo_bin() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let cargo_home = home_dir.path().join(".cargo");
+    let cargo_bin = cargo_home.join("bin");
+    std::fs::create_dir_all(&cargo_bin).unwrap();
+
+    write_executable(
+        &fake_bin.path().join("cargo"),
+        r#"#!/bin/sh
+exit 0
+"#,
+    );
+
+    let output = Command::new("/bin/sh")
+        .arg(install_script_path())
+        .env("HOME", home_dir.path())
+        .env("CARGO_HOME", &cargo_home)
+        .env("PATH", fake_bin.path().display().to_string())
+        .env("GIT_WARP_VERSION", "v9.9.9")
+        .env("GIT_WARP_INSTALL_METHOD", "cargo")
+        .env_remove("GIT_WARP_INSTALL_ROOT")
+        .env_remove("GIT_WARP_INSTALL_DIR")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "Add {} to PATH so your shell can find 'warp':",
+            cargo_bin.display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("export PATH=\"{}:$PATH\"", cargo_bin.display())),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains(&format!(
+            "Add {}/.local/bin to PATH",
+            home_dir.path().display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_installer_cargo_method_honors_install_root_in_path_hint() {
+    let fake_bin = tempdir().unwrap();
+    let home_dir = tempdir().unwrap();
+    let install_root = tempdir().unwrap();
+
+    write_executable(
+        &fake_bin.path().join("cargo"),
+        r#"#!/bin/sh
+exit 0
+"#,
+    );
+
+    let output = Command::new("/bin/sh")
+        .arg(install_script_path())
+        .env("HOME", home_dir.path())
+        .env("PATH", fake_bin.path().display().to_string())
+        .env("GIT_WARP_VERSION", "v9.9.9")
+        .env("GIT_WARP_INSTALL_METHOD", "cargo")
+        .env("GIT_WARP_INSTALL_ROOT", install_root.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "Add {}/bin to PATH so your shell can find 'warp':",
+            install_root.path().display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn test_installer_explains_cargo_fallback_failure() {
     let fake_bin = tempdir().unwrap();
     let home_dir = tempdir().unwrap();
