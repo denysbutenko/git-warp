@@ -37,7 +37,7 @@ git diff --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --workspace
-cargo build --release --bin warp
+cargo build --release --locked --bin warp
 ./target/release/warp --version
 ./target/release/warp --help
 ./target/release/warp switch --help
