@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 - 2026-11-04
+
+Speed and safety release. Switching to a new worktree on a large pnpm or npm
+repo now takes seconds: CoW clones whole directories in one call and the
+post-create install is skipped when `node_modules` already matches the
+lockfile. `warp cleanup --mode merged` now recognizes squash- and
+rebase-merged branches, the installers swap the binary in atomically, and
+atomic writes keep the file mode of the file they replace.
+
+Release notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md)
 
 ### Added
 
@@ -13,6 +22,20 @@
   slipping in silently. (#329)
 - Add CI smoke tests for `install.sh` and `install.ps1` against the published
   release assets so a release cannot ship a broken installer. (#303)
+- `warp release-check` now runs the same `cargo doc` gate as the CI `docs`
+  job, with `RUSTDOCFLAGS="-D warnings"` scoped to that one step. (#339)
+
+### Performance
+
+- CoW worktree creation on macOS clones whole directories with a single
+  `clonefile(2)` call instead of `cp -c -R` file by file. A 127k-file
+  `node_modules` went from 28s to 2s. `cp -c -R` stays as the fallback. (#335)
+- Rewritten files in a new worktree skip the two per-file fsyncs; a crash
+  mid-switch discards the new worktree anyway. (#335)
+- The post-create hook skips `pnpm install` when
+  `node_modules/.pnpm/lock.yaml` is byte-identical to the branch's
+  `pnpm-lock.yaml`, and skips `npm install` when
+  `node_modules/.package-lock.json` matches `package-lock.json`. (#335, #354)
 
 ### Changed
 
@@ -34,6 +57,12 @@
   modules. (#327)
 - Audit the `#[allow(dead_code)]` annotations in `src/cow.rs` and keep each
   one with a comment explaining the cfg-gated reachability. (#311)
+- Split `src/cow.rs` into platform submodules under `src/cow/` (`macos.rs`,
+  `linux.rs`). The public `git_warp::cow` API is unchanged. (#334)
+- Platform-neutral CoW tests now run on Windows CI too; CoW-backed tests stay
+  gated to macOS and Linux. (#353)
+- Dependabot no longer bumps `dtolnay/rust-toolchain`, whose ref is the pinned
+  MSRV toolchain rather than an action version. (#343)
 - Refresh the Module Design / Process / Terminal sections of the technical
   overview to match the post-split source layout. (#298)
 - Document the `git diff --check` step in `docs/release-check.md`. (#294)
@@ -49,11 +78,26 @@
 - `warp doctor` now probes `~/.bash_profile` and `~/.profile` for the
   `warp_cd` shell helper on macOS, matching how Terminal.app sources login
   shells. (#297)
+- `warp cleanup --mode merged` now treats squash- and rebase-merged branches
+  as merged by matching patch ids against the base branch (and
+  `origin/<base>`). Branches merged into any protected branch (`main` and
+  `develop` by default) also count. (#348)
+- New worktrees keep the executable bit on rewritten files, so
+  `node_modules/.bin` shims work and `pnpm exec <bin>` no longer fails with
+  "Command not found". (#335)
+- `write_atomic` keeps an existing file's mode, so saving a `0600` config no
+  longer turns it into `0644`. (#336, #342)
+- `write_atomic` logs a warning when the parent-directory fsync fails instead
+  of dropping the error silently. (#347)
+- `install.sh` and `install.ps1` stage the new binary in a sibling temp file
+  and rename it into place, so an interrupted install leaves the previous
+  `warp` working instead of a truncated binary. (#352)
 
 ### Dependencies
 
 - Bump `dirs` from 6.0.0 to 7.0.0. (#306)
 - Bump the cargo minor-and-patch group across 2 updates. (#313)
+- Bump `serde_json` from 1.0.151 to 1.0.154. (#338)
 
 ## v0.6.0 - 2026-09-20
 
