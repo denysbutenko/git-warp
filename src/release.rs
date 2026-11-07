@@ -388,9 +388,9 @@ pub fn release_commands(repo_root: &Path) -> Vec<ReleaseCommand> {
         )
         .with_env([("RUSTDOCFLAGS", "-D warnings")]),
         ReleaseCommand::new(
-            "cargo build --release --bin warp",
+            "cargo build --release --locked --bin warp",
             "cargo",
-            ["build", "--release", "--bin", "warp"],
+            ["build", "--release", "--locked", "--bin", "warp"],
         ),
         ReleaseCommand::new(
             format!("{warp_label} --version"),

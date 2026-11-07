@@ -64,3 +64,21 @@ fn test_release_check_steps_include_cargo_doc_gate() {
         "release-check step list is missing the cargo doc gate: {labels:?}"
     );
 }
+
+#[test]
+fn test_release_check_cargo_steps_all_pass_locked() {
+    // Only cargo subcommands that resolve dependencies are expected to carry
+    // `--locked`. `cargo fmt` shells out to rustfmt and does not resolve, so
+    // omit it from the invariant.
+    let offenders: Vec<String> = release_commands(Path::new("."))
+        .iter()
+        .map(|step| step.label().to_string())
+        .filter(|label| label.starts_with("cargo ") && !label.starts_with("cargo fmt "))
+        .filter(|label| !label.split_whitespace().any(|arg| arg == "--locked"))
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "release-check cargo steps missing --locked: {offenders:?}"
+    );
+}
