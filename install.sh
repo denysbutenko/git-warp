@@ -94,12 +94,12 @@ report_existing_installs() {
 
 report_active_warp_shadowing() {
   active="$(command -v warp 2>/dev/null || true)"
-  installed="${install_dir}/warp"
+  installed="$installed_binary"
   [ -n "$active" ] || return 0
   [ "$active" = "$installed" ] && return 0
   echo
   echo "Note: 'warp' on PATH resolves to ${active}, not the binary just installed at ${installed}."
-  echo "Reorder PATH to put ${install_dir} first, or remove the older binary at ${active}."
+  echo "Reorder PATH to put ${installed_bin_dir} first, or remove the older binary at ${active}."
 }
 
 download() {
@@ -307,10 +307,22 @@ case "$method" in
   *) fail "unsupported install method: ${method}; use 'binary' or 'cargo'" ;;
 esac
 
+case "$method" in
+  cargo)
+    if [ -n "${GIT_WARP_INSTALL_ROOT:-}" ]; then
+      installed_bin_dir="${GIT_WARP_INSTALL_ROOT}/bin"
+    else
+      installed_bin_dir="${CARGO_HOME:-${HOME}/.cargo}/bin"
+    fi
+    ;;
+  *) installed_bin_dir="$install_dir" ;;
+esac
+installed_binary="${installed_bin_dir}/warp"
+
 echo
 
-if [ -x "${install_dir}/warp" ]; then
-  "${install_dir}/warp" --version
+if [ -x "$installed_binary" ]; then
+  "$installed_binary" --version
 elif command -v warp >/dev/null 2>&1; then
   warp --version
 else
@@ -318,10 +330,10 @@ else
 fi
 
 case ":${PATH}:" in
-  *":${install_dir}:"*) ;;
+  *":${installed_bin_dir}:"*) ;;
   *)
-    echo "Add ${install_dir} to PATH so your shell can find 'warp':"
-    echo "  export PATH=\"${install_dir}:\$PATH\""
+    echo "Add ${installed_bin_dir} to PATH so your shell can find 'warp':"
+    echo "  export PATH=\"${installed_bin_dir}:\$PATH\""
     echo "Open a new terminal or run 'warp doctor' after updating PATH."
     ;;
 esac
