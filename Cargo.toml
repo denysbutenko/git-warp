@@ -36,7 +36,7 @@ crossterm = "0.29.0"
 nix = { version = "0.31.3", features = ["fs", "signal", "ioctl"] }
 rayon = "1.10.0"
 ignore = "0.4.22"
-sysinfo = "0.39.3"
+sysinfo = "0.40.1"
 
 # Configuration & Data
 figment = { version = "0.10.19", features = ["toml", "env"] }
