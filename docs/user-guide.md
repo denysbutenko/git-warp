@@ -408,6 +408,19 @@ auto_install = false
 in `~/.config/git-warp/config.toml`, or export
 `GIT_WARP_POST_CREATE__AUTO_INSTALL=false`.
 
+For pnpm and npm repos, Git-Warp also skips the install automatically when the
+overlaid `node_modules` already matches the branch's lockfile. It compares the
+branch's `pnpm-lock.yaml` or `package-lock.json` byte-for-byte against the
+mirror the manager keeps in `node_modules/.pnpm/lock.yaml` or
+`node_modules/.package-lock.json`, and prints:
+
+```text
+📦 Dependencies already match the pnpm lockfile, skipped `pnpm install`
+```
+
+on `warp switch`. The short-circuit does not cover Yarn or Bun yet, so those
+repos still re-run their install step after each new worktree.
+
 ### Cleanup Is Blocked
 
 Preview candidates and inspect blockers:
