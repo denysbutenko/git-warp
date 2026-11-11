@@ -217,23 +217,73 @@ pub fn ensure_agent_state_excluded(worktree_path: &Path) {
     }
 }
 
-/// The CoW overlay hands a new worktree the primary's `node_modules`, and the
-/// package manager keeps a copy of the lockfile it installed from inside that
-/// tree: pnpm at `node_modules/.pnpm/lock.yaml`, npm (v7+) at
-/// `node_modules/.package-lock.json`. When the branch's lockfile is byte-equal
-/// to the installed mirror an install has nothing to link; it would only
-/// re-run the manager's lockfile checks (about 8s on a 2k-package workspace).
+/// The CoW overlay hands a new worktree the primary's `node_modules`, and most
+/// package managers leave a per-install sentinel inside that tree:
+///   - pnpm: `node_modules/.pnpm/lock.yaml` (byte-equal to `pnpm-lock.yaml`).
+///   - npm (v7+): `node_modules/.package-lock.json` (byte-equal to
+///     `package-lock.json`).
+///   - yarn 1.x: `node_modules/.yarn-integrity`, written at the end of install.
+///   - bun: no stable lockfile mirror; `node_modules` itself is the sentinel.
+///
+/// For pnpm/npm a byte compare is exact. For yarn 1.x and bun the parsed
+/// sentinel format is either complex (yarn-integrity) or binary (bun's
+/// `.bun-install-cache.ndb`), so instead rely on mtime: when the branch's
+/// lockfile predates the installed sentinel, git checkout did not rewrite it
+/// and the overlaid install is still current. Yarn berry (2+) stores state in
+/// `.yarn/install-state.gz` and is not covered here; it falls through to
+/// running `yarn install`.
 fn installed_modules_match_lockfile(worktree_path: &Path, manager: PackageManager) -> bool {
-    let (lockfile, mirror) = match manager {
-        PackageManager::Pnpm => ("pnpm-lock.yaml", "node_modules/.pnpm/lock.yaml"),
-        PackageManager::Npm => ("package-lock.json", "node_modules/.package-lock.json"),
-        _ => return false,
-    };
+    match manager {
+        PackageManager::Pnpm => mirror_bytes_match(
+            worktree_path,
+            "pnpm-lock.yaml",
+            "node_modules/.pnpm/lock.yaml",
+        ),
+        PackageManager::Npm => mirror_bytes_match(
+            worktree_path,
+            "package-lock.json",
+            "node_modules/.package-lock.json",
+        ),
+        PackageManager::Yarn => yarn_install_up_to_date(worktree_path),
+        PackageManager::Bun => bun_install_up_to_date(worktree_path),
+        PackageManager::Cargo => false,
+    }
+}
+
+fn mirror_bytes_match(worktree_path: &Path, lockfile: &str, mirror: &str) -> bool {
     match (
         std::fs::read(worktree_path.join(lockfile)),
         std::fs::read(worktree_path.join(mirror)),
     ) {
         (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn yarn_install_up_to_date(worktree_path: &Path) -> bool {
+    lockfile_not_newer_than(worktree_path, "yarn.lock", "node_modules/.yarn-integrity")
+}
+
+fn bun_install_up_to_date(worktree_path: &Path) -> bool {
+    let lockfile = if worktree_path.join("bun.lock").is_file() {
+        "bun.lock"
+    } else if worktree_path.join("bun.lockb").is_file() {
+        "bun.lockb"
+    } else {
+        return false;
+    };
+    lockfile_not_newer_than(worktree_path, lockfile, "node_modules")
+}
+
+fn lockfile_not_newer_than(worktree_path: &Path, lockfile: &str, sentinel: &str) -> bool {
+    let Ok(lock_meta) = std::fs::metadata(worktree_path.join(lockfile)) else {
+        return false;
+    };
+    let Ok(sentinel_meta) = std::fs::metadata(worktree_path.join(sentinel)) else {
+        return false;
+    };
+    match (lock_meta.modified(), sentinel_meta.modified()) {
+        (Ok(lock_mtime), Ok(sentinel_mtime)) => lock_mtime <= sentinel_mtime,
         _ => false,
     }
 }
@@ -334,6 +384,22 @@ mod tests {
 
     fn write_package_json(dir: &Path) {
         fs::write(dir.join("package.json"), r#"{"name":"test-repo"}"#).unwrap();
+    }
+
+    fn set_file_mtime(path: &Path, offset_from_now: std::time::Duration, past: bool) {
+        use std::time::SystemTime;
+        let now = SystemTime::now();
+        let target = if past {
+            now.checked_sub(offset_from_now).expect("time underflow")
+        } else {
+            now.checked_add(offset_from_now).expect("time overflow")
+        };
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(target)
+            .unwrap();
     }
 
     fn git_init(dir: &Path) {
@@ -746,6 +812,198 @@ mod tests {
             PostCreateSetupStatus::Installed(PackageManager::Npm)
         );
         assert!(marker.exists());
+    }
+
+    #[test]
+    fn test_skips_yarn_when_installed_modules_match_lockfile() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("yarn.lock"), "# yarn lockfile v1\n").unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/.yarn-integrity"),
+            r#"{"lockfileEntries":{}}"#,
+        )
+        .unwrap();
+        // yarn.lock predates the sentinel: the overlaid install still matches.
+        set_file_mtime(
+            &temp.path().join("yarn.lock"),
+            std::time::Duration::from_secs(60),
+            true,
+        );
+
+        let bin = temp.path().join("fake-yarn");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Yarn, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::SkippedUpToDate(PackageManager::Yarn)
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn test_runs_yarn_when_installed_modules_lockfile_differs() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("yarn.lock"), "# yarn lockfile v1\nnew\n").unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        fs::write(
+            temp.path().join("node_modules/.yarn-integrity"),
+            r#"{"lockfileEntries":{}}"#,
+        )
+        .unwrap();
+        // yarn.lock was rewritten after the sentinel was last touched.
+        set_file_mtime(
+            &temp.path().join("yarn.lock"),
+            std::time::Duration::from_secs(60),
+            false,
+        );
+
+        let bin = temp.path().join("fake-yarn");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Yarn, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Yarn)
+        );
+        assert!(marker.exists());
+    }
+
+    #[test]
+    fn test_runs_yarn_berry_without_integrity_sentinel() {
+        // Yarn berry (2+) does not write node_modules/.yarn-integrity; the
+        // short-circuit must not misfire, so install still runs.
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("yarn.lock"), "# yarn lockfile v1\n").unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+
+        let bin = temp.path().join("fake-yarn");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Yarn, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Yarn)
+        );
+        assert!(marker.exists());
+    }
+
+    #[test]
+    fn test_skips_bun_when_installed_modules_match_lockfile() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("bun.lock"), "# bun lockfile\n").unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        // Lockfile predates node_modules: the overlaid install is current.
+        set_file_mtime(
+            &temp.path().join("bun.lock"),
+            std::time::Duration::from_secs(60),
+            true,
+        );
+
+        let bin = temp.path().join("fake-bun");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Bun, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::SkippedUpToDate(PackageManager::Bun)
+        );
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn test_runs_bun_when_installed_modules_lockfile_differs() {
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("bun.lock"), "# bun lockfile updated\n").unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        // Lockfile rewritten after node_modules was cloned: must re-install.
+        set_file_mtime(
+            &temp.path().join("bun.lock"),
+            std::time::Duration::from_secs(60),
+            false,
+        );
+
+        let bin = temp.path().join("fake-bun");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Bun, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::Installed(PackageManager::Bun)
+        );
+        assert!(marker.exists());
+    }
+
+    #[test]
+    fn test_skips_bun_with_legacy_binary_lockfile() {
+        // Covers the bun.lockb (binary) path when bun.lock is absent.
+        let temp = tempdir().unwrap();
+        write_package_json(temp.path());
+        fs::write(temp.path().join("bun.lockb"), b"\x00\x01").unwrap();
+        fs::create_dir_all(temp.path().join("node_modules")).unwrap();
+        set_file_mtime(
+            &temp.path().join("bun.lockb"),
+            std::time::Duration::from_secs(60),
+            true,
+        );
+
+        let bin = temp.path().join("fake-bun");
+        let marker = temp.path().join("ran.txt");
+        write_marker_script(&bin, &marker);
+
+        let status = run_post_create_setup_with_resolver(
+            temp.path(),
+            true,
+            true,
+            resolver_for(PackageManager::Bun, bin),
+        );
+
+        assert_eq!(
+            status,
+            PostCreateSetupStatus::SkippedUpToDate(PackageManager::Bun)
+        );
+        assert!(!marker.exists());
     }
 
     #[test]
