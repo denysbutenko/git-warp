@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Bump the `cargo-minor-and-patch` dependabot group: `ignore` to 0.4.34 and
+  `log` to 0.4.35. (#360)
+
+### Fixed
+
+- `install.sh` now points the "Add ... to PATH" hint for the cargo install
+  method at `${CARGO_HOME:-$HOME/.cargo}/bin`, where `cargo install` actually
+  drops `warp`, instead of the generic install dir. The post-install version
+  probe in the same script looks at the real binary path too. (#357)
+- `warp release-check` runs `cargo build --release --locked --bin warp` with
+  `--locked`, so a stale `Cargo.lock` fails the release-check gate the same
+  way the tag-time build does. (#358)
+
 ## v0.7.0 - 2026-11-04
 
 Speed and safety release. Switching to a new worktree on a large pnpm or npm
