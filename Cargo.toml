@@ -33,7 +33,7 @@ ratatui = "0.30.0"
 crossterm = "0.29.0"
 
 # Core Logic
-nix = { version = "0.31.3", features = ["fs", "signal", "ioctl"] }
+nix = { version = "0.32.0", features = ["fs", "signal", "ioctl"] }
 rayon = "1.10.0"
 ignore = "0.4.22"
 sysinfo = "0.39.3"
